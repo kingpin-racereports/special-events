@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kingpin Racing Blue — Race Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+    --navy: #14213d;
+    --navy-2: #1e3a5f;
+    --accent: #3d7ab5;
+    --bg: #f4f6f9;
+    --card: #ffffff;
+    --ink: #1c2530;
+    --muted: #5b6675;
+    --green-bg: #e3f6e8; --green-ink: #146c34;
+    --blue-bg: #e8f1fb;  --blue-ink: #1c5a96;
+    --amber-bg: #fdf3d9; --amber-ink: #8a6a08;
+    --orange-bg: #fce3cf; --orange-ink: #9a4b13;
+    --red-bg: #fbe0e0;   --red-ink: #a3211d;
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Inter', -apple-system, sans-serif;
+    line-height: 1.55;
+}
+h1 {
+    font-family: 'Oswald', sans-serif;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: #fff;
+    background: linear-gradient(120deg, var(--navy), var(--navy-2));
+    margin: 0;
+    padding: 28px 32px;
+    font-size: 26px;
+}
+h2 {
+    font-family: 'Oswald', sans-serif;
+    font-weight: 600;
+    color: var(--navy);
+    border-bottom: 3px solid var(--accent);
+    padding-bottom: 6px;
+    margin-top: 40px;
+    font-size: 20px;
+    letter-spacing: 0.01em;
+    scroll-margin-top: 84px;
+}
+h3 {
+    font-family: 'Oswald', sans-serif;
+    font-weight: 600;
+    color: var(--navy-2);
+    margin-top: 26px;
+    font-size: 16px;
+    border-left: 4px solid var(--accent);
+    padding-left: 10px;
+    scroll-margin-top: 84px;
+}
+.driver-drawer {
+    margin: 18px 0;
+    border: 1px solid #dfe4ea;
+    border-radius: 8px;
+    overflow: hidden;
+}
+.driver-drawer summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 14px 18px;
+    background: linear-gradient(120deg, var(--navy), var(--navy-2));
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-family: 'Oswald', sans-serif;
+    font-weight: 600;
+    font-size: 17px;
+    letter-spacing: 0.01em;
+}
+.driver-drawer summary::-webkit-details-marker { display: none; }
+.driver-drawer summary::before {
+    content: "▸";
+    display: inline-block;
+    margin-right: 10px;
+    transition: transform 0.15s;
+}
+.driver-drawer[open] summary::before { transform: rotate(90deg); }
+.driver-drawer summary:hover { background: linear-gradient(120deg, var(--navy-2), var(--accent)); }
+.drawer-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    color: #cdd8e8;
+    background: rgba(255,255,255,0.12);
+    padding: 3px 10px;
+    border-radius: 12px;
+}
+.drawer-body { padding: 4px 20px 8px 20px; }
+.drawer-body h3:first-child { margin-top: 14px; }
+strong { font-weight: 600; }
+em { color: var(--muted); font-size: 0.72em; }
+hr { border: none; border-top: 1px solid #dfe4ea; margin: 22px 0; }
+blockquote {
+    border-left: 4px solid #d4af37;
+    margin: 14px 0;
+    padding: 8px 16px;
+    background: #fdf8ec;
+    color: #6b5416;
+    border-radius: 0 6px 6px 0;
+}
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0 18px 0;
+    font-size: 14px;
+    background: var(--card);
+    box-shadow: 0 1px 3px rgba(20,33,61,0.08);
+    border-radius: 6px;
+    overflow: hidden;
+}
+th {
+    background: var(--navy);
+    color: #fff;
+    text-align: left;
+    padding: 9px 12px;
+    font-family: 'Oswald', sans-serif;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    font-size: 13px;
+    text-transform: uppercase;
+}
+td {
+    border-bottom: 1px solid #eef1f5;
+    padding: 8px 12px;
+    font-variant-numeric: tabular-nums;
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #fafbfd; }
+.grade {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    font-size: 12.5px;
+    padding: 2px 9px;
+    border-radius: 20px;
+}
+h2 .grade { font-size: 16px; padding: 3px 13px; vertical-align: middle; }
+.grade-A { background: var(--green-bg); color: var(--green-ink); }
+.grade-B { background: var(--blue-bg); color: var(--blue-ink); }
+.grade-C { background: var(--amber-bg); color: var(--amber-ink); }
+.grade-D { background: var(--orange-bg); color: var(--orange-ink); }
+.grade-F { background: var(--red-bg); color: var(--red-ink); }
+span[style*="color:green"] { font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+span[style*="color:red"] { font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+ul { margin: 6px 0 14px 0; padding-left: 22px; }
+li { margin-bottom: 4px; }
+p { margin: 8px 0; }
+.wrap { max-width: 900px; margin: 0 auto; background: var(--card); box-shadow: 0 2px 12px rgba(20,33,61,0.06); min-height: 100vh; }
+.content { padding: 8px 32px 60px 32px; }
+@media (max-width: 640px) {
+    h1 { font-size: 20px; padding: 20px 18px; }
+    .content { padding: 4px 18px 40px 18px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    * { scroll-behavior: auto !important; transition: none !important; }
+}
+html { scroll-behavior: smooth; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Kingpin Racing Blue — Race Engineering Report</h1>
+<div class="content">
+
+<p><strong>Subsession:</strong> 86575215<br />
+<strong>Car:</strong> Dallara P217 (#21)<br />
+<strong>Class:</strong> Dallara P217<br />
+<strong>Finishing Position:</strong> P8 (started P19)<br />
+<strong>Class Finishing Position:</strong> P2 (started P5)<br />
+<strong>Total Race Laps Completed:</strong> 212<br />
+<strong>Field-Best Lap (session reference):</strong> 1:33.007 — Ben Rose (2 OLD 2 CARE)<br />
+<strong>Class-Best Lap (Dallara P217):</strong> 1:37.552 — Taylor Atchley (Kingpin Racing Blue)  </p>
+<h2>Team Overall Grade: <span class="grade grade-B">B</span></h2>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Grade</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pace</td>
+<td><span class="grade grade-A">A-</span></td>
+</tr>
+<tr>
+<td>Consistency</td>
+<td><span class="grade grade-B">B+</span></td>
+</tr>
+<tr>
+<td>Racecraft</td>
+<td><span class="grade grade-A">A+</span></td>
+</tr>
+<tr>
+<td>Incident Management</td>
+<td><span class="grade grade-D">D</span></td>
+</tr>
+</tbody>
+</table>
+<h2>Race Summary</h2>
+<p>Kingpin Racing Blue <span style="color:green">gained 3</span> (P5 → P2) -- P19 → P8 overall. 4 of 5 stints ran at or ahead of the class average pace, but incident management was the biggest swing factor this race. Tightening that up is the single biggest gain available before the next endurance event.</p>
+<p><strong><span style="color:green">Best single stint</span></strong><br />
+Taylor Atchley gained 4 positions (P6 → P2, laps 100–149).</p>
+<p><strong><span style="color:green">Fastest lap of the race</span></strong><br />
+1:37.552 by Taylor Atchley (Lap 203) — fastest lap.</p>
+<p><strong><span style="color:green">Best race pace</span></strong><br />
+Taylor Atchley averaged <span style="color:green">-1.134s</span> vs. the field during laps 200–212.</p>
+<p><strong><span style="color:red">Rules/reliability flags</span></strong><br />
+1 black flag across the race.</p>
+<p><strong><span style="color:green">Cleanest run</span></strong><br />
+Taylor Atchley kept it to just 6 incident points across laps 1–49 (49 laps).</p>
+<hr />
+<blockquote>
+<p>⭐ <strong>Endurance MVP — Nicholas Pearson:</strong> the strongest blend of consistency and clean racing across the whole event -- key attributes to a successful endurance race. Pace held up too, averaging <span style="color:green">-0.249s</span> vs. the field across their stints. Backed up with a B- overall rating.</p>
+</blockquote>
+<p><em>weighted toward consistency and incident management first (35% each), then pace (20%) and racecraft (10%).</em></p>
+<hr />
+<h2>Team Summary</h2>
+<table>
+<thead>
+<tr>
+<th>★</th>
+<th>Driver</th>
+<th>Stints</th>
+<th>Laps</th>
+<th>Best Lap</th>
+<th>Avg Lap</th>
+<th>Overall Rating</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>⭐</td>
+<td>Nicholas Pearson</td>
+<td>2</td>
+<td>100</td>
+<td>1:38.286</td>
+<td>1:39.952</td>
+<td><span class="grade grade-B">B-</span></td>
+</tr>
+<tr>
+<td></td>
+<td>Taylor Atchley</td>
+<td>3</td>
+<td>112</td>
+<td>1:37.552</td>
+<td>1:39.563</td>
+<td><span class="grade grade-C">C</span></td>
+</tr>
+</tbody>
+</table>
+<details class="driver-drawer"><summary><span class="drawer-name">Taylor Atchley</span><span class="drawer-meta">3 stints</span></summary><div class="drawer-body">
+<h3>Stint 1 — Laps 1–49 (49 laps)</h3>
+<ul>
+<li><strong>Position:</strong> P5 → P3 (<span style="color:green">Gained 2</span>)</li>
+<li><strong>Fastest Lap:</strong> 1:37.854 (Lap 2)</li>
+<li><strong>Average Lap:</strong> 1:39.415</li>
+<li><strong>Consistency Rating:</strong> <span style="color:red">Inconsistent</span></li>
+<li><strong>Lap Trend:</strong> 🟢 <span style="color:green">-1.322s</span></li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Pace</th>
+<th>Consistency</th>
+<th>Racecraft</th>
+<th>Incident Management</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="grade grade-A">A</span></td>
+<td><span class="grade grade-D">D</span></td>
+<td><span class="grade grade-A">A+</span></td>
+<td><span class="grade grade-B">B+</span></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Incident Analysis:</strong> 6 flagged laps.<br />
+  6x off track</p>
+<p>🟢 <strong>Strengths:</strong><br />
+- Pace actually improved through the stint -- strong tire/fuel management or building confidence.<br />
+- Net position gain of 5 during the stint.</p>
+<p>🟡 <strong>Opportunities:</strong><br />
+- Lap time spread was inconsistent (stdev 2.961s) -- tightening the consistency band would add free pace over a full stint.<br />
+- 6 incident-flagged laps this stint -- 6x off track.</p>
+<hr />
+<h3>Stint 2 — Laps 100–149 (50 laps)</h3>
+<ul>
+<li><strong>Position:</strong> P6 → P2 (<span style="color:green">Gained 4</span>)</li>
+<li><strong>Fastest Lap:</strong> 1:37.940 (Lap 140)</li>
+<li><strong>Average Lap:</strong> 1:39.413</li>
+<li><strong>Consistency Rating:</strong> Moderate</li>
+<li><strong>Lap Trend:</strong> 🟢 <span style="color:green">-0.230s</span></li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Pace</th>
+<th>Consistency</th>
+<th>Racecraft</th>
+<th>Incident Management</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="grade grade-B">B+</span></td>
+<td><span class="grade grade-A">A+</span></td>
+<td><span class="grade grade-B">B+</span></td>
+<td><span class="grade grade-F">F</span></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Incident Analysis:</strong> 13 flagged laps.<br />
+  12x off track, 3x lost control, 2x car contact, 1x contact, 1x black flag</p>
+<p>🟢 <strong>Strengths:</strong><br />
+- Pace actually improved through the stint -- strong tire/fuel management or building confidence.<br />
+- Net position gain of 4 during the stint.</p>
+<p>🟡 <strong>Opportunities:</strong><br />
+- Lap time spread was moderate (stdev 0.636s) -- tightening the consistency band would add free pace over a full stint.<br />
+- 13 incident-flagged laps this stint -- 12x off track, 3x lost control, 2x car contact.</p>
+<p>🔴 <strong>Critical Moments:</strong> <strong>Time Loss: 15.277s</strong><br />
+- Lap 119: off track, car contact, lost control — <span style="color:red">+13.110s</span>.<br />
+- Lap 115: off track — <span style="color:red">+2.167s</span>.<br />
+- Lap 136: black flag, car contact, lost control — no lap time recorded.</p>
+<hr />
+<h3>Stint 3 — Laps 200–212 (13 laps)</h3>
+<ul>
+<li><strong>Position:</strong> P3 → P2 (<span style="color:green">Gained 1</span>)</li>
+<li><strong>Fastest Lap:</strong> 1:37.552 (Lap 203)</li>
+<li><strong>Average Lap:</strong> 1:40.677</li>
+<li><strong>Consistency Rating:</strong> <span style="color:red">Inconsistent</span></li>
+<li><strong>Lap Trend:</strong> 🔴 <span style="color:red">+3.962s</span></li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Pace</th>
+<th>Consistency</th>
+<th>Racecraft</th>
+<th>Incident Management</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="grade grade-A">A+</span></td>
+<td><span class="grade grade-C">C</span></td>
+<td><span class="grade grade-A">A+</span></td>
+<td><span class="grade grade-A">A+</span></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Incident Analysis:</strong> 0 flagged laps.</p>
+<p>🟢 <strong>Strengths:</strong><br />
+- Net position gain of 1 during the stint.<br />
+- Zero incident-flagged laps -- clean stint, no contact or off-track excursions logged.</p>
+<p>🟡 <strong>Opportunities:</strong><br />
+- Lap time spread was inconsistent (stdev 2.539s) -- tightening the consistency band would add free pace over a full stint.<br />
+- Pace dropped 3.962s from the start to the end of the run -- worth reviewing tire management/fuel-save technique late in stints.</p>
+<hr />
+<p><strong>Engineering Notes</strong><br />
+- Off-track excursions exceeded 15% of the stint's laps -- points to a track-limits / brake-point discipline issue worth reviewing on data.<br />
+- Multiple lost-control moments suggest the driver is struggling to keep the car settled at the limit -- likely a car-control issue rather than one-off mistakes.<br />
+- Contact incidents concentrated in traffic point to a racecraft/traffic-management gap under pressure, not raw pace.<br />
+- Picked up a black flag -- review the infraction with the driver directly.<br />
+- Lap times were all over the place despite a clean stint -- likely a focus/fatigue issue rather than a car-control one.<br />
+- Significant late-stint pace drop-off -- consider a shorter stint length or earlier management cues next time.<br />
+- Stint 1: Nothing atypical to flag -- solid, representative stint with no driver-ability concerns.</p>
+<hr />
+</div></details><details class="driver-drawer"><summary><span class="drawer-name">Nicholas Pearson</span><span class="drawer-meta">2 stints</span></summary><div class="drawer-body">
+<h3>Stint 1 — Laps 50–99 (50 laps)</h3>
+<ul>
+<li><strong>Position:</strong> P3 → P2 (<span style="color:green">Gained 1</span>)</li>
+<li><strong>Fastest Lap:</strong> 1:38.286 (Lap 93)</li>
+<li><strong>Average Lap:</strong> 1:40.199</li>
+<li><strong>Consistency Rating:</strong> Moderate</li>
+<li><strong>Lap Trend:</strong> 🟢 <span style="color:green">-2.312s</span></li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Pace</th>
+<th>Consistency</th>
+<th>Racecraft</th>
+<th>Incident Management</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="grade grade-B">B-</span></td>
+<td><span class="grade grade-A">A</span></td>
+<td><span class="grade grade-A">A+</span></td>
+<td><span class="grade grade-D">D</span></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Incident Analysis:</strong> 9 flagged laps.<br />
+  8x off track, 2x lost control, 1x car contact</p>
+<p>🟢 <strong>Strengths:</strong><br />
+- Pace actually improved through the stint -- strong tire/fuel management or building confidence.<br />
+- Net position gain of 7 during the stint.</p>
+<p>🟡 <strong>Opportunities:</strong><br />
+- Lap time spread was moderate (stdev 0.766s) -- tightening the consistency band would add free pace over a full stint.<br />
+- 9 incident-flagged laps this stint -- 8x off track, 2x lost control, 1x car contact.</p>
+<p>🔴 <strong>Critical Moments:</strong> <strong>Time Loss: 18.933s</strong><br />
+- Lap 59: off track, lost control — <span style="color:red">+9.613s</span>.<br />
+- Lap 65: lost control — <span style="color:red">+9.320s</span>.</p>
+<hr />
+<h3>Stint 2 — Laps 150–199 (50 laps)</h3>
+<ul>
+<li><strong>Position:</strong> P3 → P2 (<span style="color:green">Gained 1</span>)</li>
+<li><strong>Fastest Lap:</strong> 1:38.296 (Lap 176)</li>
+<li><strong>Average Lap:</strong> 1:39.705</li>
+<li><strong>Consistency Rating:</strong> Moderate</li>
+<li><strong>Lap Trend:</strong> 🟢 <span style="color:green">-1.037s</span></li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Pace</th>
+<th>Consistency</th>
+<th>Racecraft</th>
+<th>Incident Management</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="grade grade-A">A</span></td>
+<td><span class="grade grade-A">A+</span></td>
+<td><span class="grade grade-A">A+</span></td>
+<td><span class="grade grade-D">D</span></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Incident Analysis:</strong> 8 flagged laps.<br />
+  6x off track, 2x lost control, 1x contact</p>
+<p>🟢 <strong>Strengths:</strong><br />
+- Pace actually improved through the stint -- strong tire/fuel management or building confidence.<br />
+- Net position gain of 1 during the stint.</p>
+<p>🟡 <strong>Opportunities:</strong><br />
+- Lap time spread was moderate (stdev 0.669s) -- tightening the consistency band would add free pace over a full stint.<br />
+- 8 incident-flagged laps this stint -- 6x off track, 2x lost control, 1x contact.</p>
+<p>🔴 <strong>Critical Moments:</strong> <strong>Time Loss: 18.864s</strong><br />
+- Lap 165: lost control — <span style="color:red">+18.864s</span>.</p>
+<hr />
+<p><strong>Engineering Notes</strong><br />
+- Off-track excursions exceeded 15% of the stint's laps -- points to a track-limits / brake-point discipline issue worth reviewing on data.<br />
+- Multiple lost-control moments suggest the driver is struggling to keep the car settled at the limit -- likely a car-control issue rather than one-off mistakes.<br />
+- One contact incident -- review the traffic situation on replay to see if it was avoidable.</p></div></details>
+</div>
+</div>
+</body>
+</html>
