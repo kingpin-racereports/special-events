@@ -21,7 +21,7 @@ const REPORTS = [
     track: "Circuit of Spa-Francorchamps",
     date: "2026-07-11",
     result: "P33 in class",
-    summary: "Leading 1 lap of the race around the halfway point and despite some major setbacks the team completed the 24hrs of Spa",
+    summary: "The 24 Hours of Spa is an endurance race held in Belgium at Circuit de Spa-Francorchamps since 1923. It is part of the Intercontinental GT Challenge Series in the real world.",
     image: "images/spaeventjul11.png",
     file: "reports/Spa24hKingpinBlueJul11.html",
     accent: "#35b7e0"
