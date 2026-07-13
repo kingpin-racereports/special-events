@@ -23,7 +23,17 @@ const REPORTS = [
     result: "P33 in class",
     summary: "Leading 1 lap of the race around the halfway point and despite some major setbacks the team completed the 24hrs of Spa",
     image: "images/spa24kingpinblue.png",
-    file: "reports/Spa24h%20Kingpin%20Blue%20Race%20Report%20-%20Jul%2011.html",
+    file: "reports/Spa24hKingpinBlueJul11.html",
+    accent: "#35b7e0"
+  },
+      {
+    title: "6 hours of Watkins Glen",
+    track: "Watkins Glen",
+    date: "2026-06-19",
+    result: "P2 in class",
+    summary: "The 6 Hours of the Glen Powered by VCO is a 6 hour endurance race held annually at Watkins Glen International in Watkins Glen, New York. It is the third round of the IMSA Michelin Endurance Cup in the IMSA WeatherTech SportsCar Championship.",
+    image: "images/watkinseventjun19.png",
+    file: "reports/KinpinWatkinsJun19.html",
     accent: "#35b7e0"
   },
 ];
