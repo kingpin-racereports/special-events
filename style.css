@@ -123,7 +123,7 @@ img { display: block; max-width: 100%; }
 
 @media (max-width: 768px) {
     .hero {
-        background-size: 240%;
+        background-size: 80%;
     }
 }
 
