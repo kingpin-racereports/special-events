@@ -121,12 +121,6 @@ img { display: block; max-width: 100%; }
   border-bottom: 1px solid var(--line);
 }
 
-@media (max-width: 768px) {
-    .hero {
-        background-size: 80%;
-    }
-}
-
 .hero-inner { max-width: 780px; }
 
 .hero h1 {
