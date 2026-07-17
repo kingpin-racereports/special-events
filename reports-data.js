@@ -33,7 +33,7 @@ const REPORTS = [
     result: "P2 in class",
     summary: "The 6 Hours of the Glen Powered by VCO is a 6 hour endurance race held annually at Watkins Glen International in Watkins Glen, New York. It is the third round of the IMSA Michelin Endurance Cup in the IMSA WeatherTech SportsCar Championship.",
     image: "images/watkinseventjun19.png",
-    file: "reports/KinpinWatkinsJun19.html",
+    file: "reports/KingpinWatkinsJun19.html",
     accent: "#C0C0C0"
   },      
   {
