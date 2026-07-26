@@ -22,7 +22,7 @@
 const REPORTS = [
     {
     title: "6hrs of Road America",
-    track: "Circuit of Spa-Francorchamps",
+    track: "Road America",
     date: "2026-07-25",
     result: "P10 in class",
     summary: "The 6 Hours of the Road America is a 6 hour endurance race held annually at Road America. It is the fourth round of the IMSA Michelin Endurance Cup in the IMSA WeatherTech SportsCar Championship.",
