@@ -15,9 +15,9 @@
   automatically, most recent first.
 */
 
-// 1st Place == FFD700
-// 2nd Place == C0C0C0
-// 3rd Place == 804A00
+// 1st Place == &#129351;  FFD700
+// 2nd Place == &#129352;  C0C0C0
+// 3rd Place == &#129353;  804A00
 
 const REPORTS = [
     {
@@ -44,7 +44,7 @@ const REPORTS = [
     title: "6 hours of Watkins Glen",
     track: "Watkins Glen",
     date: "2026-06-20",
-    result: "P2 in class",
+    result: "&#129352; P2 in class",
     summary: "The 6 Hours of the Glen Powered by VCO is a 6 hour endurance race held annually at Watkins Glen International in Watkins Glen, New York. It is the third round of the IMSA Michelin Endurance Cup in the IMSA WeatherTech SportsCar Championship.",
     image: "images/watkinseventjun19.png",
     file: "reports/KingpinWatkinsJun19.html",
@@ -54,7 +54,7 @@ const REPORTS = [
     title: "Sebring 12HR",
     track: "Sebring International",
     date: "2026-03-28",
-    result: "P3 in class",
+    result: "&#129353; P3 in class",
     summary: "The Sebring 12HR is a 12-hour endurance race held at Sebring International Raceway in Sebring, Florida.  It is the second round of the IMSA Michelin Endurance Cup in the IMSA WeatherTech SportsCar Championship.",
     image: "images/sebring12hr.png",
     file: "reports/Sebring12hr2026.html",
@@ -64,7 +64,7 @@ const REPORTS = [
     title: "Bathurst 12HR",
     track: "Mount Panorama Circuit",
     date: "2026-02-21",
-    result: "P3 in class",
+    result: "&#129353; P3 in class",
     summary: "The Bathurst 12 Hour is a 12 hour endurance race staged on the Mount Panorama Circuit in Bathurst, New South Wales, Australia. This event serves as the opening round to the Intercontinental GT Challenge Series in the real world.",
     image: "images/bathurst12hr.png",
     file: "reports/Bathurst12hr.html",
