@@ -15,7 +15,21 @@
   automatically, most recent first.
 */
 
+// 1st Place == FFD700
+// 2nd Place == C0C0C0
+// 3rd Place == 804A00
+
 const REPORTS = [
+    {
+    title: "6hrs of Road America",
+    track: "Circuit of Spa-Francorchamps",
+    date: "2026-07-25",
+    result: "P10 in class",
+    summary: "The 6 Hours of the Road America is a 6 hour endurance race held annually at Road America. It is the fourth round of the IMSA Michelin Endurance Cup in the IMSA WeatherTech SportsCar Championship.",
+    image: "images/ram6hr.png",
+    file: "reports/6hrsRAM2026KingpinBlue.html",
+    accent: "#35b7e0"
+  },
   {
     title: "Spa 24hr presented by Falken Tire",
     track: "Circuit of Spa-Francorchamps",
