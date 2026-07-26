@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Race report for 6hrs of Road America.">
+<title>Kingpin Racing Blue — Race Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+    --navy: #14213d;
+    --navy-2: #1e3a5f;
+    --accent: #3d7ab5;
+    --bg: #f4f6f9;
+    --card: #ffffff;
+    --ink: #1c2530;
+    --muted: #5b6675;
+    --green-bg: #e3f6e8; --green-ink: #146c34;
+    --blue-bg: #e8f1fb;  --blue-ink: #1c5a96;
+    --amber-bg: #fdf3d9; --amber-ink: #8a6a08;
+    --orange-bg: #fce3cf; --orange-ink: #9a4b13;
+    --red-bg: #fbe0e0;   --red-ink: #a3211d;
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Inter', -apple-system, sans-serif;
+    line-height: 1.55;
+}
+h1 {
+    font-family: 'Oswald', sans-serif;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: #fff;
+    background: linear-gradient(120deg, var(--navy), var(--navy-2));
+    margin: 0;
+    padding: 28px 32px;
+    font-size: 26px;
+}
+h1.team-banner {
+    font-size: 20px;
+    padding: 18px 32px;
+    background: linear-gradient(120deg, var(--accent), var(--navy-2));
+}
+hr.team-divider {
+    border: none;
+    border-top: 8px solid var(--bg);
+    margin: 0;
+}
+h2 {
+    font-family: 'Oswald', sans-serif;
+    font-weight: 600;
+    color: var(--navy);
+    border-bottom: 3px solid var(--accent);
+    padding-bottom: 6px;
+    margin-top: 40px;
+    font-size: 20px;
+    letter-spacing: 0.01em;
+    scroll-margin-top: 84px;
+}
+h3 {
+    font-family: 'Oswald', sans-serif;
+    font-weight: 600;
+    color: var(--navy-2);
+    margin-top: 26px;
+    font-size: 16px;
+    border-left: 4px solid var(--accent);
+    padding-left: 10px;
+    scroll-margin-top: 84px;
+}
+.driver-drawer {
+    margin: 18px 0;
+    border: 1px solid #dfe4ea;
+    border-radius: 8px;
+    overflow: hidden;
+}
+.driver-drawer summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 14px 18px;
+    background: linear-gradient(120deg, var(--navy), var(--navy-2));
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-family: 'Oswald', sans-serif;
+    font-weight: 600;
+    font-size: 17px;
+    letter-spacing: 0.01em;
+}
+.driver-drawer summary::-webkit-details-marker { display: none; }
+.driver-drawer summary::before {
+    content: "▸";
+    display: inline-block;
+    margin-right: 10px;
+    transition: transform 0.15s;
+}
+.driver-drawer[open] summary::before { transform: rotate(90deg); }
+.driver-drawer summary:hover { background: linear-gradient(120deg, var(--navy-2), var(--accent)); }
+.drawer-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    color: #cdd8e8;
+    background: rgba(255,255,255,0.12);
+    padding: 3px 10px;
+    border-radius: 12px;
+}
+.drawer-body { padding: 4px 20px 8px 20px; }
+.drawer-body h3:first-child { margin-top: 14px; }
+strong { font-weight: 600; }
+em { color: var(--muted); font-size: 0.72em; }
+hr { border: none; border-top: 1px solid #dfe4ea; margin: 22px 0; }
+blockquote {
+    border-left: 4px solid #d4af37;
+    margin: 14px 0;
+    padding: 8px 16px;
+    background: #fdf8ec;
+    color: #6b5416;
+    border-radius: 0 6px 6px 0;
+}
+table {
+    border-collapse: collapse;
+    width: 100%;
+    table-layout: fixed;
+    margin: 12px 0 18px 0;
+    font-size: 14px;
+    background: var(--card);
+    box-shadow: 0 1px 3px rgba(20,33,61,0.08);
+    border-radius: 6px;
+    overflow: hidden;
+}
+th {
+    background: var(--navy);
+    color: #fff;
+    text-align: left;
+    padding: 9px 12px;
+    font-family: 'Oswald', sans-serif;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    font-size: 13px;
+    text-transform: uppercase;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+td {
+    border-bottom: 1px solid #eef1f5;
+    padding: 8px 12px;
+    font-variant-numeric: tabular-nums;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #fafbfd; }
+.grade {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    font-size: 12.5px;
+    padding: 2px 9px;
+    border-radius: 20px;
+}
+h2 .grade { font-size: 16px; padding: 3px 13px; vertical-align: middle; }
+.grade-A { background: var(--green-bg); color: var(--green-ink); }
+.grade-B { background: var(--blue-bg); color: var(--blue-ink); }
+.grade-C { background: var(--amber-bg); color: var(--amber-ink); }
+.grade-D { background: var(--orange-bg); color: var(--orange-ink); }
+.grade-F { background: var(--red-bg); color: var(--red-ink); }
+.podium-badge {
+    display: inline-block;
+    font-family: 'Oswald', sans-serif;
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.03em;
+    padding: 3px 12px;
+    border-radius: 20px;
+    margin-left: 6px;
+    vertical-align: middle;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+}
+.podium-badge.podium-gold { background: linear-gradient(120deg, #f7d774, #c9971a); color: #4a3200; }
+.podium-badge.podium-silver { background: linear-gradient(120deg, #e6e9ec, #aab2ba); color: #2b3238; }
+.podium-badge.podium-bronze { background: linear-gradient(120deg, #d79b6a, #9c5a2e); color: #3a1f0a; }
+.banner-trophy {
+    float: right;
+    font-size: 32px;
+    line-height: 1;
+    filter: drop-shadow(0 1px 3px rgba(0,0,0,0.3));
+}
+h1.team-banner .banner-trophy { font-size: 26px; }
+span[style*="color:green"] { font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+span[style*="color:red"] { font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+ul { margin: 6px 0 14px 0; padding-left: 22px; }
+li { margin-bottom: 4px; }
+p { margin: 8px 0; }
+.wrap { max-width: 900px; margin: 0 auto; background: var(--card); box-shadow: 0 2px 12px rgba(20,33,61,0.06); min-height: 100vh; }
+.content { padding: 8px 32px 60px 32px; }
+@media (max-width: 640px) {
+    h1 { font-size: 20px; padding: 20px 18px; }
+    .content { padding: 4px 18px 40px 18px; }
+    table { font-size: 11px; }
+    th, td { padding: 5px 4px; }
+    .grade { font-size: 10.5px; padding: 1px 6px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    * { scroll-behavior: auto !important; transition: none !important; }
+}
+html { scroll-behavior: smooth; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Kingpin Racing Blue — Race Engineering Report</h1>
+<div class="content">
+
+<p><strong>Event:</strong> 6hrs of Road America<br />
+<strong>Subsession:</strong> 87474916<br />
+<strong>Car:</strong> Chevrolet Corvette Z06 GT3.R (#28)<br />
+<strong>Class:</strong> IMSA23<br />
+<strong>Finishing Position:</strong> P23 (started P50)<br />
+<strong>Class Finishing Position:</strong> P10 (started P26)<br />
+<strong>Total Race Laps Completed:</strong> 167<br />
+<strong>Field-Best Lap (session reference):</strong> 1:51.321 — Leo Leung (GFVZ RACING)<br />
+<strong>Class-Best Lap (IMSA23):</strong> 2:04.145 — James Zhang (Gecko Racing)  </p>
+<h2>Team Overall Grade: <span class="grade grade-B">B</span></h2>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Grade</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pace</td>
+<td><span class="grade grade-B">B</span></td>
+</tr>
+<tr>
+<td>Consistency</td>
+<td><span class="grade grade-B">B</span></td>
+</tr>
+<tr>
+<td>Racecraft</td>
+<td><span class="grade grade-A">A-</span></td>
+</tr>
+<tr>
+<td>Incident Management</td>
+<td><span class="grade grade-C">C</span></td>
+</tr>
+</tbody>
+</table>
+<h2>Race Summary</h2>
+<p>Kingpin Racing Blue <span style="color:green">gained 16 positions</span> (P26 → P10) -- P49 → P23 overall. 2 of 4 stints ran at or ahead of the class average pace, but incident management was the biggest swing factor this race. Tightening that up is the single biggest gain available before the next endurance event.</p>
+<p><strong><span style="color:green">Best single stint</span></strong><br />
+Kip Blair gained 15 positions (P26 → P11, laps 1–50).</p>
+<p><strong><span style="color:green">Fastest lap of the race</span></strong><br />
+2:04.910 by Taylor Atchley (Lap 165) — 13th fastest.</p>
+<p><strong><span style="color:green">Best race pace</span></strong><br />
+Kip Blair averaged <span style="color:green">-0.464s</span> vs. the field during laps 1–50.</p>
+<p><strong><span style="color:green">Cleanest run</span></strong><br />
+Taylor Atchley kept it to just 3 Flagged Laps across the stint (94% Clean).</p>
+<hr />
+<blockquote>
+<p>⭐ <strong>Endurance MVP — Taylor Atchley:</strong> the strongest blend of consistency and clean racing across the whole event -- key attributes to a successful endurance race. Pace held up too, averaging <span style="color:green">-0.172s</span> vs. the field across their stints. Backed up with a B+ overall rating.</p>
+</blockquote>
+<p><em>weighted toward consistency and incident management first (35% each), then pace (20%) and racecraft (10%).</em></p>
+<hr />
+<h2>Team Summary</h2>
+<table>
+<thead>
+<tr>
+<th>★</th>
+<th>Driver</th>
+<th>Stints</th>
+<th>Laps</th>
+<th>Best Lap</th>
+<th>Avg Lap</th>
+<th>Overall Rating</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>⭐</td>
+<td>Taylor Atchley</td>
+<td>1</td>
+<td>52</td>
+<td>2:04.910</td>
+<td>2:06.248</td>
+<td><span class="grade grade-B">B+</span></td>
+</tr>
+<tr>
+<td></td>
+<td>Kip Blair</td>
+<td>2</td>
+<td>63</td>
+<td>2:05.613</td>
+<td>2:06.981</td>
+<td><span class="grade grade-C">C+</span></td>
+</tr>
+<tr>
+<td></td>
+<td>Sean Ferreyra</td>
+<td>1</td>
+<td>52</td>
+<td>2:06.422</td>
+<td>2:07.986</td>
+<td><span class="grade grade-C">C</span></td>
+</tr>
+</tbody>
+</table>
+<details class="driver-drawer"><summary><span class="drawer-name">Kip Blair</span><span class="drawer-meta">2 stints</span></summary><div class="drawer-body">
+<h3>Stint 1 — Laps 1–50 (50 laps)</h3>
+<ul>
+<li><strong>Position:</strong> P26 → P11 (<span style="color:green">Gained 15</span>)</li>
+<li><strong>Fastest Lap:</strong> 2:05.613 (Lap 5)</li>
+<li><strong>Average Lap:</strong> 2:07.028</li>
+<li><strong>Pace:</strong> <span style="color:green">-0.464s</span> vs. the class average</li>
+<li><strong>Consistency Rating:</strong> Strong</li>
+<li><strong>Lap Trend:</strong> 🔴 <span style="color:red">+0.400s</span></li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Pace</th>
+<th>Consistency</th>
+<th>Racecraft</th>
+<th>Incident Management</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="grade grade-A">A-</span></td>
+<td><span class="grade grade-B">B+</span></td>
+<td><span class="grade grade-B">B+</span></td>
+<td><span class="grade grade-F">F</span></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Incident Analysis:</strong> 13 flagged laps.<br />
+  13x off track, 2x lost control, 1x car contact, 1x contact</p>
+<p>🟢 <strong>Strengths:</strong><br />
+- Strong lap-to-lap consistency (stdev 0.549s).<br />
+- Net position gain of 15 during the stint.</p>
+<p>🟡 <strong>Opportunities:</strong><br />
+- 13 incident-flagged laps this stint -- 13x off track, 2x lost control, 1x car contact.</p>
+<p>🔴 <strong>Critical Moments:</strong> <strong>Time Loss: 15.504s</strong><br />
+- Lap 36: off track, contact, lost control — <span style="color:red">+10.815s</span>.<br />
+- Lap 13: off track, car contact, lost control — <span style="color:red">+4.689s</span>.</p>
+<hr />
+<h3>Stint 2 — Laps 103–115 (13 laps)</h3>
+<ul>
+<li><strong>Position:</strong> P15 → P10 (<span style="color:green">Gained 5</span>)</li>
+<li><strong>Fastest Lap:</strong> 2:06.147 (Lap 113)</li>
+<li><strong>Average Lap:</strong> 2:06.777</li>
+<li><strong>Pace:</strong> <span style="color:red">+0.053s</span> vs. the class average</li>
+<li><strong>Consistency Rating:</strong> Elite</li>
+<li><strong>Lap Trend:</strong> 🟢 <span style="color:green">-0.416s</span></li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Pace</th>
+<th>Consistency</th>
+<th>Racecraft</th>
+<th>Incident Management</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="grade grade-B">B</span></td>
+<td><span class="grade grade-A">A-</span></td>
+<td><span class="grade grade-B">B+</span></td>
+<td><span class="grade grade-A">A+</span></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Incident Analysis:</strong> 3 flagged laps.<br />
+  3x off track</p>
+<p>🟢 <strong>Strengths:</strong><br />
+- Elite lap-to-lap consistency (stdev 0.350s).<br />
+- Lap times improved as the stint progressed, showing excellent adaptation and tire management.<br />
+- Net position gain of 5 during the stint.</p>
+<p>🟡 <strong>Opportunities:</strong><br />
+- 3 incident-flagged laps this stint -- 3x off track.</p>
+<p>🔴 <strong>Critical Moments:</strong> <strong>Time Loss: 2.609s</strong><br />
+- Lap 108: off track — <span style="color:red">+2.609s</span>.</p>
+<hr />
+<p><strong>Engineering Notes</strong><br />
+- Excessive Track Usage -- Track limits are the edge—not the target..<br />
+- Several lost-control moments interrupted otherwise promising laps. Prioritize smooth steering, braking, and throttle application.  Smooth is Fast.<br />
+- 2x car contact incidents concentrated in traffic -- Making friends.. One Door at a time..</p>
+<p><strong>Sector Consistency</strong></p>
+<table>
+<thead>
+<tr>
+<th>Sector 1</th>
+<th>Sector 2</th>
+<th>Sector 3</th>
+<th>Sector 4</th>
+<th>Sector 5</th>
+<th>Sector 6</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0.101s</td>
+<td>0.102s</td>
+<td><span style="color:purple"><b>0.172s</b></span></td>
+<td><span style="color:purple"><b>0.182s</b></span></td>
+<td>0.248s</td>
+<td><span style="color:purple"><b>0.157s</b></span></td>
+</tr>
+</tbody>
+</table>
+<hr />
+</div></details><details class="driver-drawer"><summary><span class="drawer-name">Sean Ferreyra</span><span class="drawer-meta">1 stint</span></summary><div class="drawer-body">
+<h3>Stint 1 — Laps 51–102 (52 laps)</h3>
+<ul>
+<li><strong>Position:</strong> P16 → P13 (<span style="color:green">Gained 3</span>)</li>
+<li><strong>Fastest Lap:</strong> 2:06.422 (Lap 94)</li>
+<li><strong>Average Lap:</strong> 2:07.986</li>
+<li><strong>Pace:</strong> <span style="color:red">+0.825s</span> vs. the class average</li>
+<li><strong>Consistency Rating:</strong> Strong</li>
+<li><strong>Lap Trend:</strong> 🟢 <span style="color:green">-0.394s</span></li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Pace</th>
+<th>Consistency</th>
+<th>Racecraft</th>
+<th>Incident Management</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="grade grade-C">C</span></td>
+<td><span class="grade grade-B">B</span></td>
+<td><span class="grade grade-B">B</span></td>
+<td><span class="grade grade-C">C</span></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Incident Analysis:</strong> 5 flagged laps.<br />
+  5x off track, 1x contact, 1x car contact, 1x lost control</p>
+<p>🟢 <strong>Strengths:</strong><br />
+- Strong lap-to-lap consistency (stdev 0.741s).<br />
+- Lap times improved as the stint progressed, showing excellent adaptation and tire management.<br />
+- Net position gain of 3 during the stint.</p>
+<p>🟡 <strong>Opportunities:</strong><br />
+- 5 incident-flagged laps this stint -- 5x off track, 1x contact, 1x car contact.</p>
+<p>🔴 <strong>Critical Moments:</strong> <strong>Time Loss: 20.697s</strong><br />
+- Lap 73: off track, contact, car contact, lost control — <span style="color:red">+16.661s</span>.<br />
+- Lap 57: off track — <span style="color:red">+4.036s</span>.</p>
+<hr />
+<p><strong>Engineering Notes</strong><br />
+- At least one lost-control moment -- It happens to us all, don't sweat it.<br />
+- 2x car contact incidents -- Making friends.. One Door at a time..</p>
+<p><strong>Sector Consistency</strong></p>
+<table>
+<thead>
+<tr>
+<th>Sector 1</th>
+<th>Sector 2</th>
+<th>Sector 3</th>
+<th>Sector 4</th>
+<th>Sector 5</th>
+<th>Sector 6</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0.101s</td>
+<td>0.135s</td>
+<td>0.388s</td>
+<td>0.320s</td>
+<td>0.206s</td>
+<td>0.160s</td>
+</tr>
+</tbody>
+</table>
+<hr />
+</div></details><details class="driver-drawer"><summary><span class="drawer-name">Taylor Atchley</span><span class="drawer-meta">1 stint</span></summary><div class="drawer-body">
+<h3>Stint 1 — Laps 116–167 (52 laps)</h3>
+<ul>
+<li><strong>Position:</strong> P12 → P10 (<span style="color:green">Gained 2</span>)</li>
+<li><strong>Fastest Lap:</strong> 2:04.910 (Lap 165)</li>
+<li><strong>Average Lap:</strong> 2:06.248</li>
+<li><strong>Pace:</strong> <span style="color:green">-0.172s</span> vs. the class average</li>
+<li><strong>Consistency Rating:</strong> Strong</li>
+<li><strong>Lap Trend:</strong> 🟢 <span style="color:green">-1.173s</span></li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Pace</th>
+<th>Consistency</th>
+<th>Racecraft</th>
+<th>Incident Management</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="grade grade-A">A-</span></td>
+<td><span class="grade grade-B">B</span></td>
+<td><span class="grade grade-A">A+</span></td>
+<td><span class="grade grade-B">B+</span></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Incident Analysis:</strong> 3 flagged laps.<br />
+  3x off track, 1x lost control</p>
+<p>🟢 <strong>Strengths:</strong><br />
+- Strong lap-to-lap consistency (stdev 0.839s).<br />
+- Lap times improved as the stint progressed, showing excellent adaptation and tire management.<br />
+- Net position gain of 2 during the stint.</p>
+<p>🟡 <strong>Opportunities:</strong><br />
+- 3 incident-flagged laps this stint -- 3x off track, 1x lost control.</p>
+<p>🔴 <strong>Critical Moments:</strong> <strong>Time Loss: 17.864s</strong><br />
+- Lap 145: off track, lost control — <span style="color:red">+17.864s</span>.</p>
+<hr />
+<p><strong>Engineering Notes</strong><br />
+- At least one lost-control moment -- It happens to us all, don't sweat it.<br />
+- Textbook rhythm in Stint 1, this is the Benchmark!</p>
+<p><strong>Sector Consistency</strong></p>
+<table>
+<thead>
+<tr>
+<th>Sector 1</th>
+<th>Sector 2</th>
+<th>Sector 3</th>
+<th>Sector 4</th>
+<th>Sector 5</th>
+<th>Sector 6</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span style="color:purple"><b>0.084s</b></span></td>
+<td><span style="color:purple"><b>0.080s</b></span></td>
+<td>0.383s</td>
+<td>0.258s</td>
+<td><span style="color:purple"><b>0.166s</b></span></td>
+<td>0.176s</td>
+</tr>
+</tbody>
+</table>
+</div></details><h2>Sector Times</h2>
+<p><em>Optimal: 2:04.430</em>  <em><span style="color:red">+0.285s</span> off Class-Best (IMSA23)</em></p>
+<table>
+<thead>
+<tr>
+<th>Sector 1</th>
+<th>Sector 2</th>
+<th>Sector 3</th>
+<th>Sector 4</th>
+<th>Sector 5</th>
+<th>Sector 6</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0:15.661<br>(Taylor Atchley)</td>
+<td>0:21.280<br>(Taylor Atchley)</td>
+<td>0:23.005<br>(Taylor Atchley)</td>
+<td>0:33.124<br>(Taylor Atchley)</td>
+<td>0:14.379<br>(Taylor Atchley)</td>
+<td>0:16.981<br>(Taylor Atchley)</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</body>
+</html>
