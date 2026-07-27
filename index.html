@@ -3,14 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Kingpin Racing — eSports</title>
-<meta name="description" content="Race coverage from Kingpin Racing's iRacing eSports.">
+<title>Kingpin Racing — eSports Division</title>
+<meta name="description" content="Race reports from Kingpin Racing's iRacing eSports.">
 
 <link rel="icon" href="images/KingpinLogo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Inter:wght@400;500;600&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="planner-auth.css">
 </head>
 <body>
 
@@ -23,6 +24,7 @@
     </span>
   </a>
   <nav class="site-nav">
+    <a href="#" id="openPlannerBtn">PLANNER</a>
     <a href="#reports">Race Reports</a>
     <a href="#about">About</a>
     <a href="https://www.kingpinracing.com" target="_blank" rel="noopener">Kingpin Racing</a>
@@ -42,8 +44,8 @@
 
   <section class="reports" id="reports">
     <div class="section-head">
-      <p class="eyebrow">Reports</p>
-      <h2>Race Coverage</h2>
+      <p class="eyebrow">Race Reports</p>
+      <h2>Season Coverage</h2>
       <p class="section-sub">Every round the eSports squad has turned a wheel in, written up and filed straight from the timing tower.</p>
     </div>
 
@@ -59,7 +61,7 @@
       <span class="badge badge-lg"><img src="images/KingpinLogo.png" alt="Kingpin Racing"></span>
       <div>
         <p class="eyebrow">About</p>
-        <p>Kingpin Racing's eSports carries the same GT3/GT4 focus as the wheel-to-wheel team onto iRacing, running sprint and endurance events across the service's top series. This page is the archive: every race report the drivers and crew have put together, in one place.</p>
+        <p>Kingpin Racing's eSports  carries the same GT3/GT4 focus as the wheel-to-wheel team onto iRacing, running sprint and endurance events across the service's top series. This page is the archive: every race report the drivers and crew have put together, in one place.</p>
       </div>
     </div>
   </section>
@@ -69,11 +71,16 @@
 <footer class="site-footer">
   <span class="badge badge-sm"><img src="images/KingpinLogo.png" alt="Kingpin Racing"></span>
   <p>Kingpin Racing &middot; eSports </p>
-  <p class="footer-links"><a href="https://www.kingpinracing.com" target="_blank" rel="noopener">www.kingpinracing.com</a></p>
+  <p class="footer-links"><a href="https://www.kingpinracing.com" target="_blank" rel="noopener">kingpinracing.com</a></p>
   <p class="footer-copy">&copy; <span id="year"></span> Kingpin Racing</p>
 </footer>
 
+<div id="plannerAuthRoot"></div>
+
 <script src="reports-data.js"></script>
 <script src="script.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-client.js"></script>
+<script src="planner-auth.js"></script>
 </body>
 </html>

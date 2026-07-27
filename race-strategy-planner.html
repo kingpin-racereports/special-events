@@ -1,0 +1,1793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Race Strategy Planner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0A0C10; --panel:#12151B; --panelRaised:#191E27;
+    --border:#262C38; --borderLight:#343B49;
+    --text:#EDEFF2; --textMuted:#8B93A1; --textFaint:#575F6E;
+    --blue:#2E6FE0; --amber:#F2A63E; --green:#3FB27F; --red:#E2445C;
+    --purple:#8B6BF0; --gold:#E0B84B; --silver:#C6CBD3; --bronze:#C97F4B;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);}
+  body{font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased;}
+  .font-display{font-family:'Barlow Condensed',sans-serif;letter-spacing:0.02em;}
+  .font-mono{font-family:'JetBrains Mono',monospace;}
+  .eyebrow{font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.14em;color:var(--textFaint);}
+  a,button{font-family:inherit;}
+  button{cursor:pointer;}
+  input,select{font-family:inherit;}
+  .no-scrollbar::-webkit-scrollbar{display:none;}
+  .no-scrollbar{-ms-overflow-style:none;scrollbar-width:none;}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+  .fade-in{animation:fadeIn .35s ease-out;}
+  input[type="time"]::-webkit-calendar-picker-indicator{filter:invert(0.7);}
+  select option{background:var(--panelRaised);color:var(--text);}
+  input:focus, select:focus, button:focus-visible{outline:2px solid var(--blue); outline-offset:1px;}
+
+  .field{
+    background:var(--panel); border:1px solid var(--borderLight); color:var(--text);
+    border-radius:10px; padding:10px 12px; width:100%; font-size:14px;
+  }
+  .label{
+    color:var(--textFaint); letter-spacing:0.08em; font-family:'JetBrains Mono',monospace;
+    text-transform:uppercase; font-size:11px; display:flex; align-items:center; gap:5px; margin-bottom:6px;
+  }
+  .page{max-width:768px;margin:0 auto;padding:32px 20px 112px;}
+  .page-wide{max-width:896px;}
+  .btn-back{display:flex;align-items:center;gap:5px;font-size:14px;color:var(--textMuted);background:none;border:none;padding:0;}
+  .icon{display:inline-flex;vertical-align:middle;}
+
+  /* ---- icons (inline svg strokes, mimics lucide) ---- */
+  svg.i{stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
+
+  /* ---- Home ---- */
+  .home-wrap{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;}
+  .races-strip{width:100%;max-width:768px;margin-bottom:40px;}
+  .races-head{display:flex;align-items:center;justify-content:between;justify-content:space-between;margin-bottom:12px;padding:0 4px;}
+  .archive-link{display:flex;align-items:center;gap:4px;font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.14em;color:var(--gold);background:none;border:none;}
+  .tile-row{display:flex;gap:16px;overflow-x:auto;padding:4px 4px 8px;}
+  .create-circle{width:56px;height:56px;border-radius:999px;border:1px solid var(--borderLight);color:var(--textMuted);display:flex;align-items:center;justify-content:center;margin-bottom:32px;}
+  .create-btn{display:flex;align-items:center;gap:12px;border-radius:999px;padding:16px 28px;background:var(--panel);border:1px solid var(--borderLight);color:var(--text);transition:border-color .15s;}
+  .create-btn:hover{border-color:var(--blue);}
+  .create-btn span{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:20px;}
+  .name-flow{width:100%;max-width:420px;display:flex;flex-direction:column;align-items:center;gap:16px;}
+  .name-input{width:100%;text-align:center;font-family:'Barlow Condensed',sans-serif;font-size:24px;font-weight:600;outline:none;border-radius:12px;background:var(--panel);border:1px solid var(--borderLight);padding:14px 16px;color:var(--text);}
+  .continue-btn{display:flex;align-items:center;gap:8px;border-radius:999px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:16px;padding:12px 24px;background:var(--blue);color:#0A0C10;border:none;}
+  .continue-btn:disabled{background:var(--panel);color:var(--textFaint);opacity:.6;cursor:not-allowed;}
+
+  /* ---- race tile ---- */
+  .race-tile{flex:0 0 auto;width:220px;border-radius:16px;overflow:hidden;background:var(--panel);border:2px solid var(--border);position:relative;text-align:left;cursor:pointer;}
+  .catalog-tile{cursor:pointer;}
+  .race-tile .strip{height:200px;position:relative;}
+  .race-tile .strip button.del{position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:999px;background:rgba(10,12,16,0.55);border:none;color:#fff;display:flex;align-items:center;justify-content:center;}
+  .race-tile button.dup{position:absolute;bottom:8px;right:8px;width:22px;height:22px;border-radius:999px;background:rgba(10,12,16,0.55);border:none;color:#fff;display:flex;align-items:center;justify-content:center;z-index:2;}
+  .race-tile .body{padding:12px 30px 14px 14px;}
+  .race-tile .name{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:17px;line-height:1.15;margin-bottom:3px;}
+  .race-tile .meta{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);}
+
+  /* ---- car cards / catalog ---- */
+  .car-card{flex:0 0 auto;width:152px;border-radius:16px;overflow:hidden;background:var(--panel);border:2px solid var(--border);position:relative;}
+  .car-card .strip{height:200px;position:relative;}
+  .car-card .num{position:absolute;bottom:-9px;left:10px;background:var(--bg);border-radius:6px;padding:0 7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:16px;}
+  .car-card .del{position:absolute;top:6px;right:6px;width:20px;height:20px;border-radius:999px;background:rgba(10,12,16,0.55);border:none;color:#fff;display:flex;align-items:center;justify-content:center;}
+  .catalog-tile .del{position:absolute;top:6px;right:6px;width:20px;height:20px;border-radius:999px;background:rgba(10,12,16,0.55);border:none;color:#fff;display:flex;align-items:center;justify-content:center;}
+  .car-card .body{padding:14px 10px 10px;font-family:'Inter',sans-serif;}
+  .car-card .team{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;}
+  .car-card .model{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--textFaint);margin-top:2px;}
+  .add-car-card{flex:0 0 auto;width:152px;height:130px;border-radius:16px;background:transparent;border:1.5px dashed var(--borderLight);color:var(--textMuted);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;}
+  .add-car-card span{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:12px;}
+
+  .livery{width:100%;height:100%;position:relative;overflow:hidden;}
+  .track-layout-img{width:100%;height:100%;object-fit:cover;display:block;}
+  .livery::before{content:"";position:absolute;inset:0;background:
+    repeating-linear-gradient(115deg, rgba(255,255,255,0.14) 0 10px, transparent 10px 26px);}
+  .livery::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg, rgba(0,0,0,0) 40%, rgba(0,0,0,0.35) 100%);}
+
+  .catalog-panel{margin-top:16px;border-radius:16px;background:var(--panel);border:1px solid var(--border);padding:16px;}
+  .catalog-row{display:flex;gap:12px;overflow-x:auto;padding-bottom:8px;}
+  .catalog-tile{flex:0 0 auto;width:152px;border-radius:16px;overflow:hidden;background:var(--panelRaised);border:2px solid var(--border);text-align:left;position:relative;}
+  .catalog-tile .strip{height:64px;position:relative;}
+  .catalog-tile .num{position:absolute;bottom:-9px;left:10px;background:var(--bg);border-radius:6px;padding:0 7px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:16px;}
+  .catalog-tile .body{padding:14px 10px 10px;}
+  .catalog-tile .team{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;}
+  .catalog-tile .model{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--textFaint);margin-top:2px;}
+
+  .new-car-form{margin-top:16px;border-radius:12px;background:var(--panelRaised);border:1px solid var(--borderLight);padding:14px;max-width:320px;display:flex;flex-direction:column;gap:8px;}
+  .swatches{display:flex;gap:8px;}
+  .swatch{width:18px;height:18px;border-radius:999px;border:2px solid transparent;padding:0;}
+  .swatch.active{border-color:var(--text);}
+
+  /* ---- driver / car detail section ---- */
+  .car-detail{border-radius:16px;overflow:hidden;background:var(--panel);border:2px solid var(--border);margin-bottom:16px;}
+  .car-detail .strip{height:56px;position:relative;}
+  .car-detail-plan .strip{height:200px;}
+  .car-detail .num{position:absolute;bottom:-10px;left:12px;background:var(--bg);border-radius:7px;padding:0 8px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:20px;}
+  .car-detail .content{padding:20px 16px 16px;}
+  .driver-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+  .driver-row .idx{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);width:18px;}
+  .driver-row button{background:none;border:none;color:var(--textFaint);display:flex;}
+  .add-driver{margin-top:6px;display:flex;align-items:center;gap:4px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;background:none;border:none;}
+
+  /* ---- buttons general ---- */
+  .btn-primary{width:100%;border-radius:999px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:18px;padding:16px 0;display:flex;align-items:center;justify-content:center;gap:8px;border:none;background:var(--blue);color:#0A0C10;}
+  .btn-primary:disabled{background:var(--panel);color:var(--textFaint);border:1px solid var(--borderLight);cursor:not-allowed;}
+
+  /* ---- info chips ---- */
+  .chip-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:560px;margin:24px 0;}
+  .summary-box{margin-bottom:16px;border-radius:12px;background:var(--panel);border:1px solid var(--border);padding:14px 16px;}
+  .summary-drivers{display:flex;flex-direction:column;gap:6px;}
+  .summary-driver{display:flex;align-items:center;justify-content:space-between;font-size:13.5px;}
+  .summary-driver span:first-child{color:var(--textMuted);}
+  .summary-driver span:last-child{color:var(--text);font-weight:500;}
+  .chip{border-radius:12px;background:var(--panel);border:1px solid var(--border);padding:10px 12px;display:flex;align-items:center;gap:8px;}
+  .chip .ico{color:var(--textFaint);}
+  .chip .lbl{font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--textFaint);}
+  .chip .val{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;}
+
+  /* ---- timeline ---- */
+  .timeline{display:flex;height:60px;background:var(--panelRaised);width:100%;border-radius:12px;overflow:hidden;}
+  .timeline .seg{display:flex;flex:1 1 0;min-width:0;flex-direction:column;align-items:center;justify-content:center;color:#0A0C10;border-right:1px solid rgba(10,12,16,0.25);padding:2px 3px;overflow:hidden;}
+  .timeline .seg:last-child{border-right:none;}
+  .timeline .seg .drv{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:12px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+  .timeline .seg .tm{font-family:'JetBrains Mono',monospace;font-size:10px;color:rgba(10,12,16,0.65);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+
+  .stint-table{margin-top:12px;border-radius:12px;border:1px solid var(--border);overflow:hidden;display:grid;grid-template-columns:minmax(24px,0.3fr) minmax(64px,1.0fr) minmax(64px,0.65fr) minmax(46px,0.55fr) minmax(38px,0.45fr) minmax(26px,0.3fr);column-gap:3px;row-gap:0;}
+  .stint-table .head{display:grid;grid-template-columns:subgrid;grid-column:1 / -1;font-family:'JetBrains Mono',monospace;font-size:10.5px;text-transform:uppercase;padding:8px 5px;background:var(--panel);color:var(--textFaint);}
+  .stint-table .row{display:grid;grid-template-columns:subgrid;grid-column:1 / -1;align-items:center;padding:8px 5px;font-size:13px;border-top:1px solid var(--border);}
+  .stint-table .row span, .stint-table .head span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+  .row-removed{opacity:0.5;color:var(--textFaint);font-size:12.5px;}
+  .row-removed span{color:var(--textFaint)!important;}
+  .stint-table .dot{width:7px;height:7px;border-radius:999px;display:inline-block;margin-right:4px;flex-shrink:0;}
+  .stint-time{padding:4px 0;font-size:10px;width:100%;min-width:0;border-radius:6px;text-align:center;}
+  .stint-pos{padding:4px 2px;font-size:11px;width:100%;min-width:0;border-radius:6px;border:1px solid var(--borderLight);text-align:center;}
+  .driver-cell{display:flex;align-items:center;gap:4px;min-width:0;}
+  .stint-driver{padding:4px 2px;font-size:11px;width:100%;min-width:0;border-radius:6px;}
+  .stint-note-toggle{background:none;border:1px solid var(--borderLight);border-radius:6px;min-width:20px;min-height:22px;width:auto;height:auto;padding:3px 3px;display:flex;align-items:center;justify-content:center;color:var(--textFaint);flex-shrink:0;justify-self:end;overflow:visible;}
+  .stint-note-toggle:hover{color:var(--text);border-color:var(--text);}
+  .note-row{grid-column:1 / -1;padding:8px 10px 12px 14px;border-top:1px solid var(--border);background:var(--bg);}
+  .note-row textarea{width:100%;background:var(--panelRaised);border:1px solid var(--borderLight);border-radius:8px;color:var(--text);padding:7px 9px;font-size:12.5px;font-family:'Inter',sans-serif;resize:vertical;min-height:38px;}
+  .flag-row{display:flex;gap:5px;margin-bottom:8px;}
+  .flag-btn{flex:1 1 0;min-width:0;font-size:11.5px;padding:6px 5px;border-radius:999px;background:var(--panelRaised);border:1px solid var(--borderLight);color:var(--textMuted);display:flex;align-items:center;justify-content:center;gap:4px;white-space:nowrap;}
+  .flag-btn .em{font-size:12px;line-height:1;flex-shrink:0;}
+  .flag-btn .lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+  .flag-btn.active{color:var(--text);}
+  .flag-badge{font-size:10px;line-height:1.6;margin-left:2px;white-space:nowrap;display:inline-block;}
+  .retire-btn{margin-bottom:8px;width:100%;display:flex;align-items:center;justify-content:center;gap:6px;background:rgba(226,68,92,0.14);border:1px solid var(--red);color:var(--red);font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:14px;letter-spacing:0.03em;padding:8px 0;border-radius:8px;}
+  .retire-btn:hover{background:rgba(226,68,92,0.24);}
+  .retire-btn .em{font-size:15px;line-height:1;}
+  .finish-btn{margin-bottom:8px;width:100%;display:flex;align-items:center;justify-content:center;gap:6px;background:rgba(46,111,224,0.14);border:1px solid var(--blue);color:var(--blue);font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:14px;letter-spacing:0.03em;padding:8px 0;border-radius:8px;}
+  .finish-btn:hover{background:rgba(46,111,224,0.24);}
+  .finish-btn .em{font-size:15px;line-height:1;}
+  .finish-stint-cell{width:100%;min-width:0;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:11px;letter-spacing:0.01em;padding:4px 2px;border-radius:6px;background:rgba(46,111,224,0.16);border:1px solid var(--blue);color:var(--blue);display:flex;align-items:center;justify-content:center;gap:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .finish-stint-cell:hover{background:rgba(46,111,224,0.28);}
+  .finish-stint-cell .em{font-size:11px;line-height:1;flex-shrink:0;}
+  .quiet-picker{margin-bottom:8px;}
+  .quiet-picker-label{display:block;font-family:'JetBrains Mono',monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:0.06em;color:var(--textFaint);margin-bottom:6px;}
+  .quiet-picker-row{display:flex;gap:6px;}
+  .quiet-btn{flex:1;font-size:12.5px;padding:7px 0;border-radius:8px;background:var(--panelRaised);border:1px solid var(--borderLight);color:var(--textMuted);font-family:'Barlow Condensed',sans-serif;font-weight:600;}
+  .quiet-btn.active{background:rgba(139,107,240,0.18);border-color:var(--purple);color:var(--text);}
+  .row-quiet{background:rgba(139,107,240,0.08);}
+  .row-quiet .qt-text{font-style:italic;color:var(--textMuted);}
+  .stint-pos::placeholder{color:var(--textFaint);}
+  .stint-table .head span:nth-child(4), .stint-table .head span:nth-child(5){text-align:center;}
+
+  .archive-box{margin-bottom:40px;border-radius:16px;background:var(--panel);border:1px solid var(--border);padding:16px;max-width:460px;display:flex;flex-direction:column;gap:14px;}
+  .archive-box .head{display:flex;align-items:center;gap:8px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:16px;}
+  .archive-box p{margin:0;font-size:14px;color:var(--textMuted);}
+  .fin-label{font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.04em;color:var(--textFaint);display:flex;align-items:center;gap:6px;margin-bottom:4px;}
+  .btn-gold{border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;padding:10px 0;display:flex;align-items:center;justify-content:center;gap:6px;border:none;background:var(--gold);color:#0A0C10;}
+  .btn-gold:disabled{background:var(--panelRaised);color:var(--textFaint);cursor:not-allowed;}
+
+  .top-actions{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;}
+  .top-actions .right{display:flex;align-items:center;gap:16px;}
+  .link-red{display:flex;align-items:center;gap:4px;font-size:14px;color:var(--red);background:none;border:none;}
+  .link-muted{display:flex;align-items:center;gap:4px;font-size:14px;color:var(--textMuted);background:none;border:none;}
+
+  .banner{display:flex;align-items:center;gap:8px;margin-top:16px;border-radius:12px;padding:10px 14px;width:fit-content;background:var(--panel);}
+  .banner span{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;}
+
+  /* ---- modal ---- */
+  .modal-overlay{position:fixed;inset:0;background:rgba(10,12,16,0.75);display:flex;align-items:center;justify-content:center;padding:24px;z-index:50;}
+  .modal{width:100%;max-width:380px;background:var(--panel);border:1px solid var(--borderLight);border-radius:16px;padding:24px;}
+  .modal h3{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:20px;margin:0 0 12px;display:flex;align-items:center;gap:8px;}
+  .modal p{font-size:14px;color:var(--textMuted);margin:0 0 24px;}
+  .modal .row{display:flex;gap:12px;}
+  .modal .row button{flex:1;border-radius:8px;padding:10px 0;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;border:none;}
+  .modal .cancel{background:transparent;border:1px solid var(--borderLight)!important;color:var(--textMuted);}
+  .modal .confirm{background:var(--red);color:#0A0C10;}
+  .modal .confirm.positive{background:var(--blue);}
+
+  .empty-note{font-size:14px;color:var(--textFaint);padding:0 4px;}
+  section h2{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:18px;margin:0 0 12px;}
+
+  .stint-log{margin-top:10px;display:flex;flex-direction:column;gap:6px;}
+  .log-head{display:flex;align-items:center;justify-content:space-between;margin:14px 2px 2px;}
+  .log-head .lbl{font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--textFaint);}
+  .log-clear{background:none;border:none;color:var(--textFaint);font-size:11px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.06em;}
+  .log-item{font-size:13px;line-height:1.45;padding:9px 11px;border-radius:8px;background:var(--panel);border:1px solid var(--border);display:flex;align-items:flex-start;gap:7px;color:var(--textMuted);}
+  .log-item .ico{flex-shrink:0;margin-top:2px;color:var(--textFaint);}
+  .log-item.warn{border-color:var(--red);color:var(--text);background:rgba(226,68,92,0.08);}
+  .log-item.warn .ico{color:var(--amber);}
+  .setup-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .col-2{grid-column:1 / -1;}
+
+  .local-banner{max-width:768px;margin:0 auto;padding:10px 20px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);text-align:center;border-bottom:1px solid var(--border);}
+  .local-banner b{color:var(--textMuted);}
+
+  @media (max-width:480px){
+    .setup-grid{grid-template-columns:1fr;}
+    .setup-grid .col-2{grid-column:auto;}
+    .chip-grid{grid-template-columns:1fr;}
+    .timeline{height:54px;}
+  }
+</style>
+</head>
+<body>
+
+<div class="local-banner">Local preview — everything you add here is saved <b>only in this browser</b> and won't be available on other devices.</div>
+
+<div id="app"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-client.js"></script>
+<script>
+/* ============================================================================
+ * AUTH GUARD — restricts this page to signed-in users only.
+ *
+ * The actual check runs in the boot sequence at the very bottom of this
+ * file (search "AUTH GUARD (boot)") rather than here, since it needs
+ * render()/loadRaces()/etc. to already be defined. Nothing in between
+ * renders any race data before that check passes.
+ * ==========================================================================
+ */
+
+/* ============================================================================
+ * Race Strategy Planner — standalone HTML/JS mimic of the React prototype.
+ * Visual + navigational parity with race-strategy-planner.jsx. Persistence
+ * currently uses localStorage as a stand-in.
+ *
+ * WIRE-UP POINT FOR GITHUB SYNC
+ * ------------------------------------------------------------------------
+ * Replace the loadRaces()/persistRaces()/loadCatalog()/persistCatalog()
+ * functions below with calls to the GitHub Contents API (same pattern as
+ * the token-based setup used in the other project): read a JSON file from
+ * a repo path on load, and PUT an updated commit on every save. Everything
+ * else (rendering, forms, plan math) can stay as-is.
+ * ==========================================================================
+ */
+
+// ---- design tokens ----
+const T = {
+  bg:"#0A0C10", panel:"#12151B", panelRaised:"#191E27", border:"#262C38",
+  borderLight:"#343B49", text:"#EDEFF2", textMuted:"#8B93A1", textFaint:"#575F6E",
+  blue:"#2E6FE0", amber:"#F2A63E", green:"#3FB27F", red:"#E2445C", purple:"#8B6BF0",
+  white:"#EEF0F3", gold:"#E0B84B", silver:"#C6CBD3", bronze:"#C97F4B",
+};
+const DRIVER_PALETTE = [T.blue, T.amber, T.green, T.purple, T.red, "#4DD0E1"];
+const ACCENT_PRESETS = [T.blue, T.purple, T.amber, T.green, T.red, "#4DD0E1"];
+const FLAG_TYPES = [
+  { key:"yellow",   emoji:"🟡", label:"Caution", color: T.amber },
+  { key:"black",    emoji:"⚫", label:"Penalty", color: "#D8DCE2" },
+  { key:"meatball", emoji:"⚫🟠", label:"Meatball", color: "#E0752E" },
+  { key:"quiet",    emoji:"💤", label:"Quiet Time", color: T.purple },
+];
+const TRACKS = [
+  "Daytona International Speedway","Sebring International Raceway","Road Atlanta",
+  "Watkins Glen International","Laguna Seca","Virginia International Raceway",
+  "Circuit of the Americas","Road America","Mid-Ohio Sports Car Course","Other",
+];
+const RACES_KEY = "rsp_races";
+const CATALOG_KEY = "rsp_catalog";
+
+const defaultCatalog = [
+  { id:"cat_18", number:"18", manufacturer:"Porsche", team:"Kingpin Racing", model:"991 GT3 Cup", accent: T.white },
+  { id:"cat_4",  number:"4",  manufacturer:"Toyota", team:"Kingpin Racing",  model:"GR Supra GT4 EVO2", accent: T.purple },
+  { id:"cat_11", number:"11", manufacturer:"Toyota", team:"Kingpin Racing",model:"GR Supra GT4 EVO2", accent: T.blue },
+];
+
+// ---- tiny icon set (inline SVG, mimics lucide-react) ----
+const ICONS = {
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  arrowRight:'<path d="M5 12h14M13 5l7 7-7 7"/>',
+  arrowLeft:'<path d="M19 12H5M11 19l-7-7 7-7"/>',
+  x:'<path d="M18 6 6 18M6 6l12 12"/>',
+  clock:'<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+  mapPin:'<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
+  timer:'<path d="M10 2h4M12 14l3-3M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"/>',
+  trash:'<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6h16Z"/>',
+  rotate:'<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
+  flag:'<path d="M4 22V4"/><path d="M4 4h14l-2 4 2 4H4"/>',
+  trophy:'<path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0V4Z"/><path d="M17 5h3a1 1 0 0 1 1 1 5 5 0 0 1-4 5M7 5H4a1 1 0 0 0-1 1 5 5 0 0 0 4 5"/>',
+  archive:'<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8M10 13h4"/>',
+  chevronDown:'<polyline points="6 9 12 15 18 9"/>',
+  chevronUp:'<polyline points="18 15 12 9 6 15"/>',
+  copy:'<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  calendar:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+};
+function icon(name, size=16, extra=""){
+  return `<svg class="i icon" width="${size}" height="${size}" viewBox="0 0 24 24" style="${extra}">${ICONS[name]||""}</svg>`;
+}
+
+// ---- state ----
+let state = {
+  page: "home", // home | setup | plan | archive
+  races: [],
+  currentRaceId: null,
+  currentStatus: "planned",
+  confirmDelete: null,
+
+  catalog: [],
+  showNameInput: false,
+  nameDraft: "",
+  eventName: "",
+  eventDate: null,
+  duplicateSource: null, // race object being duplicated from, set by "duplicate-race", consumed by "confirmName"
+
+  cars: [],
+  addingCar: false,
+  addingCustom: false,
+  newCar: { number:"", team:"", model:"", manufacturer:"", accent: ACCENT_PRESETS[0] },
+
+  track: "",
+  customTrack: "",
+  startTime: "10:00",
+  stintMinutes: 60,
+  durationHours: 4,
+
+  plan: null,
+  finishDrafts: {},
+  openStintNotes: new Set(), // UI-only: which stint rows have their note field expanded
+  expandedCarPlans: new Set(), // UI-only: which cars' plan sections are expanded (archive view — collapsed by default)
+};
+
+// ---- persistence (localStorage stand-in — see wire-up note above) ----
+function loadRaces(){
+  try { return JSON.parse(localStorage.getItem(RACES_KEY)) || []; } catch(e){ return []; }
+}
+function persistRaces(list){
+  state.races = list;
+  localStorage.setItem(RACES_KEY, JSON.stringify(list));
+}
+function loadCatalog(){
+  try {
+    const saved = JSON.parse(localStorage.getItem(CATALOG_KEY));
+    if (saved && saved.length) return saved;
+  } catch(e){}
+  return defaultCatalog;
+}
+function persistCatalog(list){
+  state.catalog = list;
+  localStorage.setItem(CATALOG_KEY, JSON.stringify(list));
+}
+
+// ---- helpers ----
+function uid(prefix){ return prefix + "_" + Math.random().toString(36).slice(2,9); }
+function formatDate(iso){
+  if(!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { month:"short", day:"numeric", year:"numeric" });
+}
+const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+// mmm dd yyyy, no comma — e.g. "Jul 26 2026" — used for the archived-tile label.
+function formatDateCompact(iso){
+  if(!iso) return "—";
+  const d = new Date(iso);
+  return `${MONTHS_SHORT[d.getMonth()]} ${d.getDate()} ${d.getFullYear()}`;
+}
+function formatTime(d){
+  if(!d) return "—";
+  const dt = (d instanceof Date) ? d : new Date(d);
+  return dt.toLocaleTimeString(undefined, { hour:"numeric", minute:"2-digit" });
+}
+function formatTimeCompact(d){
+  if(!d) return "—";
+  const dt = (d instanceof Date) ? d : new Date(d);
+  let h = dt.getHours();
+  const m = String(dt.getMinutes()).padStart(2,"0");
+  const ap = h >= 12 ? "p" : "a";
+  h = h % 12; if (h === 0) h = 12;
+  return `${h}:${m}${ap}`;
+}
+function addMinutes(date, mins){ return new Date(date.getTime() + mins*60000); }
+function toTimeInputValue(d){
+  const hh = String(d.getHours()).padStart(2,"0");
+  const mm = String(d.getMinutes()).padStart(2,"0");
+  return `${hh}:${mm}`;
+}
+function toDateInputValue(iso){
+  const d = iso ? new Date(iso) : new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth()+1).padStart(2,"0");
+  const dd = String(d.getDate()).padStart(2,"0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+function formatDuration(mins){
+  const total = Math.round(mins);
+  const h = Math.floor(total/60), m = total%60;
+  return m>0 ? `${h}h ${m}m` : `${h}h`;
+}
+// Appends a permanent, timestamped note to a car's stint log (rendered
+// beneath that car's stint table) instead of a transient toast. stintIdx
+// links the entry back to whichever stint's notes/flags should be shown
+// alongside it, even if those are added after the fact.
+function logStintNote(cp, stintIdx, text, type){
+  if (!cp.log) cp.log = [];
+  cp.log.push({ stintIdx, text, type: type||"info", ts: Date.now() });
+}
+function hexToRgb(hex){
+  hex = hex.replace("#","");
+  const n = parseInt(hex,16);
+  return [(n>>16)&255, (n>>8)&255, n&255];
+}
+// Heatmap for a stint's finish position relative to the car's class starting
+// position — lower/better positions trend green, higher/worse trend red.
+function positionCellStyle(posValue, startPos){
+  const pos = parsePosition(posValue);
+  const start = parsePosition(startPos);
+  if (pos==null || start==null) return { bg:"transparent", color:"var(--text)" };
+  const delta = pos - start; // negative = gained spots, positive = lost spots
+  const maxDelta = 8;
+  const clamped = Math.max(-maxDelta, Math.min(maxDelta, delta));
+  const t = Math.abs(clamped) / maxDelta; // 0..1
+  const alpha = (0.14 + t*0.6).toFixed(2);
+  const [r,g,b] = hexToRgb(clamped <= 0 ? T.green : T.red);
+  const textColor = t > 0.5 ? "#0A0C10" : "var(--text)";
+  return { bg:`rgba(${r},${g},${b},${alpha})`, color: textColor };
+}
+function parsePosition(v){
+  if (v == null) return null;
+  const m = String(v).match(/\d+/);
+  return m ? parseInt(m[0],10) : null;
+}
+function buildShortNames(fullNames){
+  const lastCounts = {};
+  fullNames.forEach(n=>{
+    const parts = n.trim().split(/\s+/);
+    const last = parts[parts.length-1];
+    lastCounts[last] = (lastCounts[last]||0) + 1;
+  });
+  const map = {};
+  fullNames.forEach(n=>{
+    const parts = n.trim().split(/\s+/);
+    const last = parts[parts.length-1];
+    // Last name only ("Robert Campbell" -> "Campbell"), unless another driver
+    // on this car shares that last name — then disambiguate with a first
+    // initial ("T. Driver" / "A. Driver").
+    map[n] = (lastCounts[last] > 1 && parts.length > 1) ? `${parts[0][0]}. ${last}` : last;
+  });
+  return map;
+}
+function podiumColor(pos){
+  if(pos===1) return T.gold;
+  if(pos===2) return T.silver;
+  if(pos===3) return T.bronze;
+  return null;
+}
+function esc(s){ return (s==null?"":String(s)).replace(/[&<>"']/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+// ---- livery placeholder (mimics CarHeaderImage fallback) ----
+// Accent color now lives on the tile's border (see raceTile/carCard/etc),
+// so this placeholder uses a neutral panel tone rather than the accent fill.
+function liveryDiv(accent){
+  return `<div class="livery" style="background:var(--panelRaised);"></div>`;
+}
+
+// ---- track layout image, same convention/fallback as the livery image ----
+// Expects images at images/tracks/<slug>.png (same directory scheme as
+// wherever car header images would live, e.g. images/cars/). If that image
+// is missing (404) or no track is set, falls back to the same
+// color + diagonal-stripe placeholder used for cars.
+function trackSlug(name){
+  return (name||"").toLowerCase().trim().replace(/[^a-z0-9]+/g,"-").replace(/(^-+|-+$)/g,"");
+}
+function handleTrackImgError(img, accent){
+  const div = document.createElement("div");
+  div.className = "livery";
+  div.style.background = "var(--panelRaised)";
+  img.replaceWith(div);
+}
+function trackStripContent(track, accent){
+  const slug = trackSlug(track);
+  if (!slug) return liveryDiv(accent);
+  return `<img src="images/tracks/${slug}.png" alt="${esc(track)} track layout" class="track-layout-img" onerror="handleTrackImgError(this, '${accent}')" />`;
+}
+
+// ---- car header image, same convention/fallback as the track image ----
+// Expects images at images/cars/<number>-<team-slug>.png. If that image is
+// missing (404) or the car has no number, falls back to the same
+// color + diagonal-stripe placeholder.
+function carSlug(number, team){
+  const base = `${number||""}-${team||""}`;
+  return base.toLowerCase().trim().replace(/[^a-z0-9]+/g,"-").replace(/(^-+|-+$)/g,"");
+}
+function carStripContent(number, team, accent){
+  const slug = carSlug(number, team);
+  if (!slug) return liveryDiv(accent);
+  return `<img src="images/cars/${slug}.png" alt="#${esc(number)} ${esc(team)}" class="track-layout-img" onerror="handleTrackImgError(this, '${accent}')" />`;
+}
+
+// ============================================================================
+// RENDER
+// ============================================================================
+function render(){
+  const app = document.getElementById("app");
+  if (state.confirmDelete){
+    // modal renders on top of whatever page is current
+  }
+  let html = "";
+  if (state.page === "home") html = renderHome();
+  else if (state.page === "setup") html = renderSetup();
+  else if (state.page === "plan" && state.plan) html = renderPlan();
+  else if (state.page === "archive") html = renderArchive();
+  else html = renderHome();
+
+  if (state.confirmDelete){
+    html += renderConfirmModal();
+  }
+  app.innerHTML = html;
+  bindEvents();
+}
+
+function renderHome(){
+  const active = state.races.filter(r=>r.status!=="archived");
+  const archivedCount = state.races.filter(r=>r.status==="archived").length;
+  let strip = "";
+  if (active.length>0 || archivedCount>0){
+    strip = `
+      <div class="races-strip fade-in">
+        <div class="races-head">
+          <span class="eyebrow">Races in Progress</span>
+          ${archivedCount>0 ? `<button class="archive-link" data-act="view-archive">${icon("trophy",12)} Race Archive (${archivedCount})</button>` : ""}
+        </div>
+        ${active.length>0 ? `<div class="tile-row no-scrollbar">${active.map(raceTile).join("")}</div>`
+          : `<p class="empty-note">No active races. Check the archive, or create a new one below.</p>`}
+      </div>`;
+  }
+
+  const nameFlow = state.showNameInput ? `
+      <div class="name-flow fade-in">
+        <span class="eyebrow">${state.duplicateSource ? `Duplicating "${esc(state.duplicateSource.eventName)}"` : "Event Name"}</span>
+        <input id="nameDraft" class="name-input" placeholder="e.g. Sebring 12 Hour" value="${esc(state.nameDraft)}" enterkeyhint="go" autofocus />
+        <button class="continue-btn" id="confirmName" data-act="confirmName" ${state.nameDraft.trim()?"":"disabled"}>Continue ${icon("arrowRight",18)}</button>
+        <p style="font-size:12px;color:var(--textFaint);margin:0;">${state.duplicateSource ? "Cars, drivers, track, and timing carry over — you'll verify everything on the next page." : "Today's date is captured automatically for your records."}</p>
+      </div>`
+    : `<button class="create-btn" id="startCreate" data-act="startCreate">${icon("plus",20,"color:"+T.blue)}<span>Create a Race</span></button>`;
+
+  return `
+    <div class="home-wrap">
+      ${strip}
+      <div style="width:100%;max-width:420px;display:flex;flex-direction:column;align-items:center;text-align:center;" class="fade-in">
+        ${(!(active.length>0)) ? `<div class="create-circle">${icon("flag",22)}</div>` : ""}
+        ${nameFlow}
+      </div>
+    </div>`;
+}
+
+function raceTile(race){
+  const carsCount = race.cars.length;
+  const accent = race.cars[0] ? race.cars[0].accent : T.blue;
+  return `
+    <div class="race-tile" data-act="open-race" data-id="${race.id}" role="button" tabindex="0" style="border-color:${accent};">
+      <div class="strip" style="background:var(--panelRaised);">
+        ${trackStripContent(race.track, accent)}
+        ${race.status!=="archived" ? `<button class="del" data-act="del-race" data-id="${race.id}" data-label="${esc(race.eventName)}" onclick="event.stopPropagation()">${icon("x",13)}</button>` : ""}
+      </div>
+      <div class="body">
+        <div class="name">${esc(race.eventName)}</div>
+        <div class="meta">${esc(race.track||"No track set")} · ${carsCount} car${carsCount!==1?"s":""}</div>
+        <div class="meta" style="margin-top:2px;color:${race.status==="archived"?T.gold:T.textFaint}">${race.status==="archived"?`Archived · ${formatDateCompact(race.eventDateISO)}`:"Planned"}</div>
+      </div>
+      <button class="dup" data-act="duplicate-race" data-id="${race.id}" title="Duplicate this race" onclick="event.stopPropagation()">${icon("copy",12)}</button>
+    </div>`;
+}
+
+function renderArchive(){
+  const archived = state.races.filter(r=>r.status==="archived");
+  return `
+    <div class="page fade-in">
+      <button class="btn-back" data-act="go-home">${icon("arrowLeft",15)} Back</button>
+      <h1 class="font-display" style="font-weight:700;font-size:28px;margin:16px 0 4px;display:flex;align-items:center;gap:8px;">${icon("trophy",22,"color:"+T.gold)} Race Archive</h1>
+      <p style="font-size:13px;color:var(--textFaint);margin:0 0 24px;">${archived.length} archived race${archived.length!==1?"s":""}</p>
+      ${archived.length===0
+        ? `<p class="empty-note">No archived races yet.</p>`
+        : `<div class="tile-row no-scrollbar" style="flex-wrap:wrap;">${archived.map(raceTile).join("")}</div>`}
+    </div>`;
+}
+
+function renderSetup(){
+  const cars = state.cars;
+  const usedCatalogIds = new Set(cars.map(c=>c.catalogId).filter(Boolean));
+  const catalog = state.catalog.filter(cd=>!usedCatalogIds.has(cd.id));
+  const canCreatePlan = cars.length>0 && cars.every(c=>c.drivers.some(d=>d.trim()))
+      && (state.track && (state.track!=="Other" || state.customTrack.trim()))
+      && state.startTime && Number(state.stintMinutes)>0 && Number(state.durationHours)>0;
+
+  return `
+    <div class="page fade-in">
+      <button class="btn-back" data-act="setup-back">${icon("arrowLeft",15)} Back</button>
+
+      <div style="margin:24px 0 32px;">
+        <h1 class="font-display" style="font-weight:700;font-size:30px;line-height:1.15;margin:0;">${esc(state.eventName)}</h1>
+        <p style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);margin-top:4px;">Race Date: ${formatDate(state.eventDate)}</p>
+      </div>
+
+      <section style="margin-bottom:32px;">
+        <h2>Cars in This Race</h2>
+        <div class="tile-row no-scrollbar">
+          ${cars.map(car=>carCard(car)).join("")}
+          ${!state.addingCar ? `<button class="add-car-card" data-act="show-add-car">${icon("plus",18)}<span>Add Car</span></button>` : ""}
+        </div>
+
+        ${state.addingCar ? `
+        <div class="catalog-panel fade-in">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <span class="font-display" style="font-weight:600;font-size:15px;">Choose a Car</span>
+            <button data-act="close-add-car" style="background:none;border:none;color:var(--textMuted);">${icon("x",16)}</button>
+          </div>
+          <div class="catalog-row no-scrollbar">
+            ${catalog.length===0 ? `<p class="empty-note" style="padding:6px 2px;">Every catalog car is already in this race — add a new one below.</p>` : catalog.map(cd=>`
+              <div class="catalog-tile" data-act="select-catalog" data-id="${cd.id}" role="button" tabindex="0" style="border-color:${cd.accent};">
+                <div class="strip" style="background:var(--panelRaised);">
+                  ${carStripContent(cd.number, cd.team, cd.accent)}
+                  <span class="num">${esc(cd.number)}</span>
+                  ${cd.custom ? `<button class="del" data-act="del-catalog" data-id="${cd.id}" data-label="#${esc(cd.number)} ${esc(cd.team)}" onclick="event.stopPropagation()">${icon("x",12)}</button>` : ""}
+                </div>
+                <div class="body">
+                  <div class="team">${esc(cd.team)}</div>
+                  <div class="model">${esc(cd.manufacturer)} ${esc(cd.model)}</div>
+                </div>
+              </div>`).join("")}
+            ${!state.addingCustom ? `
+              <button class="add-car-card" style="width:152px;height:130px;" data-act="show-custom-car">${icon("plus",18)}<span>New Car</span></button>` : ""}
+          </div>
+
+          ${state.addingCustom ? `
+          <div class="new-car-form fade-in">
+            <span class="eyebrow" style="margin-bottom:2px;">New Catalog Entry</span>
+            <div class="swatches">
+              ${ACCENT_PRESETS.map(c=>`<button class="swatch ${state.newCar.accent===c?'active':''}" style="background:${c}" data-act="pick-accent" data-color="${c}"></button>`).join("")}
+            </div>
+            <input class="field font-mono" style="padding:6px 10px;font-size:13px;" placeholder="Car #" id="ncNumber" value="${esc(state.newCar.number)}" />
+            <input class="field" style="padding:6px 10px;font-size:13px;" placeholder="Team name" id="ncTeam" value="${esc(state.newCar.team)}" />
+            <input class="field" style="padding:6px 10px;font-size:13px;" placeholder="Manufacturer" id="ncManufacturer" value="${esc(state.newCar.manufacturer)}" />
+            <input class="field" style="padding:6px 10px;font-size:13px;" placeholder="Model" id="ncModel" value="${esc(state.newCar.model)}" />
+            <div style="display:flex;gap:8px;margin-top:4px;">
+              <button class="btn-primary" style="padding:8px 0;font-size:14px;" data-act="submit-new-car">Add to Race</button>
+              <button style="background:transparent;border:1px solid var(--borderLight);color:var(--textMuted);border-radius:8px;padding:8px 12px;" data-act="cancel-custom-car">${icon("x",14)}</button>
+            </div>
+          </div>` : ""}
+        </div>` : ""}
+      </section>
+
+      ${cars.length>0 ? `
+      <section style="margin-bottom:32px;display:flex;flex-direction:column;gap:16px;">
+        <h2>Drivers</h2>
+        ${cars.map(car=>`
+          <div class="car-detail" style="border-color:${car.accent};">
+            <div class="strip" style="background:var(--panelRaised);">
+              ${carStripContent(car.number, car.team, car.accent)}
+              <span class="num">${esc(car.number)}</span>
+            </div>
+            <div class="content">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                <span style="width:10px;height:10px;border-radius:999px;background:${car.accent};display:inline-block;"></span>
+                <span class="font-display" style="font-weight:600;font-size:15px;">#${esc(car.number)} · ${esc(car.team)}</span>
+              </div>
+              ${car.drivers.map((d,idx)=>`
+                <div class="driver-row">
+                  <span class="idx">${idx+1}</span>
+                  <input class="field" style="font-size:14px;" placeholder="Driver name" value="${esc(d)}" data-act="update-driver" data-car="${car.id}" data-idx="${idx}" />
+                  ${car.drivers.length>1 ? `<button data-act="remove-driver" data-car="${car.id}" data-idx="${idx}">${icon("x",15)}</button>` : ""}
+                </div>`).join("")}
+              <button class="add-driver" style="color:${car.accent};" data-act="add-driver" data-car="${car.id}">${icon("plus",14)} Additional Driver</button>
+
+              <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+                <label class="label">${icon("trophy",12)} Class Starting Position</label>
+                <input class="field" style="font-size:14px;" placeholder="e.g. P7" value="${esc(car.startingPosition ?? '')}" data-act="update-start-pos" data-car="${car.id}" />
+              </div>
+            </div>
+          </div>`).join("")}
+      </section>` : ""}
+
+      <section style="margin-bottom:40px;">
+        <h2>Race Setup</h2>
+        <div class="setup-grid">
+          <div class="col-2">
+            <label class="label">${icon("calendar",12)} Race Date</label>
+            <input type="date" class="field" id="raceDate" value="${toDateInputValue(state.eventDate)}" />
+          </div>
+          <div class="col-2">
+            <label class="label">${icon("mapPin",12)} Track</label>
+            <select class="field" id="trackSelect">
+              <option value="">Select a track…</option>
+              ${TRACKS.map(t=>`<option value="${esc(t)}" ${state.track===t?"selected":""}>${esc(t)}</option>`).join("")}
+            </select>
+            ${state.track==="Other" ? `<input class="field" style="margin-top:8px;" id="customTrack" placeholder="Track name" value="${esc(state.customTrack)}" />` : ""}
+          </div>
+          <div>
+            <label class="label">${icon("clock",12)} Race Start</label>
+            <input type="time" class="field" id="startTime" value="${esc(state.startTime)}" />
+          </div>
+          <div>
+            <label class="label">${icon("timer",12)} Stint Time (min)</label>
+            <input type="number" min="1" class="field" id="stintMinutes" value="${esc(state.stintMinutes)}" />
+          </div>
+          <div class="col-2">
+            <label class="label">${icon("flag",12)} Race Duration (hours)</label>
+            <input type="number" min="0.5" step="0.5" class="field" id="durationHours" value="${esc(state.durationHours)}" />
+          </div>
+        </div>
+      </section>
+
+      <button class="btn-primary" id="createPlan" data-act="createPlan" ${canCreatePlan?"":"disabled"}>Create Race Plan ${icon("arrowRight",19)}</button>
+    </div>`;
+}
+
+function carCard(car){
+  return `
+    <div class="car-card" style="border-color:${car.accent};">
+      <div class="strip" style="background:var(--panelRaised);">
+        ${carStripContent(car.number, car.team, car.accent)}
+        <span class="num">${esc(car.number)}</span>
+        <button class="del" data-act="remove-car" data-id="${car.id}" data-label="#${esc(car.number)} ${esc(car.team)}">${icon("x",12)}</button>
+      </div>
+      <div class="body">
+        <div class="team">${esc(car.team)}</div>
+        <div class="model">${esc(car.manufacturer)} ${esc(car.model)}</div>
+      </div>
+    </div>`;
+}
+
+function renderPlan(){
+  const plan = state.plan;
+  const archived = state.currentStatus === "archived";
+  const primaryCar = plan.carPlans[0] && plan.carPlans[0].car;
+  const podium = archived && primaryCar ? podiumColor(primaryCar.finishPosition) : null;
+  const bannerColor = podium || T.textMuted;
+  const allFilled = plan.carPlans.every(cp => parsePosition(state.finishDrafts[cp.car.id]) != null);
+
+  return `
+    <div class="page page-wide fade-in">
+      <div class="top-actions">
+        ${archived ? `<span></span>` : `<button class="btn-back" data-act="plan-edit">${icon("arrowLeft",15)} Edit</button>`}
+        <div class="right">
+          ${!archived ? `<button class="link-red" data-act="del-current-race">${icon("trash",13)} Delete</button>` : ""}
+          <button class="link-muted" data-act="go-home">${icon("rotate",13)} Home</button>
+        </div>
+      </div>
+
+      <h1 class="font-display" style="font-weight:700;font-size:30px;margin:16px 0 0;">${esc(state.eventName)}</h1>
+      <p style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);margin-top:4px;">Race Date: ${formatDate(state.eventDate)}</p>
+
+      ${archived ? `
+      <div class="banner" style="border:1px solid ${bannerColor};">
+        ${podium ? icon("trophy",16,"color:"+bannerColor) : ""}
+        <span style="color:${bannerColor}">Archived — results below by car</span>
+      </div>` : ""}
+
+      <div style="display:flex;flex-direction:column;gap:40px;margin-top:24px;">
+        ${plan.carPlans.map(cp=>carPlanSection(cp, plan, archived)).join("")}
+      </div>
+
+      <div class="chip-grid" style="margin-top:40px;">
+        ${infoChip("mapPin","Track",plan.track)}
+        ${infoChip("flag","Duration",formatDuration(plan.totalMinutes))}
+        ${infoChip("clock","Green Flag",formatTime(plan.startDateTime))}
+        ${infoChip("timer","Checkered Flag",formatTime(plan.endDateTime))}
+      </div>
+
+      ${!archived ? `
+      <div class="archive-box fade-in">
+        <div class="head">${icon("archive",15)} Race Complete?</div>
+        <p>${plan.carPlans.length===1 ? "Enter the Class Finish Position to Archive this Race." : "Enter each car's class finish position to archive this race."}</p>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+          ${plan.carPlans.map(cp=>`
+            <div>
+              <label class="fin-label"><span style="width:8px;height:8px;border-radius:999px;background:${cp.car.accent};display:inline-block;"></span>#${esc(cp.car.number)} ${esc(cp.car.team)} — Class Finish Position</label>
+              <input class="field" style="font-size:14px;background:var(--panelRaised);" placeholder="e.g. P3" value="${esc(state.finishDrafts[cp.car.id]||'')}" data-act="finish-draft" data-car="${cp.car.id}" />
+            </div>`).join("")}
+        </div>
+        <button class="btn-gold" id="archiveRace" data-act="archiveRace" ${allFilled?"":"disabled"}>${icon("trophy",14)} Archive Race</button>
+      </div>` : ""}
+    </div>`;
+}
+
+function infoChip(iconName,label,value){
+  return `<div class="chip"><span class="ico">${icon(iconName,13)}</span><div><div class="lbl">${label}</div><div class="val">${esc(value)}</div></div></div>`;
+}
+
+// Shown once a race is archived — starting/finish position plus each
+// driver's total time behind the wheel (summed across their non-removed
+// stints only, so anything absorbed or dropped from a retirement doesn't
+// count toward drive time).
+function raceSummaryBlock(cp){
+  const totals = {};
+  const order = [];
+  cp.stints.forEach(s=>{
+    if (s.removed || !s.driver) return;
+    if (!(s.driver in totals)){ totals[s.driver] = 0; order.push(s.driver); }
+    totals[s.driver] += s.lengthMin;
+  });
+  return `
+    <div class="summary-box">
+      <div class="summary-driver" style="margin-bottom:6px;">
+        <span></span>
+        <span class="fin-label" style="margin:0;">${icon("timer",12)} Seat Time</span>
+      </div>
+      <div class="summary-drivers">
+        ${order.map(d=>`<div class="summary-driver"><span>${esc(d)}</span><span class="font-mono">${formatDuration(totals[d])}</span></div>`).join("")}
+      </div>
+    </div>`;
+}
+
+function carPlanSection(cp, plan, archived){
+  const car = cp.car, stints = cp.stints;
+  const shortNames = buildShortNames(car.drivers.filter(d=>d.trim()));
+  const carPodium = archived ? podiumColor(car.finishPosition) : null;
+  const hasDelta = archived && car.startingPosition!=null && car.finishPosition!=null;
+  const delta = hasDelta ? car.startingPosition - car.finishPosition : null;
+  const deltaLabel = delta!=null ? (delta>0?`+${delta}`:`${delta}`) : null;
+  const deltaColor = delta>0?T.green:(delta<0?T.red:T.textMuted);
+
+  // Collapsible tile: currently enabled only on the archive/plan view for
+  // archived races — the tile header (image + team/finish info) toggles
+  // visibility of everything below it (Seat Time, Horizontal Planner,
+  // Stint Planner, Stint Adjustments). Not yet wired up for planned races.
+  const collapsible = archived;
+  const isCollapsed = collapsible && !state.expandedCarPlans.has(car.id);
+  const headerAttrs = collapsible ? `data-act="toggle-car-plan" data-car="${car.id}" role="button" tabindex="0" style="cursor:pointer;"` : "";
+
+  return `
+    <div>
+      <div class="car-detail car-detail-plan" style="margin-bottom:12px;border-color:${car.accent};" ${headerAttrs}>
+        <div class="strip" style="background:var(--panelRaised);">
+          ${carStripContent(car.number, car.team, car.accent)}
+          <span class="num" style="border:2px solid ${carPodium||car.accent};color:${carPodium||T.text}">${esc(car.number)}</span>
+        </div>
+        <div style="padding:20px 16px 14px;display:flex;align-items:center;justify-content:space-between;">
+          <div>
+            <div class="font-display" style="font-weight:600;font-size:17px;">${esc(car.team)}</div>
+            <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);">${esc(car.manufacturer)} ${esc(car.model)}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            ${car.startingPosition!=null ? `<span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);">Start P${car.startingPosition}</span>`:""}
+            ${archived && car.finishPosition!=null ? `
+              ${carPodium?icon("trophy",13,"color:"+carPodium):""}
+              <span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:11px;color:${carPodium||T.text}">Finish P${car.finishPosition}</span>
+              ${deltaLabel?`<span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:11px;color:${deltaColor}">${deltaLabel}</span>`:""}
+            ` : ""}
+            ${collapsible ? `<span class="ico" style="color:var(--textFaint);display:flex;">${icon(isCollapsed?"chevronDown":"chevronUp",16)}</span>` : ""}
+          </div>
+        </div>
+      </div>
+
+      ${isCollapsed ? "" : `
+      <div class="car-plan-body fade-in">
+      ${archived ? raceSummaryBlock(cp) : ""}
+
+      <div class="timeline">
+        ${stints.filter(s=>!s.removed).map(s=>{
+          const color = DRIVER_PALETTE[s.driverIndex % DRIVER_PALETTE.length];
+          return `<div class="seg" style="background:${color};">
+            <span class="drv">${esc(shortNames[s.driver]||s.driver||"TBD")}</span>
+            <span class="tm">${formatTimeCompact(s.start)}</span>
+          </div>`;
+        }).join("")}
+      </div>
+
+      <div class="stint-table">
+        <div class="head"><span>Stint</span><span>Driver</span><span style="padding-left:20px;">Start</span><span>End</span><span>Position</span><span></span></div>
+        ${stints.map((s,i)=>{
+          if (s.removed){
+            let msg;
+            if (cp.retiredAtStint != null && i > cp.retiredAtStint){
+              msg = `Car retired after Stint ${cp.retiredAtStint+1}`;
+            } else {
+              let absorbedBy = null;
+              for (let k=i-1;k>=0;k--){ if (!stints[k].removed){ absorbedBy = k; break; } }
+              msg = `Removed — absorbed by Stint ${absorbedBy!=null ? absorbedBy+1 : "an earlier stint"}`;
+            }
+            return `
+            <div class="row row-removed">
+              <span class="font-mono" style="text-decoration:line-through;">${String(i+1).padStart(2,"0")}</span>
+              <span style="grid-column:2 / -1;font-style:italic;">${msg}</span>
+            </div>`;
+          }
+          const posStyle = positionCellStyle(s.position, car.startingPosition);
+          const validDrivers = car.drivers.filter(d=>d.trim());
+          const dotColor = DRIVER_PALETTE[s.driverIndex % DRIVER_PALETTE.length];
+          const noteKey = car.id+"__"+i;
+          const isOpen = state.openStintNotes.has(noteKey);
+          const flags = s.flags || [];
+          const flagBadges = flags.map(fk => FLAG_TYPES.find(f=>f.key===fk)?.emoji || "").join("");
+          const hasNoteContent = flags.length>0 || !!(s.notes && s.notes.trim());
+
+          const driverCell = archived
+            ? `<span class="driver-cell"><span class="dot" style="background:${dotColor};flex-shrink:0;"></span><span style="font-size:13px;">${esc(shortNames[s.driver]||s.driver||"TBD")}</span></span>`
+            : `<span class="driver-cell">
+                <span class="dot" style="background:${dotColor};flex-shrink:0;"></span>
+                <select class="field stint-driver" data-act="edit-stint-driver" data-car="${car.id}" data-stint="${i}">
+                  ${validDrivers.length===0 ? `<option value="">TBD</option>` : validDrivers.map(d=>`<option value="${esc(d)}" ${s.driver===d?"selected":""}>${esc(shortNames[d]||d)}</option>`).join("")}
+                </select>
+              </span>`;
+
+          const endCell = (archived || s.finished)
+            ? `<span class="font-mono" style="white-space:nowrap;font-size:11px;text-align:center;display:block;">${formatTimeCompact(s.end)}</span>`
+            : `<button class="finish-stint-cell" data-act="prompt-finish-stint" data-car="${car.id}" data-stint="${i}" title="Finish Stint"><span class="em">🏁</span>Finish</button>`;
+
+          const posCell = archived
+            ? `<span class="font-mono stint-pos" style="background:${posStyle.bg};color:${posStyle.color};display:flex;align-items:center;justify-content:center;">${s.position ? esc(s.position) : "–"}</span>`
+            : `<input type="text" class="field stint-pos font-mono" placeholder="P–" value="${esc(s.position ?? '')}" data-act="edit-stint-pos" data-car="${car.id}" data-stint="${i}" style="background:${posStyle.bg};color:${posStyle.color};" />`;
+
+          const noteToggle = (!archived || hasNoteContent)
+            ? `<button class="stint-note-toggle" data-act="toggle-stint-note" data-car="${car.id}" data-stint="${i}" title="${isOpen?'Hide note':(archived?'View note':'Add a note')}">${flagBadges ? `<span class="flag-badge">${flagBadges}</span>` : icon(isOpen?"x":(archived?"clock":"plus"),13)}</button>`
+            : `<span></span>`;
+
+          return `
+          <div class="row">
+            <span class="font-mono" style="color:var(--textMuted)">${String(i+1).padStart(2,"0")}</span>
+            ${driverCell}
+            <span class="font-mono" style="white-space:nowrap;font-size:11px;padding-left:20px;">${formatTimeCompact(s.start)}</span>
+            ${endCell}
+            ${posCell}
+            ${noteToggle}
+          </div>
+          ${isOpen ? `
+          <div class="note-row">
+            ${archived ? `
+              ${flags.length ? `<div class="flag-row">${flags.map(fk=>{ const f=FLAG_TYPES.find(x=>x.key===fk); if(!f) return ""; const extra = (fk==="quiet" && s.quietMinutes) ? ` — ${formatDuration(s.quietMinutes)}` : ""; return `<span class="flag-btn active"><span class="em">${f.emoji}</span>${f.label}${extra}</span>`; }).join("")}</div>` : ""}
+              ${s.notes && s.notes.trim() ? `<p style="margin:0;font-size:12.5px;color:var(--textMuted);">${esc(s.notes)}</p>` : (!flags.length ? `<p style="margin:0;font-size:12.5px;color:var(--textFaint);font-style:italic;">No notes for this stint.</p>` : "")}
+            ` : `
+              <div class="flag-row">
+                ${FLAG_TYPES.map(f=>`
+                  <button class="flag-btn ${flags.includes(f.key)?'active':''}" data-act="toggle-stint-flag" data-car="${car.id}" data-stint="${i}" data-flag="${f.key}" style="${flags.includes(f.key)?`background:${f.color}26;border-color:${f.color};`:""}">
+                    <span class="em">${f.emoji}</span><span class="lbl">${f.label}</span>
+                  </button>`).join("")}
+              </div>
+              ${flags.includes("quiet") ? `
+              <div class="quiet-picker">
+                <span class="quiet-picker-label">💤 Quiet Time Duration — track dependent</span>
+                <div class="quiet-picker-row">
+                  <button class="quiet-btn ${s.quietMinutes===60?'active':''}" data-act="set-quiet-minutes" data-car="${car.id}" data-stint="${i}" data-minutes="60">1 Hour</button>
+                  <button class="quiet-btn ${s.quietMinutes===120?'active':''}" data-act="set-quiet-minutes" data-car="${car.id}" data-stint="${i}" data-minutes="120">2 Hours</button>
+                </div>
+              </div>` : ""}
+              ${flags.includes("meatball") ? `
+              <button class="retire-btn" data-act="prompt-retire-car" data-car="${car.id}" data-stint="${i}">
+                <span class="em">⛔</span> Retire
+              </button>` : ""}
+              <textarea rows="2" placeholder="Note for this stint — incident, fuel-only stop, etc." data-act="edit-stint-note" data-car="${car.id}" data-stint="${i}">${esc(s.notes||"")}</textarea>
+            `}
+          </div>` : ""}
+          ${(!s.removed && s.quietMinutes) ? `
+          <div class="row row-quiet">
+            <span class="font-mono" style="opacity:0.7;">💤</span>
+            <span class="qt-text" style="grid-column:2 / -1;">Quiet Time — ${formatDuration(s.quietMinutes)} (${formatTimeCompact(s.end)}–${formatTimeCompact(addMinutes(s.end, s.quietMinutes))})</span>
+          </div>` : ""}`;
+        }).join("")}
+      </div>
+      ${car.startingPosition==null ? `<p style="font-size:11px;color:var(--textFaint);margin:6px 2px 0;">Set a class starting position on the Setup page to enable the finish-position heatmap.</p>` : ""}
+
+      ${(cp.log && cp.log.length) ? `
+      <div class="log-head">
+        <span class="lbl">Stint Adjustments</span>
+        ${!archived ? `<button class="log-clear" data-act="clear-stint-log" data-car="${car.id}">Clear</button>` : ""}
+      </div>
+      <div class="stint-log">
+        ${cp.log.map(m=>{
+          const refStint = (m.stintIdx!=null) ? stints[m.stintIdx] : null;
+          const refFlags = (refStint && refStint.flags) ? refStint.flags : [];
+          const refFlagBadges = refFlags.map(fk => FLAG_TYPES.find(f=>f.key===fk)?.emoji || "").join(" ");
+          const refNote = refStint && refStint.notes ? refStint.notes.trim() : "";
+          return `
+          <div class="log-item ${m.type==='warn'?'warn':''}">
+            <span class="ico">${icon(m.type==='warn'?'timer':'clock',13)}</span>
+            <span>
+              ${esc(m.text)}
+              ${(refFlagBadges || refNote) ? `<br><span style="color:var(--textFaint);font-size:12px;">${refFlagBadges ? refFlagBadges+"&nbsp; " : ""}${refNote ? esc(refNote) : ""}</span>` : ""}
+            </span>
+          </div>`;
+        }).join("")}
+      </div>` : ""}
+      </div>`}
+    </div>`;
+}
+
+function renderConfirmModal(){
+  const cd = state.confirmDelete;
+  const copy = {
+    race: { title: "Delete Race?", body: `"${esc(cd.label)}" will be permanently deleted, including its plan. This can't be undone.` },
+    car: { title: "Remove Car?", body: `"${esc(cd.label)}" will be removed from this race. It'll still be available in the car catalog.` },
+    catalogCar: { title: "Remove From Catalog?", body: `"${esc(cd.label)}" will be removed from the car catalog. Cars already added to a race are unaffected.` },
+    retireCar: { title: "Would you like to retire the car?", body: `${esc(cd.label)} will be retired from this session.` },
+    finishStint: { title: "Finish This Stint?", body: `${esc(cd.label)} will end now, at ${esc(cd.timeLabel)}. The next driver's stint will pick up from that time.` },
+  }[cd.type];
+  const headerIcon = cd.type === "retireCar" ? "⛔" : cd.type === "finishStint" ? "🏁" : icon("trash",18,"color:"+T.red);
+  const confirmLabel = cd.type === "retireCar" ? "Retire" : cd.type === "finishStint" ? "Finish Stint" : "Delete";
+  const confirmClass = cd.type === "finishStint" ? "confirm positive" : "confirm";
+  return `
+    <div class="modal-overlay">
+      <div class="modal">
+        <h3>${headerIcon} ${copy.title}</h3>
+        <p>${copy.body}</p>
+        <div class="row">
+          <button class="cancel" data-act="cancel-delete">Cancel</button>
+          <button class="${confirmClass}" data-act="confirm-delete">${confirmLabel}</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ============================================================================
+// EVENTS
+// ============================================================================
+function bindEvents(){
+  const app = document.getElementById("app");
+
+  app.querySelectorAll("[data-act]").forEach(el=>{
+    const act = el.getAttribute("data-act");
+    if (["update-driver","update-start-pos","finish-draft","edit-stint-pos","edit-stint-driver","edit-stint-note"].includes(act)) return; // input events bound below
+    el.addEventListener("click", (e)=>{
+      e.preventDefault();
+      handleAction(act, el, e);
+    });
+  });
+
+  // text inputs that live-update state without full re-render (to preserve focus)
+  bindLiveInput("nameDraft", v=> state.nameDraft = v, ()=>{
+    document.getElementById("confirmName").disabled = !state.nameDraft.trim();
+  });
+  const nameDraftEl = document.getElementById("nameDraft");
+  if (nameDraftEl){
+    nameDraftEl.addEventListener("keydown", (e)=>{
+      if (e.key === "Enter" && state.nameDraft.trim()){
+        e.preventDefault();
+        handleAction("confirmName");
+      }
+    });
+  }
+  bindLiveInput("trackSelect", v=>{ state.track=v; render(); }, null, "change");
+  bindLiveInput("customTrack", v=> state.customTrack=v);
+  bindLiveInput("raceDate", v=>{
+    if (!v) return;
+    const [yy,mo,da] = v.split("-").map(Number);
+    const d = new Date(state.eventDate || Date.now());
+    d.setFullYear(yy, mo-1, da);
+    state.eventDate = d.toISOString();
+  });
+  bindLiveInput("startTime", v=> state.startTime=v);
+  bindLiveInput("stintMinutes", v=> state.stintMinutes=v);
+  bindLiveInput("durationHours", v=> state.durationHours=v);
+  bindLiveInput("ncNumber", v=> state.newCar.number=v);
+  bindLiveInput("ncTeam", v=> state.newCar.team=v);
+  bindLiveInput("ncManufacturer", v=> state.newCar.manufacturer=v);
+  bindLiveInput("ncModel", v=> state.newCar.model=v);
+
+  app.querySelectorAll('[data-act="update-driver"]').forEach(el=>{
+    el.addEventListener("input", ()=>{
+      const carId = el.getAttribute("data-car"), idx = +el.getAttribute("data-idx");
+      const car = state.cars.find(c=>c.id===carId);
+      if (car) car.drivers[idx] = el.value;
+      updateSetupButtonState();
+    });
+  });
+  app.querySelectorAll('[data-act="update-start-pos"]').forEach(el=>{
+    el.addEventListener("input", ()=>{
+      const carId = el.getAttribute("data-car");
+      const car = state.cars.find(c=>c.id===carId);
+      if (car) car.startingPosition = el.value;
+    });
+  });
+  app.querySelectorAll('[data-act="finish-draft"]').forEach(el=>{
+    el.addEventListener("input", ()=>{
+      const carId = el.getAttribute("data-car");
+      state.finishDrafts[carId] = el.value;
+      const allFilled = state.plan.carPlans.every(cp => parsePosition(state.finishDrafts[cp.car.id]) != null);
+      const btn = document.getElementById("archiveRace");
+      if (btn) btn.disabled = !allFilled;
+    });
+  });
+  app.querySelectorAll('[data-act="edit-stint-pos"]').forEach(el=>{
+    el.addEventListener("change", ()=>{
+      updateStintPosition(el.getAttribute("data-car"), +el.getAttribute("data-stint"), el.value);
+    });
+  });
+  app.querySelectorAll('[data-act="edit-stint-driver"]').forEach(el=>{
+    el.addEventListener("change", ()=>{
+      updateStintDriver(el.getAttribute("data-car"), +el.getAttribute("data-stint"), el.value);
+    });
+  });
+  app.querySelectorAll('[data-act="edit-stint-note"]').forEach(el=>{
+    el.addEventListener("change", ()=>{
+      updateStintNote(el.getAttribute("data-car"), +el.getAttribute("data-stint"), el.value);
+    });
+  });
+}
+
+function bindLiveInput(id, onInput, onExtra, evt){
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener(evt || "input", ()=>{ onInput(el.value); if(onExtra) onExtra(); });
+}
+
+function updateSetupButtonState(){
+  const btn = document.getElementById("createPlan");
+  if (!btn) return;
+  const cars = state.cars;
+  const canCreatePlan = cars.length>0 && cars.every(c=>c.drivers.some(d=>d.trim()))
+      && (state.track && (state.track!=="Other" || state.customTrack.trim()))
+      && state.startTime && Number(state.stintMinutes)>0 && Number(state.durationHours)>0;
+  btn.disabled = !canCreatePlan;
+}
+
+function handleAction(act, el){
+  switch(act){
+    case "startCreate":
+      state.duplicateSource = null;
+      state.showNameInput = true; render(); break;
+    case "duplicate-race": {
+      const race = state.races.find(r=>r.id===el.getAttribute("data-id"));
+      if (race){
+        state.duplicateSource = race;
+        state.nameDraft = race.eventName;
+        state.showNameInput = true;
+        state.page = "home";
+      }
+      render(); break;
+    }
+    case "confirmName": {
+      if (!state.nameDraft.trim()) return;
+      const src = state.duplicateSource;
+      state.eventName = state.nameDraft.trim();
+      state.eventDate = new Date().toISOString();
+      state.showNameInput = false; state.nameDraft = "";
+      state.currentRaceId = null; state.currentStatus = "planned";
+
+      if (src){
+        // Carry over cars, drivers, track, and timing so there's nothing
+        // to retype — but everything below still lands on Setup fully
+        // editable, and finish/starting positions reset since this is a
+        // new, not-yet-run race.
+        state.cars = src.cars.map(c=>({
+          ...c,
+          id: uid("car"),
+          drivers: [...c.drivers],
+          finishPosition: null,
+        }));
+        state.track = TRACKS.includes(src.track) ? src.track : (src.track ? "Other" : "");
+        state.customTrack = TRACKS.includes(src.track) ? "" : (src.track || "");
+        state.startTime = src.startTime;
+        state.stintMinutes = src.stintMinutes;
+        state.durationHours = src.durationHours;
+        state.duplicateSource = null;
+      } else {
+        state.cars = []; state.track=""; state.customTrack="";
+        state.startTime="10:00"; state.stintMinutes=60; state.durationHours=4;
+      }
+
+      state.page = "setup";
+      render(); break;
+    }
+    case "view-archive":
+      state.page = "archive"; render(); break;
+    case "go-home":
+      state.page = "home"; render(); break;
+    case "setup-back":
+      state.page = state.currentRaceId ? "plan" : "home"; render(); break;
+    case "open-race": {
+      const race = state.races.find(r=>r.id===el.getAttribute("data-id"));
+      if (race) openRace(race);
+      break;
+    }
+    case "del-race":
+      // Archived races no longer expose a delete control in the UI (see
+      // raceTile()/renderPlan) — once results are submitted they're meant
+      // to be preserved. This handler is intentionally left in place only
+      // as a safety net; removing an archived record is a manual, raw-data
+      // operation (e.g. editing rsp_races in localStorage) if ever truly needed.
+      state.confirmDelete = { type:"race", id: el.getAttribute("data-id"), label: el.getAttribute("data-label") };
+      render(); break;
+    case "del-current-race":
+      state.confirmDelete = { type:"race", id: state.currentRaceId, label: state.eventName };
+      render(); break;
+    case "cancel-delete":
+      state.confirmDelete = null; render(); break;
+    case "confirm-delete": {
+      const cd = state.confirmDelete;
+      if (cd.type === "race"){
+        persistRaces(state.races.filter(r=>r.id!==cd.id));
+        if (state.currentRaceId === cd.id){ state.page="home"; state.currentRaceId=null; state.plan=null; }
+      } else if (cd.type === "car"){
+        state.cars = state.cars.filter(c=>c.id!==cd.id);
+      } else if (cd.type === "catalogCar"){
+        persistCatalog(state.catalog.filter(c=>c.id!==cd.id));
+      } else if (cd.type === "retireCar"){
+        retireCarAction(cd.carId, cd.stintIdx);
+      } else if (cd.type === "finishStint"){
+        updateStintEnd(cd.carId, cd.stintIdx, cd.timeStr);
+      }
+      state.confirmDelete = null; render(); break;
+    }
+    case "show-add-car":
+      state.addingCar = true; render(); break;
+    case "close-add-car":
+      state.addingCar = false; state.addingCustom = false; render(); break;
+    case "select-catalog": {
+      const def = state.catalog.find(c=>c.id===el.getAttribute("data-id"));
+      if (def) addCarFromCatalog(def);
+      break;
+    }
+    case "del-catalog":
+      state.confirmDelete = { type:"catalogCar", id: el.getAttribute("data-id"), label: el.getAttribute("data-label") };
+      render(); break;
+    case "show-custom-car":
+      state.addingCustom = true; render(); break;
+    case "cancel-custom-car":
+      state.addingCustom = false; render(); break;
+    case "pick-accent":
+      state.newCar.accent = el.getAttribute("data-color"); render(); break;
+    case "submit-new-car":
+      submitNewCar(); break;
+    case "remove-car":
+      state.confirmDelete = { type:"car", id: el.getAttribute("data-id"), label: el.getAttribute("data-label") };
+      render(); break;
+    case "add-driver": {
+      const car = state.cars.find(c=>c.id===el.getAttribute("data-car"));
+      if (car){ car.drivers.push(""); render(); }
+      break;
+    }
+    case "remove-driver": {
+      const car = state.cars.find(c=>c.id===el.getAttribute("data-car"));
+      const idx = +el.getAttribute("data-idx");
+      if (car && car.drivers.length>1){ car.drivers.splice(idx,1); render(); }
+      break;
+    }
+    case "createPlan":
+      createRacePlan(); break;
+    case "plan-edit":
+      state.page = "setup"; render(); break;
+    case "archiveRace":
+      archiveRace(); break;
+    case "clear-stint-log": {
+      const cp = state.plan.carPlans.find(cp=>cp.car.id===el.getAttribute("data-car"));
+      if (cp){ cp.log = []; syncPlanToRaceRecord(); render(); }
+      break;
+    }
+    case "toggle-stint-note": {
+      const key = el.getAttribute("data-car")+"__"+el.getAttribute("data-stint");
+      if (state.openStintNotes.has(key)) state.openStintNotes.delete(key);
+      else state.openStintNotes.add(key);
+      render();
+      break;
+    }
+    case "toggle-stint-flag": {
+      toggleStintFlag(el.getAttribute("data-car"), +el.getAttribute("data-stint"), el.getAttribute("data-flag"));
+      break;
+    }
+    case "set-quiet-minutes": {
+      const carId = el.getAttribute("data-car");
+      const stintIdx = +el.getAttribute("data-stint");
+      const minutes = +el.getAttribute("data-minutes");
+      const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
+      const current = cp ? (cp.stints[stintIdx].quietMinutes || 0) : 0;
+      // Clicking the already-active duration turns it off; otherwise switches to it.
+      setStintQuietTime(carId, stintIdx, current === minutes ? 0 : minutes);
+      break;
+    }
+    case "toggle-car-plan": {
+      const carId = el.getAttribute("data-car");
+      if (state.expandedCarPlans.has(carId)) state.expandedCarPlans.delete(carId);
+      else state.expandedCarPlans.add(carId);
+      render();
+      break;
+    }
+    case "prompt-retire-car": {
+      const carId = el.getAttribute("data-car");
+      const stintIdx = +el.getAttribute("data-stint");
+      const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
+      const label = cp ? `#${cp.car.number} ${cp.car.team}` : "this car";
+      state.confirmDelete = { type:"retireCar", carId, stintIdx, label };
+      render();
+      break;
+    }
+    case "prompt-finish-stint": {
+      const carId = el.getAttribute("data-car");
+      const stintIdx = +el.getAttribute("data-stint");
+      const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
+      const stint = cp ? cp.stints[stintIdx] : null;
+      const label = stint ? `${stint.driver || "This driver"}'s Stint ${stintIdx+1}` : "This stint";
+      // Snapshot "now" once, at the moment the button is pressed — so the
+      // confirmation dialog shows the exact time that will be applied,
+      // with no drift from however long the person takes to confirm.
+      const now = new Date();
+      state.confirmDelete = { type:"finishStint", carId, stintIdx, label, timeStr: toTimeInputValue(now), timeLabel: formatTimeCompact(now) };
+      render();
+      break;
+    }
+  }
+}
+
+function openRace(race){
+  state.currentRaceId = race.id;
+  state.currentStatus = race.status;
+  state.eventName = race.eventName;
+  state.eventDate = race.eventDateISO;
+  state.cars = JSON.parse(JSON.stringify(race.cars));
+  state.track = TRACKS.includes(race.track) ? race.track : "Other";
+  state.customTrack = TRACKS.includes(race.track) ? "" : race.track;
+  state.startTime = race.startTime;
+  state.stintMinutes = race.stintMinutes;
+  state.durationHours = race.durationHours;
+
+  const p = race.plan;
+  state.plan = {
+    startDateTime: new Date(p.startDateTimeISO),
+    endDateTime: new Date(p.endDateTimeISO),
+    totalMinutes: p.totalMinutes,
+    track: race.track,
+    carPlans: p.carPlans.map(cp=>({
+      car: cp.car,
+      log: cp.log||[],
+      retiredAtStint: cp.retiredAtStint ?? null,
+      stints: cp.stints.map(s=>({ ...s, quietMinutes: s.quietMinutes || 0, start:new Date(s.startISO), end:new Date(s.endISO), plannedEnd: new Date(s.plannedEndISO || s.endISO) })),
+    })),
+  };
+  state.finishDrafts = {};
+  state.expandedCarPlans = new Set();
+  state.page = "plan";
+  render();
+}
+
+function addCarFromCatalog(def){
+  state.cars.push({
+    id: uid("car"),
+    number: def.number, team: def.team, manufacturer: def.manufacturer, model: def.model,
+    accent: def.accent, imageUrl: def.imageUrl || null, catalogId: def.id,
+    drivers: [""], startingPosition: null, finishPosition: null,
+  });
+  state.addingCar = false; state.addingCustom = false;
+  render();
+}
+
+function submitNewCar(){
+  const nc = state.newCar;
+  if (!nc.number.trim()) return;
+  const catEntry = { id: uid("cat"), number: nc.number.trim(), team: nc.team.trim()||"New Team",
+    manufacturer: nc.manufacturer.trim()||"—", model: nc.model.trim()||"—", accent: nc.accent, custom: true };
+  persistCatalog([...state.catalog, catEntry]);
+  addCarFromCatalog(catEntry);
+  state.newCar = { number:"", team:"", model:"", manufacturer:"", accent: ACCENT_PRESETS[0] };
+}
+
+function createRacePlan(){
+  const cars = state.cars;
+  const canCreatePlan = cars.length>0 && cars.every(c=>c.drivers.some(d=>d.trim()))
+      && (state.track && (state.track!=="Other" || state.customTrack.trim()))
+      && state.startTime && Number(state.stintMinutes)>0 && Number(state.durationHours)>0;
+  if (!canCreatePlan) return;
+
+  const resolvedTrack = state.track === "Other" ? state.customTrack.trim() : state.track;
+  const [hh,mm] = state.startTime.split(":").map(Number);
+  const startDateTime = new Date(state.eventDate || Date.now());
+  startDateTime.setHours(hh, mm, 0, 0);
+  const totalMinutes = Number(state.durationHours) * 60;
+  const stintLen = Number(state.stintMinutes);
+
+  const carsSnapshot = cars.map(c=>({
+    ...c,
+    startingPosition: parsePosition(c.startingPosition),
+    finishPosition: c.finishPosition != null ? parsePosition(c.finishPosition) : null,
+  }));
+
+  const carPlans = carsSnapshot.map(car=>{
+    const validDrivers = car.drivers.filter(d=>d.trim());
+    let elapsed = 0, di = 0; const stints = [];
+    while (elapsed < totalMinutes){
+      const segLen = Math.min(stintLen, totalMinutes - elapsed);
+      const start = addMinutes(startDateTime, elapsed);
+      const end = addMinutes(startDateTime, elapsed + segLen);
+      stints.push({ driver: validDrivers[di % validDrivers.length], driverIndex: di % validDrivers.length, start, end, plannedEnd: new Date(end), lengthMin: segLen, position: null, notes: "", flags: [], removed: false, quietMinutes: 0, finished: false });
+      elapsed += segLen; di += 1;
+    }
+    return { car, stints, log: [], retiredAtStint: null };
+  });
+
+  const endDateTime = addMinutes(startDateTime, totalMinutes);
+  state.plan = { startDateTime, endDateTime, totalMinutes, track: resolvedTrack, carPlans };
+
+  const raceId = state.currentRaceId || uid("race");
+  const record = {
+    id: raceId, eventName: state.eventName, eventDateISO: (state.eventDate ? new Date(state.eventDate).toISOString() : new Date().toISOString()),
+    track: resolvedTrack, startTime: state.startTime, stintMinutes: Number(state.stintMinutes), durationHours: Number(state.durationHours),
+    cars: carsSnapshot, status: state.currentStatus === "archived" ? "archived" : "planned",
+    plan: {
+      startDateTimeISO: startDateTime.toISOString(), endDateTimeISO: endDateTime.toISOString(), totalMinutes,
+      carPlans: carPlans.map(cp=>({ car: cp.car, log: cp.log||[], retiredAtStint: cp.retiredAtStint ?? null, stints: cp.stints.map(s=>({ driver:s.driver, driverIndex:s.driverIndex, startISO:s.start.toISOString(), endISO:s.end.toISOString(), plannedEndISO:(s.plannedEnd||s.end).toISOString(), lengthMin:s.lengthMin, position:s.position ?? null, notes:s.notes||"", flags:s.flags||[], removed:s.removed||false, quietMinutes:s.quietMinutes||0, finished:s.finished||false })) })),
+    },
+  };
+  const exists = state.races.some(r=>r.id===raceId);
+  const updated = exists ? state.races.map(r=>r.id===raceId?record:r) : [record, ...state.races];
+  persistRaces(updated);
+  state.currentRaceId = raceId;
+  state.finishDrafts = {};
+  state.page = "plan";
+  render();
+}
+
+// Recompute the overall race end time from whichever car's stint schedule
+// now runs longest, after a cascading edit.
+function recomputePlanEndTime(){
+  const plan = state.plan;
+  let maxEnd = plan.startDateTime;
+  plan.carPlans.forEach(cp=>{
+    for (let k=cp.stints.length-1; k>=0; k--){
+      if (!cp.stints[k].removed){
+        const end = addMinutes(cp.stints[k].end, cp.stints[k].quietMinutes || 0);
+        if (end > maxEnd) maxEnd = end;
+        break;
+      }
+    }
+  });
+  plan.endDateTime = maxEnd;
+  plan.totalMinutes = Math.round((plan.endDateTime - plan.startDateTime)/60000);
+}
+
+function serializePlanForStorage(){
+  const plan = state.plan;
+  return {
+    startDateTimeISO: plan.startDateTime.toISOString(),
+    endDateTimeISO: plan.endDateTime.toISOString(),
+    totalMinutes: plan.totalMinutes,
+    carPlans: plan.carPlans.map(cp=>({
+      car: cp.car,
+      log: cp.log||[],
+      retiredAtStint: cp.retiredAtStint ?? null,
+      stints: cp.stints.map(s=>({ driver:s.driver, driverIndex:s.driverIndex, startISO:s.start.toISOString(), endISO:s.end.toISOString(), plannedEndISO:(s.plannedEnd||s.end).toISOString(), lengthMin:s.lengthMin, position:s.position ?? null, notes:s.notes||"", flags:s.flags||[], removed:s.removed||false, quietMinutes:s.quietMinutes||0, finished:s.finished||false })),
+    })),
+  };
+}
+
+// Pushes the in-memory plan (after a stint edit) back into the saved race
+// record so reopening the race keeps the edited times/positions.
+function syncPlanToRaceRecord(){
+  if (!state.currentRaceId) return;
+  const updated = state.races.map(r => r.id === state.currentRaceId ? { ...r, plan: serializePlanForStorage() } : r);
+  persistRaces(updated);
+}
+
+// Shared cascade math for real end-time edits (updateStintEnd). Given a
+// car's plan, an anchor stint index, and the cursor time the NEXT stint
+// should start at, walks every stint after the anchor forward: absorbing
+// a stint entirely if its own original end time has already passed by
+// the time the cursor reaches it, or restoring + re-timing it otherwise.
+// Finishes by re-running the driver rotation across whatever changed.
+// Returns which stints were newly absorbed/newly restored, for the caller
+// to log. (Quiet time does NOT use this — see setStintQuietTime, which
+// uniformly shifts the schedule instead of absorbing anyone's stint.)
+function cascadeStintsFrom(cp, anchorIdx, cursor){
+  const stints = cp.stints;
+  const nowRemoved = [];
+  const nowRestored = [];
+  for (let j=anchorIdx+1; j<stints.length; j++){
+    const s = stints[j];
+    if (cp.retiredAtStint != null && j > cp.retiredAtStint){
+      s.removed = true; // car retired — stays removed regardless of time math
+      continue;
+    }
+    if (s.end <= cursor){
+      if (!s.removed) nowRemoved.push(j);
+      s.removed = true;
+      s.start = new Date(cursor);
+      // cursor doesn't advance — this stint contributed no time
+    } else {
+      if (s.removed) nowRestored.push(j);
+      s.removed = false;
+      s.start = new Date(cursor);
+      s.lengthMin = Math.round((s.end - s.start)/60000);
+      // Advance past this stint's own end AND any quiet-time break already
+      // scheduled right after it — otherwise a later cascade (triggered by
+      // finishing an earlier stint) would silently erase that gap when it
+      // recalculates this stint's downstream neighbor.
+      cursor = addMinutes(s.end, s.quietMinutes || 0);
+    }
+  }
+
+  // A removal or restoration changes how many stints actually happen, so the
+  // driver rotation for everything after this point gets re-run from
+  // scratch — cycling through the car's drivers and skipping any removed
+  // slots — so the next real stint picks up wherever the rotation would
+  // naturally land instead of sitting on its original (now-stale) driver.
+  if (nowRemoved.length || nowRestored.length){
+    const validDrivers = cp.car.drivers.filter(d=>d.trim());
+    if (validDrivers.length){
+      let rot = (stints[anchorIdx].driverIndex + 1) % validDrivers.length;
+      for (let j=anchorIdx+1; j<stints.length; j++){
+        if (stints[j].removed) continue;
+        stints[j].driverIndex = rot;
+        stints[j].driver = validDrivers[rot];
+        rot = (rot+1) % validDrivers.length;
+      }
+    }
+  }
+
+  return { nowRemoved, nowRestored };
+}
+
+// Editing a stint's end time hands the freed-up (or overrun) time to
+// whatever comes after it. The very next stint just has its start pushed
+// to match. If the overrun is big enough to swallow that stint's own
+// planned end entirely, it's marked removed (greyed out, not deleted —
+// see renderStintRow) and the cascade keeps checking the stint after that,
+// and so on, until it reaches one with real time left. Shrinking an earlier
+// stint back down runs the same recalculation and revives anything that's
+// no longer swallowed.
+function updateStintEnd(carId, stintIdx, timeStr){
+  if (!timeStr) { render(); return; }
+  const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
+  if (!cp) return;
+  const stints = cp.stints;
+  const stint = stints[stintIdx];
+  if (!stint) return;
+
+  const [hh,mm] = timeStr.split(":").map(Number);
+  const newEnd = new Date(stint.start);
+  newEnd.setHours(hh, mm, 0, 0);
+
+  if (newEnd <= stint.start){
+    render(); // invalid — end can't be before this stint's own start; revert the field
+    return;
+  }
+
+  const deltaMin = Math.round((newEnd.getTime() - stint.end.getTime())/60000); // did this specific edit change anything?
+  if (!stint.plannedEnd) stint.plannedEnd = new Date(stint.end); // backfill for stints saved before this was tracked
+  stint.end = newEnd;
+  stint.lengthMin = Math.round((stint.end - stint.start)/60000);
+  stint.removed = false; // the stint being actively edited is never itself "removed"
+  stint.finished = true; // this is the only path that confirms a real end time, so the End column now shows it instead of the Finish Stint button
+
+  // Reported minutes always compare against this stint's ORIGINAL planned
+  // end time, not just its value a moment ago — so if it already shifted
+  // from an earlier edit or absorbed time from a prior stint's extension,
+  // the log still reflects the true total deviation from the schedule
+  // rather than just this one interaction's small remaining nudge.
+  const deltaFromPlan = Math.round((stint.end.getTime() - stint.plannedEnd.getTime())/60000);
+
+  // The overrun/underrun cascade runs on the RAW new end time only — it
+  // decides whether downstream stints get absorbed or restored based on
+  // genuine time gained or lost. It must NOT include the quiet-time break
+  // below, or a scheduled rest period gets mistaken for lost time and ends
+  // up stretching/absorbing real stints instead of just pushing the
+  // schedule later untouched.
+  const cursor = newEnd;
+  const { nowRemoved, nowRestored } = cascadeStintsFrom(cp, stintIdx, cursor);
+
+  // Any quiet-time break scheduled after THIS stint is dead time nobody
+  // drives through. It must push everything downstream later by exactly
+  // its duration, without changing anyone's stint length — the same flat
+  // shift setStintQuietTime applies when the break is first added. Doing
+  // this as a separate step (after the overrun cascade above) keeps a
+  // scheduled rest period from ever being treated as absorbable lost time.
+  if (stint.quietMinutes){
+    for (let j=stintIdx+1; j<stints.length; j++){
+      const ds = stints[j];
+      ds.start = addMinutes(ds.start, stint.quietMinutes);
+      ds.end = addMinutes(ds.end, stint.quietMinutes);
+      if (ds.plannedEnd) ds.plannedEnd = addMinutes(ds.plannedEnd, stint.quietMinutes);
+    }
+  }
+
+  if (nowRemoved.length){
+    const list = nowRemoved.map(i=>`Stint ${i+1}`).join(", ");
+    logStintNote(cp, stintIdx, `Stint ${stintIdx+1} extended by ${deltaFromPlan} min — completely absorbed ${list}. ${nowRemoved.length>1?"They've":"It's"} been removed from the schedule.`, "warn");
+  } else if (nowRestored.length){
+    const list = nowRestored.map(i=>`Stint ${i+1}`).join(", ");
+    logStintNote(cp, stintIdx, `Stint ${stintIdx+1} adjusted — ${list} restored to the schedule.`);
+  } else if (deltaMin !== 0){
+    const label = deltaFromPlan > 0
+      ? `Stint ${stintIdx+1} extended by ${deltaFromPlan} min.`
+      : deltaFromPlan < 0
+        ? `Stint ${stintIdx+1} was short ${Math.abs(deltaFromPlan)} min.`
+        : `Stint ${stintIdx+1} adjusted back to its original schedule.`;
+    logStintNote(cp, stintIdx, label);
+  }
+
+  recomputePlanEndTime();
+  syncPlanToRaceRecord();
+  render();
+}
+
+// Applies (minutes > 0), changes, or clears (minutes === 0) a scheduled
+// quiet-time break immediately after a stint — e.g. Sunday's 1-2hr pause.
+// Unlike a real end-time edit (which can eat into a later driver's stint
+// to catch back up to schedule), quiet time is dead time nobody drives
+// through: every subsequent stint keeps its exact original length and
+// driver assignment, and the whole rest of the day simply slides later by
+// the change in quiet-time duration (or earlier, if it's reduced or
+// cleared). The quiet-time break itself isn't a real stint — it's
+// rendered as an unnumbered placeholder row between this stint and the
+// next (see carPlanSection) — so it never needs its own array slot.
+function setStintQuietTime(carId, stintIdx, minutes){
+  const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
+  if (!cp) return;
+  const stint = cp.stints[stintIdx];
+  if (!stint) return;
+
+  const newMinutes = minutes || 0;
+  const delta = newMinutes - (stint.quietMinutes || 0);
+  stint.quietMinutes = newMinutes;
+
+  if (!stint.flags) stint.flags = [];
+  const flagIdx = stint.flags.indexOf("quiet");
+  if (newMinutes && flagIdx < 0) stint.flags.push("quiet");
+  if (!newMinutes && flagIdx >= 0) stint.flags.splice(flagIdx, 1);
+
+  if (delta !== 0){
+    for (let j=stintIdx+1; j<cp.stints.length; j++){
+      const s = cp.stints[j];
+      s.start = addMinutes(s.start, delta);
+      s.end = addMinutes(s.end, delta);
+      if (s.plannedEnd) s.plannedEnd = addMinutes(s.plannedEnd, delta);
+    }
+    // Only log when the schedule actually moved — merely toggling the
+    // Quiet Time flag on and back off without ever picking a duration
+    // (accidental click) never changes anything, so it stays silent.
+    if (newMinutes){
+      logStintNote(cp, stintIdx, `Quiet Time added after Stint ${stintIdx+1} — ${formatDuration(newMinutes)}. Every stint after it shifts later by the same amount.`, "warn");
+    } else {
+      logStintNote(cp, stintIdx, `Quiet Time removed after Stint ${stintIdx+1} — the schedule shifts back up to fill the gap.`);
+    }
+  }
+
+  recomputePlanEndTime();
+  syncPlanToRaceRecord();
+  render();
+}
+
+function updateStintPosition(carId, stintIdx, value){
+  const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
+  if (!cp) return;
+  const stint = cp.stints[stintIdx];
+  if (!stint) return;
+  stint.position = value.trim() ? value.trim() : null;
+  syncPlanToRaceRecord();
+  render();
+}
+
+// Lets a stint's driver be reassigned after the plan was generated (e.g.
+// swapping the rotation on the fly). driverIndex is kept in sync so the
+// color dot / palette stays consistent with the car's driver list.
+function updateStintDriver(carId, stintIdx, driverName){
+  const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
+  if (!cp) return;
+  const stint = cp.stints[stintIdx];
+  if (!stint) return;
+  const validDrivers = cp.car.drivers.filter(d=>d.trim());
+  const idx = validDrivers.indexOf(driverName);
+  stint.driver = driverName;
+  stint.driverIndex = idx >= 0 ? idx : 0;
+  syncPlanToRaceRecord();
+  render();
+}
+
+function updateStintNote(carId, stintIdx, value){
+  const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
+  if (!cp) return;
+  const stint = cp.stints[stintIdx];
+  if (!stint) return;
+  stint.notes = value;
+  syncPlanToRaceRecord();
+  render();
+}
+
+function toggleStintFlag(carId, stintIdx, flagKey){
+  const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
+  if (!cp) return;
+  const stint = cp.stints[stintIdx];
+  if (!stint) return;
+  if (!stint.flags) stint.flags = [];
+
+  if (flagKey === "quiet"){
+    // Quiet Time needs a duration before it actually shifts anything, so
+    // turning the flag ON just reveals the 1hr/2hr picker (see
+    // carPlanSection) — the real schedule change happens in
+    // setStintQuietTime once a duration is chosen. Turning it OFF clears
+    // any already-applied break and un-shifts the stints after it.
+    if (stint.flags.includes("quiet")){
+      setStintQuietTime(carId, stintIdx, 0);
+    } else {
+      stint.flags.push("quiet");
+      syncPlanToRaceRecord();
+      render();
+    }
+    return;
+  }
+
+  const idx = stint.flags.indexOf(flagKey);
+  if (idx >= 0) stint.flags.splice(idx, 1); else stint.flags.push(flagKey);
+  syncPlanToRaceRecord();
+  render();
+}
+
+// Retiring a car marks every stint after the retirement point as removed
+// (same greyed-out treatment as an absorbed stint) and records which stint
+// it happened after. recomputePlanEndTime + the cascade guard in
+// updateStintEnd both already respect retiredAtStint, so the race's overall
+// end time and any later time edits correctly treat this car as done.
+function retireCarAction(carId, stintIdx){
+  const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
+  if (!cp) return;
+  cp.retiredAtStint = stintIdx;
+  for (let j=stintIdx+1; j<cp.stints.length; j++){
+    cp.stints[j].removed = true;
+  }
+  logStintNote(cp, stintIdx, `Car Retired after Stint ${stintIdx+1} - Retired today. Ready for tomorrow.`, "warn");
+  recomputePlanEndTime();
+  syncPlanToRaceRecord();
+  render();
+}
+
+function archiveRace(){
+  const finishByCarId = {};
+  state.plan.carPlans.forEach(cp=>{ finishByCarId[cp.car.id] = parsePosition(state.finishDrafts[cp.car.id]); });
+  state.currentStatus = "archived";
+  state.plan.carPlans.forEach(cp=>{
+    cp.car.finishPosition = finishByCarId[cp.car.id] ?? cp.car.finishPosition ?? null;
+  });
+  const updated = state.races.map(r=>{
+    if (r.id !== state.currentRaceId) return r;
+    const updatedCars = r.cars.map(c=>({ ...c, finishPosition: finishByCarId[c.id] ?? c.finishPosition ?? null }));
+    const updatedCarPlans = r.plan.carPlans.map(cp=>({ ...cp, car: { ...cp.car, finishPosition: finishByCarId[cp.car.id] ?? cp.car.finishPosition ?? null } }));
+    return { ...r, status:"archived", cars: updatedCars, plan: { ...r.plan, carPlans: updatedCarPlans } };
+  });
+  persistRaces(updated);
+  render();
+}
+
+// ---- AUTH GUARD (boot) ----
+// Real session check. getSession() resolves from the client's cached
+// session (localStorage) — fast, no network round-trip in the common
+// case. The onAuthStateChange listener below is a safety net specifically
+// for the moment right after a magic-link or Google redirect lands here:
+// the client may still be parsing the token out of the URL when
+// getSession() first resolves, so we give it a brief window to finish
+// before concluding there's really no session and bouncing to index.html.
+function startApp(){
+  state.races = loadRaces();
+  state.catalog = loadCatalog();
+  render();
+}
+
+(async function boot(){
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session){
+    startApp();
+    return;
+  }
+
+  let settled = false;
+  const { data: sub } = supabase.auth.onAuthStateChange(function(event, newSession){
+    if (settled) return;
+    if (newSession){
+      settled = true;
+      sub.subscription.unsubscribe();
+      startApp();
+    }
+  });
+
+  setTimeout(function(){
+    if (settled) return;
+    settled = true;
+    sub.subscription.unsubscribe();
+    window.location.replace("index.html");
+  }, 1500);
+})();
+</script>
+</body>
+</html>
