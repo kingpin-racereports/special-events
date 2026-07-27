@@ -320,6 +320,7 @@ let state = {
   currentRaceId: null,
   currentStatus: "planned",
   confirmDelete: null,
+  isEngineer: false, // role-gate for edit controls — set once at boot via checkIsEngineer(). Defaults to false (read-only) so a failed/slow check never wrongly grants edit access.
 
   catalog: [],
   showNameInput: false,
@@ -642,7 +643,9 @@ function renderHome(){
         <button class="continue-btn" id="confirmName" data-act="confirmName" ${state.nameDraft.trim()?"":"disabled"}>Continue ${icon("arrowRight",18)}</button>
         <p style="font-size:12px;color:var(--textFaint);margin:0;">${state.duplicateSource ? "Cars, drivers, track, and timing carry over — you'll verify everything on the next page." : "Today's date is captured automatically for your records."}</p>
       </div>`
-    : `<button class="create-btn" id="startCreate" data-act="startCreate">${icon("plus",20,"color:"+T.blue)}<span>Create a Race</span></button>`;
+    : (state.isEngineer
+        ? `<button class="create-btn" id="startCreate" data-act="startCreate">${icon("plus",20,"color:"+T.blue)}<span>Create a Race</span></button>`
+        : `<p class="empty-note" style="text-align:center;">New races are created by your race engineer.</p>`);
 
   return `
     <div class="home-wrap">
@@ -661,14 +664,14 @@ function raceTile(race){
     <div class="race-tile" data-act="open-race" data-id="${race.id}" role="button" tabindex="0" style="border-color:${accent};">
       <div class="strip" style="background:var(--panelRaised);">
         ${trackStripContent(race.track, accent)}
-        ${race.status!=="archived" ? `<button class="del" data-act="del-race" data-id="${race.id}" data-label="${esc(race.eventName)}" onclick="event.stopPropagation()">${icon("x",13)}</button>` : ""}
+        ${(state.isEngineer && race.status!=="archived") ? `<button class="del" data-act="del-race" data-id="${race.id}" data-label="${esc(race.eventName)}" onclick="event.stopPropagation()">${icon("x",13)}</button>` : ""}
       </div>
       <div class="body">
         <div class="name">${esc(race.eventName)}</div>
         <div class="meta">${esc(race.track||"No track set")} · ${carsCount} car${carsCount!==1?"s":""}</div>
         <div class="meta" style="margin-top:2px;color:${race.status==="archived"?T.gold:T.textFaint}">${race.status==="archived"?`Archived · ${formatDateCompact(race.eventDateISO)}`:"Planned"}</div>
       </div>
-      <button class="dup" data-act="duplicate-race" data-id="${race.id}" title="Duplicate this race" onclick="event.stopPropagation()">${icon("copy",12)}</button>
+      ${state.isEngineer ? `<button class="dup" data-act="duplicate-race" data-id="${race.id}" title="Duplicate this race" onclick="event.stopPropagation()">${icon("copy",12)}</button>` : ""}
     </div>`;
 }
 
@@ -832,6 +835,7 @@ function carCard(car){
 function renderPlan(){
   const plan = state.plan;
   const archived = state.currentStatus === "archived";
+  const readOnly = archived || !state.isEngineer;
   const primaryCar = plan.carPlans[0] && plan.carPlans[0].car;
   const podium = archived && primaryCar ? podiumColor(primaryCar.finishPosition) : null;
   const bannerColor = podium || T.textMuted;
@@ -840,9 +844,9 @@ function renderPlan(){
   return `
     <div class="page page-wide fade-in">
       <div class="top-actions">
-        ${archived ? `<span></span>` : `<button class="btn-back" data-act="plan-edit">${icon("arrowLeft",15)} Edit</button>`}
+        ${readOnly ? `<span></span>` : `<button class="btn-back" data-act="plan-edit">${icon("arrowLeft",15)} Edit</button>`}
         <div class="right">
-          ${!archived ? `<button class="link-red" data-act="del-current-race">${icon("trash",13)} Delete</button>` : ""}
+          ${!readOnly ? `<button class="link-red" data-act="del-current-race">${icon("trash",13)} Delete</button>` : ""}
           <button class="link-muted" data-act="go-home">${icon("rotate",13)} Home</button>
         </div>
       </div>
@@ -867,7 +871,7 @@ function renderPlan(){
         ${infoChip("timer","Checkered Flag",formatTime(plan.endDateTime))}
       </div>
 
-      ${!archived ? `
+      ${!readOnly ? `
       <div class="archive-box fade-in">
         <div class="head">${icon("archive",15)} Race Complete?</div>
         <p>${plan.carPlans.length===1 ? "Enter the Class Finish Position to Archive this Race." : "Enter each car's class finish position to archive this race."}</p>
@@ -913,6 +917,11 @@ function raceSummaryBlock(cp){
 
 function carPlanSection(cp, plan, archived){
   const car = cp.car, stints = cp.stints;
+  // archived = the race's real status, used for status DISPLAY (podium
+  // colors, seat-time summary, collapsing). readOnly = whether editing
+  // controls should render at all — true once archived OR whenever the
+  // signed-in person isn't an engineer, i.e. the driver read-only view.
+  const readOnly = archived || !state.isEngineer;
   const shortNames = buildShortNames(car.drivers.filter(d=>d.trim()));
   const carPodium = archived ? podiumColor(car.finishPosition) : null;
   const hasDelta = archived && car.startingPosition!=null && car.finishPosition!=null;
@@ -993,7 +1002,7 @@ function carPlanSection(cp, plan, archived){
           const flagBadges = flags.map(fk => FLAG_TYPES.find(f=>f.key===fk)?.emoji || "").join("");
           const hasNoteContent = flags.length>0 || !!(s.notes && s.notes.trim());
 
-          const driverCell = archived
+          const driverCell = readOnly
             ? `<span class="driver-cell"><span class="dot" style="background:${dotColor};flex-shrink:0;"></span><span style="font-size:13px;">${esc(shortNames[s.driver]||s.driver||"TBD")}</span></span>`
             : `<span class="driver-cell">
                 <span class="dot" style="background:${dotColor};flex-shrink:0;"></span>
@@ -1002,16 +1011,16 @@ function carPlanSection(cp, plan, archived){
                 </select>
               </span>`;
 
-          const endCell = (archived || s.finished)
+          const endCell = (readOnly || s.finished)
             ? `<span class="font-mono" style="white-space:nowrap;font-size:11px;text-align:center;display:block;">${formatTimeCompact(s.end)}</span>`
             : `<button class="finish-stint-cell" data-act="prompt-finish-stint" data-car="${car.id}" data-stint="${i}" title="Finish Stint"><span class="em">🏁</span>Finish</button>`;
 
-          const posCell = archived
+          const posCell = readOnly
             ? `<span class="font-mono stint-pos" style="background:${posStyle.bg};color:${posStyle.color};display:flex;align-items:center;justify-content:center;">${s.position ? esc(s.position) : "–"}</span>`
             : `<input type="text" class="field stint-pos font-mono" placeholder="P–" value="${esc(s.position ?? '')}" data-act="edit-stint-pos" data-car="${car.id}" data-stint="${i}" style="background:${posStyle.bg};color:${posStyle.color};" />`;
 
-          const noteToggle = (!archived || hasNoteContent)
-            ? `<button class="stint-note-toggle" data-act="toggle-stint-note" data-car="${car.id}" data-stint="${i}" title="${isOpen?'Hide note':(archived?'View note':'Add a note')}">${flagBadges ? `<span class="flag-badge">${flagBadges}</span>` : icon(isOpen?"x":(archived?"clock":"plus"),13)}</button>`
+          const noteToggle = (!readOnly || hasNoteContent)
+            ? `<button class="stint-note-toggle" data-act="toggle-stint-note" data-car="${car.id}" data-stint="${i}" title="${isOpen?'Hide note':(readOnly?'View note':'Add a note')}">${flagBadges ? `<span class="flag-badge">${flagBadges}</span>` : icon(isOpen?"x":(readOnly?"clock":"plus"),13)}</button>`
             : `<span></span>`;
 
           return `
@@ -1025,7 +1034,7 @@ function carPlanSection(cp, plan, archived){
           </div>
           ${isOpen ? `
           <div class="note-row">
-            ${archived ? `
+            ${readOnly ? `
               ${flags.length ? `<div class="flag-row">${flags.map(fk=>{ const f=FLAG_TYPES.find(x=>x.key===fk); if(!f) return ""; const extra = (fk==="quiet" && s.quietMinutes) ? ` — ${formatDuration(s.quietMinutes)}` : ""; return `<span class="flag-btn active"><span class="em">${f.emoji}</span>${f.label}${extra}</span>`; }).join("")}</div>` : ""}
               ${s.notes && s.notes.trim() ? `<p style="margin:0;font-size:12.5px;color:var(--textMuted);">${esc(s.notes)}</p>` : (!flags.length ? `<p style="margin:0;font-size:12.5px;color:var(--textFaint);font-style:italic;">No notes for this stint.</p>` : "")}
             ` : `
@@ -1062,7 +1071,7 @@ function carPlanSection(cp, plan, archived){
       ${(cp.log && cp.log.length) ? `
       <div class="log-head">
         <span class="lbl">Stint Adjustments</span>
-        ${!archived ? `<button class="log-clear" data-act="clear-stint-log" data-car="${car.id}">Clear</button>` : ""}
+        ${!readOnly ? `<button class="log-clear" data-act="clear-stint-log" data-car="${car.id}">Clear</button>` : ""}
       </div>
       <div class="stint-log">
         ${cp.log.map(m=>{
@@ -1906,7 +1915,19 @@ async function archiveRace(){
 // the client may still be parsing the token out of the URL when
 // getSession() first resolves, so we give it a brief window to finish
 // before concluding there's really no session and bouncing to index.html.
+// Checked once per session load — a simple "am I in the engineers table"
+// lookup. maybeSingle() (not single()) since zero rows is the normal,
+// expected case for a driver, not an error.
+async function checkIsEngineer(){
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return false;
+  const { data, error } = await supabase.from("engineers").select("user_id").eq("user_id", user.id).maybeSingle();
+  if (error){ console.error("checkIsEngineer failed:", error); return false; }
+  return !!data;
+}
+
 async function startApp(){
+  state.isEngineer = await checkIsEngineer();
   state.races = await loadRaces();
   state.catalog = await loadCatalog();
   render();
