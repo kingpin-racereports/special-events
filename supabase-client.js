@@ -23,4 +23,14 @@
 const SUPABASE_URL = "https://YOUR-PROJECT-REF.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "YOUR-ANON-PUBLIC-KEY";
 
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+// IMPORTANT: the Supabase CDN script (loaded just before this file) already
+// creates a global `supabase` NAMESPACE object — it's the SDK itself, with
+// createClient hanging off it, not a client instance yet. Declaring our
+// own `const supabase = ...` here would redeclare that same global name
+// and throw a SyntaxError, which silently kills this entire script (so
+// the client never actually gets created). Instead, pull createClient out
+// and overwrite window.supabase with the real client instance — every
+// other file (planner-auth.js, race-strategy-planner.html) keeps using
+// the bare `supabase` identifier exactly as before; nothing else changes.
+const { createClient } = window.supabase;
+window.supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
