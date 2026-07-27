@@ -250,16 +250,17 @@
 
 /* ============================================================================
  * Race Strategy Planner — standalone HTML/JS mimic of the React prototype.
- * Visual + navigational parity with race-strategy-planner.jsx. Persistence
- * currently uses localStorage as a stand-in.
+ * Visual + navigational parity with race-strategy-planner.jsx.
  *
- * WIRE-UP POINT FOR GITHUB SYNC
+ * PERSISTENCE — Stage 3 (Supabase)
  * ------------------------------------------------------------------------
- * Replace the loadRaces()/persistRaces()/loadCatalog()/persistCatalog()
- * functions below with calls to the GitHub Contents API (same pattern as
- * the token-based setup used in the other project): read a JSON file from
- * a repo path on load, and PUT an updated commit on every save. Everything
- * else (rendering, forms, plan math) can stay as-is.
+ * loadRaces()/loadCatalog()/createRacePlan()/fetchFullRace()/
+ * syncPlanToRaceRecord()/archiveRace() etc. read and write real Supabase
+ * tables (races, cars, stints, stint_log, car_catalog — see the schema
+ * file). The in-memory shape of state.plan/state.cars/etc. is unchanged
+ * from the original localStorage-only version — only these boundary
+ * functions translate to/from Supabase's normalized tables, so all
+ * rendering and cascade-math logic below is untouched.
  * ==========================================================================
  */
 
@@ -283,9 +284,6 @@ const TRACKS = [
   "Watkins Glen International","Laguna Seca","Virginia International Raceway",
   "Circuit of the Americas","Road America","Mid-Ohio Sports Car Course","Other",
 ];
-const RACES_KEY = "rsp_races";
-const CATALOG_KEY = "rsp_catalog";
-
 const defaultCatalog = [
   { id:"cat_18", number:"18", manufacturer:"Porsche", team:"Kingpin Racing", model:"991 GT3 Cup", accent: T.white },
   { id:"cat_4",  number:"4",  manufacturer:"Toyota", team:"Kingpin Racing",  model:"GR Supra GT4 EVO2", accent: T.purple },
@@ -347,24 +345,105 @@ let state = {
   expandedCarPlans: new Set(), // UI-only: which cars' plan sections are expanded (archive view — collapsed by default)
 };
 
-// ---- persistence (localStorage stand-in — see wire-up note above) ----
-function loadRaces(){
-  try { return JSON.parse(localStorage.getItem(RACES_KEY)) || []; } catch(e){ return []; }
+// ---- persistence (Supabase — see supabase-client.js for setup) ----
+async function loadRaces(){
+  const { data, error } = await supabase
+    .from('races')
+    .select('*, cars(*)')
+    .order('created_at', { ascending: false });
+  if (error){ console.error('loadRaces failed:', error); return []; }
+  return data.map(mapRaceRowToRecord);
 }
-function persistRaces(list){
-  state.races = list;
-  localStorage.setItem(RACES_KEY, JSON.stringify(list));
+
+function mapRaceRowToRecord(row){
+  return {
+    id: row.id,
+    eventName: row.event_name,
+    eventDateISO: row.event_date,
+    track: row.track || "",
+    startTime: (row.start_time || "10:00:00").slice(0,5),
+    stintMinutes: row.stint_minutes,
+    durationHours: Number(row.duration_hours),
+    status: row.status,
+    cars: (row.cars || []).map(mapCarRowToCarRecord),
+    plan: row.plan_start_at ? {
+      startDateTimeISO: row.plan_start_at,
+      endDateTimeISO: row.plan_end_at,
+      totalMinutes: row.total_minutes,
+      carPlans: [], // filled in lazily by fetchFullRace() when the race is actually opened
+    } : null,
+  };
 }
-function loadCatalog(){
-  try {
-    const saved = JSON.parse(localStorage.getItem(CATALOG_KEY));
-    if (saved && saved.length) return saved;
-  } catch(e){}
-  return defaultCatalog;
+function mapCarRowToCarRecord(row){
+  return {
+    id: row.id, catalogId: row.catalog_id, number: row.number, team: row.team,
+    manufacturer: row.manufacturer, model: row.model, accent: row.accent,
+    drivers: row.drivers || [], startingPosition: row.starting_position,
+    finishPosition: row.finish_position, retiredAtStint: row.retired_at_stint,
+  };
 }
-function persistCatalog(list){
-  state.catalog = list;
-  localStorage.setItem(CATALOG_KEY, JSON.stringify(list));
+
+// Full fetch for a single race — pulls stints + stint_log too, which the
+// shallow list load above deliberately skips to avoid over-fetching every
+// race just to render a home-screen tile.
+async function fetchFullRace(raceId){
+  const { data: raceRow, error: raceErr } = await supabase
+    .from('races').select('*, cars(*)').eq('id', raceId).single();
+  if (raceErr || !raceRow){ console.error('fetchFullRace failed:', raceErr); return null; }
+
+  const carIds = raceRow.cars.map(c=>c.id);
+  const [{ data: stintRows, error: stintErr }, { data: logRows, error: logErr }] = await Promise.all([
+    supabase.from('stints').select('*').in('car_id', carIds).order('stint_index'),
+    supabase.from('stint_log').select('*').in('car_id', carIds).order('created_at'),
+  ]);
+  if (stintErr) console.error('fetchFullRace stints failed:', stintErr);
+  if (logErr) console.error('fetchFullRace stint_log failed:', logErr);
+
+  const record = mapRaceRowToRecord(raceRow);
+  record.plan = {
+    startDateTimeISO: raceRow.plan_start_at,
+    endDateTimeISO: raceRow.plan_end_at,
+    totalMinutes: raceRow.total_minutes,
+    carPlans: raceRow.cars.map(carRow=>{
+      const carRecord = mapCarRowToCarRecord(carRow);
+      const stints = (stintRows||[]).filter(s=>s.car_id===carRow.id).map(s=>({
+        driver: s.driver, driverIndex: s.driver_index,
+        startISO: s.start_at, endISO: s.end_at, plannedEndISO: s.planned_end_at,
+        lengthMin: s.length_min, position: s.position, notes: s.notes || "",
+        flags: s.flags || [], removed: s.removed, quietMinutes: s.quiet_minutes || 0,
+        finished: s.finished || false,
+      }));
+      const log = (logRows||[]).filter(l=>l.car_id===carRow.id).map(l=>({
+        stintIdx: l.stint_index, text: l.message, type: l.type, ts: new Date(l.created_at).getTime(),
+      }));
+      return { car: carRecord, stints, log, retiredAtStint: carRow.retired_at_stint };
+    }),
+  };
+  return record;
+}
+
+async function loadCatalog(){
+  const { data, error } = await supabase.from('car_catalog').select('*').order('created_at');
+  if (error || !data || !data.length){
+    if (error) console.error('loadCatalog failed:', error);
+    return defaultCatalog;
+  }
+  return data.map(row=>({
+    id: row.id, number: row.number, manufacturer: row.manufacturer, team: row.team,
+    model: row.model, accent: row.accent, custom: row.is_custom,
+  }));
+}
+async function addCatalogEntry(entry){
+  const { data, error } = await supabase.from('car_catalog').insert({
+    number: entry.number, manufacturer: entry.manufacturer, team: entry.team,
+    model: entry.model, accent: entry.accent, is_custom: true,
+  }).select().single();
+  if (error){ console.error('addCatalogEntry failed:', error); return null; }
+  return { id: data.id, number: data.number, manufacturer: data.manufacturer, team: data.team, model: data.model, accent: data.accent, custom: data.is_custom };
+}
+async function deleteCatalogEntry(id){
+  const { error } = await supabase.from('car_catalog').delete().eq('id', id);
+  if (error) console.error('deleteCatalogEntry failed:', error);
 }
 
 // ---- helpers ----
@@ -420,6 +499,11 @@ function formatDuration(mins){
 function logStintNote(cp, stintIdx, text, type){
   if (!cp.log) cp.log = [];
   cp.log.push({ stintIdx, text, type: type||"info", ts: Date.now() });
+  if (cp.car && cp.car.id){
+    supabase.from("stint_log").insert({
+      car_id: cp.car.id, stint_index: stintIdx, message: text, type: type||"info",
+    }).then(({ error })=>{ if (error) console.error("logStintNote insert failed:", error); });
+  }
 }
 function hexToRgb(hex){
   hex = hex.replace("#","");
@@ -1127,7 +1211,7 @@ function updateSetupButtonState(){
   btn.disabled = !canCreatePlan;
 }
 
-function handleAction(act, el){
+async function handleAction(act, el){
   switch(act){
     case "startCreate":
       state.duplicateSource = null;
@@ -1182,8 +1266,9 @@ function handleAction(act, el){
     case "setup-back":
       state.page = state.currentRaceId ? "plan" : "home"; render(); break;
     case "open-race": {
-      const race = state.races.find(r=>r.id===el.getAttribute("data-id"));
-      if (race) openRace(race);
+      const raceId = el.getAttribute("data-id");
+      const full = await fetchFullRace(raceId);
+      if (full) openRace(full);
       break;
     }
     case "del-race":
@@ -1202,16 +1287,19 @@ function handleAction(act, el){
     case "confirm-delete": {
       const cd = state.confirmDelete;
       if (cd.type === "race"){
-        persistRaces(state.races.filter(r=>r.id!==cd.id));
+        const { error } = await supabase.from('races').delete().eq('id', cd.id);
+        if (error) console.error('delete race failed:', error);
+        state.races = state.races.filter(r=>r.id!==cd.id);
         if (state.currentRaceId === cd.id){ state.page="home"; state.currentRaceId=null; state.plan=null; }
       } else if (cd.type === "car"){
         state.cars = state.cars.filter(c=>c.id!==cd.id);
       } else if (cd.type === "catalogCar"){
-        persistCatalog(state.catalog.filter(c=>c.id!==cd.id));
+        await deleteCatalogEntry(cd.id);
+        state.catalog = state.catalog.filter(c=>c.id!==cd.id);
       } else if (cd.type === "retireCar"){
-        retireCarAction(cd.carId, cd.stintIdx);
+        await retireCarAction(cd.carId, cd.stintIdx);
       } else if (cd.type === "finishStint"){
-        updateStintEnd(cd.carId, cd.stintIdx, cd.timeStr);
+        await updateStintEnd(cd.carId, cd.stintIdx, cd.timeStr);
       }
       state.confirmDelete = null; render(); break;
     }
@@ -1254,10 +1342,14 @@ function handleAction(act, el){
     case "plan-edit":
       state.page = "setup"; render(); break;
     case "archiveRace":
-      archiveRace(); break;
+      await archiveRace(); break;
     case "clear-stint-log": {
       const cp = state.plan.carPlans.find(cp=>cp.car.id===el.getAttribute("data-car"));
-      if (cp){ cp.log = []; syncPlanToRaceRecord(); render(); }
+      if (cp){
+        cp.log = [];
+        await supabase.from("stint_log").delete().eq("car_id", el.getAttribute("data-car"));
+        render();
+      }
       break;
     }
     case "toggle-stint-note": {
@@ -1268,7 +1360,7 @@ function handleAction(act, el){
       break;
     }
     case "toggle-stint-flag": {
-      toggleStintFlag(el.getAttribute("data-car"), +el.getAttribute("data-stint"), el.getAttribute("data-flag"));
+      await toggleStintFlag(el.getAttribute("data-car"), +el.getAttribute("data-stint"), el.getAttribute("data-flag"));
       break;
     }
     case "set-quiet-minutes": {
@@ -1278,7 +1370,7 @@ function handleAction(act, el){
       const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
       const current = cp ? (cp.stints[stintIdx].quietMinutes || 0) : 0;
       // Clicking the already-active duration turns it off; otherwise switches to it.
-      setStintQuietTime(carId, stintIdx, current === minutes ? 0 : minutes);
+      await setStintQuietTime(carId, stintIdx, current === minutes ? 0 : minutes);
       break;
     }
     case "toggle-car-plan": {
@@ -1356,17 +1448,20 @@ function addCarFromCatalog(def){
   render();
 }
 
-function submitNewCar(){
+async function submitNewCar(){
   const nc = state.newCar;
   if (!nc.number.trim()) return;
-  const catEntry = { id: uid("cat"), number: nc.number.trim(), team: nc.team.trim()||"New Team",
-    manufacturer: nc.manufacturer.trim()||"—", model: nc.model.trim()||"—", accent: nc.accent, custom: true };
-  persistCatalog([...state.catalog, catEntry]);
+  const catEntry = await addCatalogEntry({
+    number: nc.number.trim(), team: nc.team.trim()||"New Team",
+    manufacturer: nc.manufacturer.trim()||"—", model: nc.model.trim()||"—", accent: nc.accent,
+  });
+  if (!catEntry) return; // insert failed — bail out rather than adding a car with no real catalog row
+  state.catalog = [...state.catalog, catEntry];
   addCarFromCatalog(catEntry);
   state.newCar = { number:"", team:"", model:"", manufacturer:"", accent: ACCENT_PRESETS[0] };
 }
 
-function createRacePlan(){
+async function createRacePlan(){
   const cars = state.cars;
   const canCreatePlan = cars.length>0 && cars.every(c=>c.drivers.some(d=>d.trim()))
       && (state.track && (state.track!=="Other" || state.customTrack.trim()))
@@ -1379,15 +1474,47 @@ function createRacePlan(){
   startDateTime.setHours(hh, mm, 0, 0);
   const totalMinutes = Number(state.durationHours) * 60;
   const stintLen = Number(state.stintMinutes);
+  const endDateTime = addMinutes(startDateTime, totalMinutes);
 
-  const carsSnapshot = cars.map(c=>({
-    ...c,
-    startingPosition: parsePosition(c.startingPosition),
-    finishPosition: c.finishPosition != null ? parsePosition(c.finishPosition) : null,
-  }));
+  const raceFields = {
+    event_name: state.eventName,
+    event_date: (state.eventDate ? new Date(state.eventDate) : new Date()).toISOString().slice(0,10),
+    track: resolvedTrack, start_time: state.startTime, stint_minutes: Number(state.stintMinutes),
+    duration_hours: Number(state.durationHours), status: "planned",
+    plan_start_at: startDateTime.toISOString(), plan_end_at: endDateTime.toISOString(), total_minutes: totalMinutes,
+  };
 
-  const carPlans = carsSnapshot.map(car=>{
-    const validDrivers = car.drivers.filter(d=>d.trim());
+  let raceId = state.currentRaceId;
+  if (raceId){
+    // Re-editing an existing race's Setup and regenerating: update the
+    // race row, then replace every car outright (cascades to their
+    // stints/log automatically) rather than trying to reconcile which
+    // cars/drivers changed — simplest correct translation of "the plan
+    // gets rebuilt from whatever's currently in Setup."
+    const { error } = await supabase.from("races").update(raceFields).eq("id", raceId);
+    if (error){ console.error("update race failed:", error); return; }
+    const { error: delErr } = await supabase.from("cars").delete().eq("race_id", raceId);
+    if (delErr) console.error("delete old cars failed:", delErr);
+  } else {
+    const { data, error } = await supabase.from("races").insert(raceFields).select().single();
+    if (error){ console.error("insert race failed:", error); return; }
+    raceId = data.id;
+  }
+
+  // Postgres generates the real car/stint ids — insert cars one at a
+  // time so each one's generated id is available for its own stints.
+  const carPlans = [];
+  for (const c of cars){
+    const validDrivers = c.drivers.filter(d=>d.trim());
+    const carFields = {
+      race_id: raceId, catalog_id: c.catalogId || null, number: c.number, team: c.team,
+      manufacturer: c.manufacturer, model: c.model, accent: c.accent, drivers: validDrivers,
+      starting_position: parsePosition(c.startingPosition),
+      finish_position: c.finishPosition != null ? parsePosition(c.finishPosition) : null,
+    };
+    const { data: carRow, error: carErr } = await supabase.from("cars").insert(carFields).select().single();
+    if (carErr){ console.error("insert car failed:", carErr); continue; }
+
     let elapsed = 0, di = 0; const stints = [];
     while (elapsed < totalMinutes){
       const segLen = Math.min(stintLen, totalMinutes - elapsed);
@@ -1396,28 +1523,25 @@ function createRacePlan(){
       stints.push({ driver: validDrivers[di % validDrivers.length], driverIndex: di % validDrivers.length, start, end, plannedEnd: new Date(end), lengthMin: segLen, position: null, notes: "", flags: [], removed: false, quietMinutes: 0, finished: false });
       elapsed += segLen; di += 1;
     }
-    return { car, stints, log: [], retiredAtStint: null };
-  });
 
-  const endDateTime = addMinutes(startDateTime, totalMinutes);
+    const stintRows = stints.map((s,i)=>({
+      car_id: carRow.id, stint_index: i, driver: s.driver, driver_index: s.driverIndex,
+      start_at: s.start.toISOString(), end_at: s.end.toISOString(), planned_end_at: s.plannedEnd.toISOString(),
+      length_min: s.lengthMin, position: null, notes: "", flags: [], removed: false, quiet_minutes: 0, finished: false,
+    }));
+    const { error: stintErr } = await supabase.from("stints").insert(stintRows);
+    if (stintErr) console.error("insert stints failed:", stintErr);
+
+    carPlans.push({ car: mapCarRowToCarRecord(carRow), stints, log: [], retiredAtStint: null });
+  }
+
   state.plan = { startDateTime, endDateTime, totalMinutes, track: resolvedTrack, carPlans };
-
-  const raceId = state.currentRaceId || uid("race");
-  const record = {
-    id: raceId, eventName: state.eventName, eventDateISO: (state.eventDate ? new Date(state.eventDate).toISOString() : new Date().toISOString()),
-    track: resolvedTrack, startTime: state.startTime, stintMinutes: Number(state.stintMinutes), durationHours: Number(state.durationHours),
-    cars: carsSnapshot, status: state.currentStatus === "archived" ? "archived" : "planned",
-    plan: {
-      startDateTimeISO: startDateTime.toISOString(), endDateTimeISO: endDateTime.toISOString(), totalMinutes,
-      carPlans: carPlans.map(cp=>({ car: cp.car, log: cp.log||[], retiredAtStint: cp.retiredAtStint ?? null, stints: cp.stints.map(s=>({ driver:s.driver, driverIndex:s.driverIndex, startISO:s.start.toISOString(), endISO:s.end.toISOString(), plannedEndISO:(s.plannedEnd||s.end).toISOString(), lengthMin:s.lengthMin, position:s.position ?? null, notes:s.notes||"", flags:s.flags||[], removed:s.removed||false, quietMinutes:s.quietMinutes||0, finished:s.finished||false })) })),
-    },
-  };
-  const exists = state.races.some(r=>r.id===raceId);
-  const updated = exists ? state.races.map(r=>r.id===raceId?record:r) : [record, ...state.races];
-  persistRaces(updated);
   state.currentRaceId = raceId;
+  state.currentStatus = "planned";
   state.finishDrafts = {};
   state.page = "plan";
+
+  state.races = await loadRaces(); // refresh the Home/Archive list to include this race
   render();
 }
 
@@ -1439,27 +1563,42 @@ function recomputePlanEndTime(){
   plan.totalMinutes = Math.round((plan.endDateTime - plan.startDateTime)/60000);
 }
 
-function serializePlanForStorage(){
-  const plan = state.plan;
-  return {
-    startDateTimeISO: plan.startDateTime.toISOString(),
-    endDateTimeISO: plan.endDateTime.toISOString(),
-    totalMinutes: plan.totalMinutes,
-    carPlans: plan.carPlans.map(cp=>({
-      car: cp.car,
-      log: cp.log||[],
-      retiredAtStint: cp.retiredAtStint ?? null,
-      stints: cp.stints.map(s=>({ driver:s.driver, driverIndex:s.driverIndex, startISO:s.start.toISOString(), endISO:s.end.toISOString(), plannedEndISO:(s.plannedEnd||s.end).toISOString(), lengthMin:s.lengthMin, position:s.position ?? null, notes:s.notes||"", flags:s.flags||[], removed:s.removed||false, quietMinutes:s.quietMinutes||0, finished:s.finished||false })),
-    })),
-  };
-}
-
-// Pushes the in-memory plan (after a stint edit) back into the saved race
-// record so reopening the race keeps the edited times/positions.
-function syncPlanToRaceRecord(){
+// Pushes the in-memory plan (after a stint edit) to Supabase: the race's
+// overall computed timing, each car's retired state, and every stint for
+// every car in one upsert per car (keyed on car_id+stint_index, which the
+// stints table's unique constraint is built around — see schema). This
+// keeps every individual mutation function below unchanged: they just
+// mutate state.plan in memory exactly as before, then call this.
+async function syncPlanToRaceRecord(){
   if (!state.currentRaceId) return;
-  const updated = state.races.map(r => r.id === state.currentRaceId ? { ...r, plan: serializePlanForStorage() } : r);
-  persistRaces(updated);
+  const plan = state.plan;
+
+  await supabase.from("races").update({
+    plan_start_at: plan.startDateTime.toISOString(),
+    plan_end_at: plan.endDateTime.toISOString(),
+    total_minutes: plan.totalMinutes,
+  }).eq("id", state.currentRaceId);
+
+  for (const cp of plan.carPlans){
+    await supabase.from("cars").update({ retired_at_stint: cp.retiredAtStint }).eq("id", cp.car.id);
+
+    const stintRows = cp.stints.map((s,i)=>({
+      car_id: cp.car.id, stint_index: i, driver: s.driver, driver_index: s.driverIndex,
+      start_at: s.start.toISOString(), end_at: s.end.toISOString(),
+      planned_end_at: (s.plannedEnd||s.end).toISOString(), length_min: s.lengthMin,
+      position: s.position ?? null, notes: s.notes||"", flags: s.flags||[],
+      removed: s.removed||false, quiet_minutes: s.quietMinutes||0, finished: s.finished||false,
+    }));
+    const { error } = await supabase.from("stints").upsert(stintRows, { onConflict: "car_id,stint_index" });
+    if (error) console.error("syncPlanToRaceRecord stints upsert failed:", error);
+  }
+
+  // Keep the shallow Home/Archive list's copy of this race's cars in sync
+  // (car-level fields only — that list never holds stints).
+  const raceInList = state.races.find(r=>r.id===state.currentRaceId);
+  if (raceInList){
+    raceInList.cars = plan.carPlans.map(cp=>({ ...cp.car }));
+  }
 }
 
 // Shared cascade math for real end-time edits (updateStintEnd). Given a
@@ -1528,7 +1667,7 @@ function cascadeStintsFrom(cp, anchorIdx, cursor){
 // and so on, until it reaches one with real time left. Shrinking an earlier
 // stint back down runs the same recalculation and revives anything that's
 // no longer swallowed.
-function updateStintEnd(carId, stintIdx, timeStr){
+async function updateStintEnd(carId, stintIdx, timeStr){
   if (!timeStr) { render(); return; }
   const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
   if (!cp) return;
@@ -1599,7 +1738,7 @@ function updateStintEnd(carId, stintIdx, timeStr){
   }
 
   recomputePlanEndTime();
-  syncPlanToRaceRecord();
+  await syncPlanToRaceRecord();
   render();
 }
 
@@ -1613,7 +1752,7 @@ function updateStintEnd(carId, stintIdx, timeStr){
 // cleared). The quiet-time break itself isn't a real stint — it's
 // rendered as an unnumbered placeholder row between this stint and the
 // next (see carPlanSection) — so it never needs its own array slot.
-function setStintQuietTime(carId, stintIdx, minutes){
+async function setStintQuietTime(carId, stintIdx, minutes){
   const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
   if (!cp) return;
   const stint = cp.stints[stintIdx];
@@ -1646,24 +1785,24 @@ function setStintQuietTime(carId, stintIdx, minutes){
   }
 
   recomputePlanEndTime();
-  syncPlanToRaceRecord();
+  await syncPlanToRaceRecord();
   render();
 }
 
-function updateStintPosition(carId, stintIdx, value){
+async function updateStintPosition(carId, stintIdx, value){
   const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
   if (!cp) return;
   const stint = cp.stints[stintIdx];
   if (!stint) return;
   stint.position = value.trim() ? value.trim() : null;
-  syncPlanToRaceRecord();
+  await syncPlanToRaceRecord();
   render();
 }
 
 // Lets a stint's driver be reassigned after the plan was generated (e.g.
 // swapping the rotation on the fly). driverIndex is kept in sync so the
 // color dot / palette stays consistent with the car's driver list.
-function updateStintDriver(carId, stintIdx, driverName){
+async function updateStintDriver(carId, stintIdx, driverName){
   const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
   if (!cp) return;
   const stint = cp.stints[stintIdx];
@@ -1672,21 +1811,21 @@ function updateStintDriver(carId, stintIdx, driverName){
   const idx = validDrivers.indexOf(driverName);
   stint.driver = driverName;
   stint.driverIndex = idx >= 0 ? idx : 0;
-  syncPlanToRaceRecord();
+  await syncPlanToRaceRecord();
   render();
 }
 
-function updateStintNote(carId, stintIdx, value){
+async function updateStintNote(carId, stintIdx, value){
   const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
   if (!cp) return;
   const stint = cp.stints[stintIdx];
   if (!stint) return;
   stint.notes = value;
-  syncPlanToRaceRecord();
+  await syncPlanToRaceRecord();
   render();
 }
 
-function toggleStintFlag(carId, stintIdx, flagKey){
+async function toggleStintFlag(carId, stintIdx, flagKey){
   const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
   if (!cp) return;
   const stint = cp.stints[stintIdx];
@@ -1700,10 +1839,10 @@ function toggleStintFlag(carId, stintIdx, flagKey){
     // setStintQuietTime once a duration is chosen. Turning it OFF clears
     // any already-applied break and un-shifts the stints after it.
     if (stint.flags.includes("quiet")){
-      setStintQuietTime(carId, stintIdx, 0);
+      await setStintQuietTime(carId, stintIdx, 0);
     } else {
       stint.flags.push("quiet");
-      syncPlanToRaceRecord();
+      await syncPlanToRaceRecord();
       render();
     }
     return;
@@ -1711,7 +1850,7 @@ function toggleStintFlag(carId, stintIdx, flagKey){
 
   const idx = stint.flags.indexOf(flagKey);
   if (idx >= 0) stint.flags.splice(idx, 1); else stint.flags.push(flagKey);
-  syncPlanToRaceRecord();
+  await syncPlanToRaceRecord();
   render();
 }
 
@@ -1720,7 +1859,7 @@ function toggleStintFlag(carId, stintIdx, flagKey){
 // it happened after. recomputePlanEndTime + the cascade guard in
 // updateStintEnd both already respect retiredAtStint, so the race's overall
 // end time and any later time edits correctly treat this car as done.
-function retireCarAction(carId, stintIdx){
+async function retireCarAction(carId, stintIdx){
   const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
   if (!cp) return;
   cp.retiredAtStint = stintIdx;
@@ -1729,24 +1868,33 @@ function retireCarAction(carId, stintIdx){
   }
   logStintNote(cp, stintIdx, `Car Retired after Stint ${stintIdx+1} - Retired today. Ready for tomorrow.`, "warn");
   recomputePlanEndTime();
-  syncPlanToRaceRecord();
+  await syncPlanToRaceRecord();
   render();
 }
 
-function archiveRace(){
+async function archiveRace(){
   const finishByCarId = {};
   state.plan.carPlans.forEach(cp=>{ finishByCarId[cp.car.id] = parsePosition(state.finishDrafts[cp.car.id]); });
+
+  // Finish positions must land BEFORE the race flips to archived — the
+  // RLS update policy on `cars` blocks any write once the parent race's
+  // status is archived, so writing these after would silently fail.
+  for (const cp of state.plan.carPlans){
+    const fp = finishByCarId[cp.car.id] ?? cp.car.finishPosition ?? null;
+    const { error } = await supabase.from("cars").update({ finish_position: fp }).eq("id", cp.car.id);
+    if (error) console.error("archiveRace: writing finish position failed:", error);
+    cp.car.finishPosition = fp;
+  }
+
+  const { error: statusErr } = await supabase.from("races").update({ status: "archived" }).eq("id", state.currentRaceId);
+  if (statusErr) console.error("archiveRace: status update failed:", statusErr);
+
   state.currentStatus = "archived";
-  state.plan.carPlans.forEach(cp=>{
-    cp.car.finishPosition = finishByCarId[cp.car.id] ?? cp.car.finishPosition ?? null;
-  });
-  const updated = state.races.map(r=>{
-    if (r.id !== state.currentRaceId) return r;
-    const updatedCars = r.cars.map(c=>({ ...c, finishPosition: finishByCarId[c.id] ?? c.finishPosition ?? null }));
-    const updatedCarPlans = r.plan.carPlans.map(cp=>({ ...cp, car: { ...cp.car, finishPosition: finishByCarId[cp.car.id] ?? cp.car.finishPosition ?? null } }));
-    return { ...r, status:"archived", cars: updatedCars, plan: { ...r.plan, carPlans: updatedCarPlans } };
-  });
-  persistRaces(updated);
+  const raceInList = state.races.find(r=>r.id===state.currentRaceId);
+  if (raceInList){
+    raceInList.status = "archived";
+    raceInList.cars = state.plan.carPlans.map(cp=>({ ...cp.car }));
+  }
   render();
 }
 
@@ -1758,16 +1906,16 @@ function archiveRace(){
 // the client may still be parsing the token out of the URL when
 // getSession() first resolves, so we give it a brief window to finish
 // before concluding there's really no session and bouncing to index.html.
-function startApp(){
-  state.races = loadRaces();
-  state.catalog = loadCatalog();
+async function startApp(){
+  state.races = await loadRaces();
+  state.catalog = await loadCatalog();
   render();
 }
 
 (async function boot(){
   const { data: { session } } = await supabase.auth.getSession();
   if (session){
-    startApp();
+    await startApp();
     return;
   }
 
