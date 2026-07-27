@@ -20,8 +20,8 @@
  *      rejects OAuth/magic-link callbacks to any URL not on this list.
  * ==========================================================================
  */
-const SUPABASE_URL = "https://YOUR-PROJECT-REF.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = "YOUR-ANON-PUBLIC-KEY";
+const SUPABASE_URL = "https://cujtcfxymycupcmzqlxj.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_5V3DpBOGxerByoecz4v00A_yaKmSbJw";
 
 // IMPORTANT: the Supabase CDN script (loaded just before this file) already
 // creates a global `supabase` NAMESPACE object — it's the SDK itself, with
