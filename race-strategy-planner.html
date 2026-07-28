@@ -53,6 +53,7 @@
   .races-head{display:flex;align-items:center;justify-content:between;justify-content:space-between;margin-bottom:12px;padding:0 4px;}
   .archive-link{display:flex;align-items:center;gap:4px;font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.14em;color:var(--gold);background:none;border:none;}
   .tile-row{display:flex;gap:16px;overflow-x:auto;padding:4px 4px 8px;}
+  .tile-row-center{justify-content:safe center;}
   .create-circle{width:56px;height:56px;border-radius:999px;border:1px solid var(--borderLight);color:var(--textMuted);display:flex;align-items:center;justify-content:center;margin-bottom:32px;}
   .create-btn{display:flex;align-items:center;gap:12px;border-radius:999px;padding:16px 28px;background:var(--panel);border:1px solid var(--borderLight);color:var(--text);transition:border-color .15s;}
   .create-btn:hover{border-color:var(--blue);}
@@ -63,7 +64,7 @@
   .continue-btn:disabled{background:var(--panel);color:var(--textFaint);opacity:.6;cursor:not-allowed;}
 
   /* ---- race tile ---- */
-  .race-tile{flex:0 0 auto;width:min(82vw,360px);border-radius:16px;overflow:hidden;background:var(--panel);border:2px solid var(--border);position:relative;text-align:left;cursor:pointer;}
+  .race-tile{flex:0 0 auto;width:min(82vw,320px);border-radius:16px;overflow:hidden;background:var(--panel);border:2px solid var(--border);position:relative;text-align:left;cursor:pointer;}
   .catalog-tile{cursor:pointer;}
   .race-tile .strip{aspect-ratio:8/7;position:relative;}
   .race-tile .strip button.del{position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:999px;background:rgba(10,12,16,0.55);border:none;color:#fff;display:flex;align-items:center;justify-content:center;}
@@ -218,8 +219,9 @@
   .setup-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
   .col-2{grid-column:1 / -1;}
 
-  .local-banner{max-width:768px;margin:0 auto;padding:10px 20px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);text-align:center;border-bottom:1px solid var(--border);}
-  .local-banner b{color:var(--textMuted);}
+  .local-banner{max-width:768px;margin:0 auto;padding:10px 20px;display:flex;align-items:center;justify-content:center;border-bottom:1px solid var(--border);}
+  .local-banner img{height:28px;width:auto;flex-shrink:0;}
+  .local-banner a{display:flex;line-height:0;}
 
   @media (max-width:480px){
     .setup-grid{grid-template-columns:1fr;}
@@ -231,7 +233,9 @@
 </head>
 <body>
 
-<div class="local-banner">Local preview — everything you add here is saved <b>only in this browser</b> and won't be available on other devices.</div>
+<div class="local-banner">
+  <a href="index.html" title="Back to Kingpin Racing"><img src="images/applogo.png" alt="Kingpin Racing" onerror="this.style.display='none'" /></a>
+</div>
 
 <div id="app"></div>
 
@@ -631,7 +635,7 @@ function renderHome(){
           <span class="eyebrow">Races in Progress</span>
           ${archivedCount>0 ? `<button class="archive-link" data-act="view-archive">${icon("trophy",12)} Race Archive (${archivedCount})</button>` : ""}
         </div>
-        ${active.length>0 ? `<div class="tile-row no-scrollbar">${active.map(raceTile).join("")}</div>`
+        ${active.length>0 ? `<div class="tile-row tile-row-center no-scrollbar">${active.map(raceTile).join("")}</div>`
           : `<p class="empty-note">No active races. Check the archive, or create a new one below.</p>`}
       </div>`;
   }
@@ -684,7 +688,7 @@ function renderArchive(){
       <p style="font-size:13px;color:var(--textFaint);margin:0 0 24px;">${archived.length} archived race${archived.length!==1?"s":""}</p>
       ${archived.length===0
         ? `<p class="empty-note">No archived races yet.</p>`
-        : `<div class="tile-row no-scrollbar" style="flex-wrap:wrap;">${archived.map(raceTile).join("")}</div>`}
+        : `<div class="tile-row tile-row-center no-scrollbar" style="flex-wrap:wrap;">${archived.map(raceTile).join("")}</div>`}
     </div>`;
 }
 
