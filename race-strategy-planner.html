@@ -53,6 +53,8 @@
   .races-head{display:flex;align-items:center;justify-content:between;justify-content:space-between;margin-bottom:12px;padding:0 4px;}
   .archive-link{display:flex;align-items:center;gap:4px;font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.14em;color:var(--gold);background:none;border:none;}
   .tile-row{display:flex;gap:16px;overflow-x:auto;padding:4px 4px 8px;}
+  .tile-row,.catalog-row,.track-picker-row{-webkit-overflow-scrolling:touch;touch-action:pan-x;cursor:grab;}
+  .tile-row.dragging,.catalog-row.dragging,.track-picker-row.dragging{cursor:grabbing;}
   .tile-row-center{justify-content:safe center;}
   .create-circle{width:56px;height:56px;border-radius:999px;border:1px solid var(--borderLight);color:var(--textMuted);display:flex;align-items:center;justify-content:center;margin-bottom:32px;}
   .create-btn{display:flex;align-items:center;gap:12px;border-radius:999px;padding:16px 28px;background:var(--panel);border:1px solid var(--borderLight);color:var(--text);transition:border-color .15s;}
@@ -218,6 +220,19 @@
   .log-item.warn .ico{color:var(--amber);}
   .setup-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
   .col-2{grid-column:1 / -1;}
+
+  /* ---- track picker (replaces plain <select> for track choice) ---- */
+  .track-picker-row{display:flex;gap:12px;overflow-x:auto;padding:4px 2px 10px;}
+  .track-tile{flex:0 0 auto;width:150px;border-radius:14px;overflow:hidden;background:var(--panel);border:2px solid var(--border);text-align:left;position:relative;transition:border-color .12s,opacity .2s;}
+  .track-tile.dimmed{opacity:0.4;}
+  .track-tile .strip{width:150px;height:150px;position:relative;background:var(--panelRaised);}
+  .track-tile .strip img{width:150px;height:150px;object-fit:cover;display:block;}
+  .track-tile .check{position:absolute;top:6px;right:6px;width:20px;height:20px;border-radius:999px;background:var(--blue);color:#0A0C10;display:flex;align-items:center;justify-content:center;}
+  .track-tile .name{padding:8px 9px 10px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:13px;line-height:1.2;}
+  .track-tile.selected{border-color:var(--blue);}
+  .track-tile.other-tile{border-style:dashed;border-color:var(--borderLight);}
+  .track-tile.other-tile .strip{display:flex;align-items:center;justify-content:center;color:var(--textMuted);}
+  .track-tile.other-tile.selected{border-style:solid;border-color:var(--blue);}
 
   .local-banner{max-width:768px;margin:0 auto;padding:10px 20px;display:flex;align-items:center;justify-content:center;border-bottom:1px solid var(--border);}
   .local-banner img{height:28px;width:auto;flex-shrink:0;}
@@ -613,6 +628,14 @@ function render(){
   if (state.confirmDelete){
     // modal renders on top of whatever page is current
   }
+  // Capture the track picker's current scroll offset before the DOM gets
+  // replaced below — innerHTML resets scrollLeft to 0, which would make
+  // the row visibly jump back to the start on every selection. Restoring
+  // it (instantly, not scrolled/animated) afterward means selecting a
+  // track leaves the row exactly where it was.
+  const existingTrackRow = document.querySelector(".track-picker-row");
+  const trackScrollLeft = existingTrackRow ? existingTrackRow.scrollLeft : null;
+
   let html = "";
   if (state.page === "home") html = renderHome();
   else if (state.page === "setup") html = renderSetup();
@@ -625,6 +648,16 @@ function render(){
   }
   app.innerHTML = html;
   bindEvents();
+
+  if (trackScrollLeft != null){
+    const row = document.querySelector(".track-picker-row");
+    if (row){
+      const prevBehavior = row.style.scrollBehavior;
+      row.style.scrollBehavior = "auto"; // force instant — no animated re-scroll on restore
+      row.scrollLeft = trackScrollLeft;
+      row.style.scrollBehavior = prevBehavior;
+    }
+  }
 }
 
 function renderHome(){
@@ -799,11 +832,10 @@ function renderSetup(){
           </div>
           <div class="col-2">
             <label class="label">${icon("mapPin",12)} Track</label>
-            <select class="field" id="trackSelect">
-              <option value="">Select a track…</option>
-              ${TRACKS.map(t=>`<option value="${esc(t)}" ${state.track===t?"selected":""}>${esc(t)}</option>`).join("")}
-            </select>
-            ${state.track==="Other" ? `<input class="field" style="margin-top:8px;" id="customTrack" placeholder="Track name" value="${esc(state.customTrack)}" />` : ""}
+            <div class="track-picker-row no-scrollbar">
+              ${TRACKS.map(t=>trackTile(t)).join("")}
+            </div>
+            ${state.track==="Other" ? `<input class="field" style="margin-top:4px;" id="customTrack" placeholder="Track name" value="${esc(state.customTrack)}" />` : ""}
           </div>
           <div>
             <label class="label">${icon("clock",12)} Race Start</label>
@@ -821,6 +853,27 @@ function renderSetup(){
       </section>
 
       <button class="btn-primary" id="createPlan" data-act="createPlan" ${canCreatePlan?"":"disabled"}>Create Race Plan ${icon("arrowRight",19)}</button>
+    </div>`;
+}
+
+// Renders one selectable tile in the track picker grid. Reuses the same
+// images/tracks/<slug>.png convention (and fallback placeholder) as the
+// larger strip used on race tiles/plan headers, just at a fixed 150x150.
+function trackTile(trackName){
+  const isOther = trackName === "Other";
+  const isSelected = state.track === trackName;
+  const isDimmed = !!state.track && !isSelected;
+  const slug = trackSlug(trackName);
+  const stripInner = isOther
+    ? icon("plus",22)
+    : (slug ? `<img src="images/tracks/${slug}.png" alt="${esc(trackName)} track layout" onerror="handleTrackImgError(this, '${T.blue}')" />` : "");
+  return `
+    <div class="track-tile ${isSelected?'selected':''} ${isOther?'other-tile':''} ${isDimmed?'dimmed':''}" data-act="select-track" data-track="${esc(trackName)}" role="button" tabindex="0">
+      <div class="strip">
+        ${stripInner}
+        ${isSelected ? `<span class="check">✓</span>` : ""}
+      </div>
+      <div class="name">${esc(trackName)}</div>
     </div>`;
 }
 
@@ -1153,7 +1206,6 @@ function bindEvents(){
       }
     });
   }
-  bindLiveInput("trackSelect", v=>{ state.track=v; render(); }, null, "change");
   bindLiveInput("customTrack", v=> state.customTrack=v);
   bindLiveInput("raceDate", v=>{
     if (!v) return;
@@ -1319,6 +1371,12 @@ async function handleAction(act, el){
       }
       state.confirmDelete = null; render(); break;
     }
+    case "select-track":
+      state.track = el.getAttribute("data-track");
+      if (state.track !== "Other") state.customTrack = "";
+      render();
+      updateSetupButtonState();
+      break;
     case "show-add-car":
       state.addingCar = true; render(); break;
     case "close-add-car":
@@ -1913,6 +1971,52 @@ async function archiveRace(){
   }
   render();
 }
+
+// ---- horizontal-scroll support for tile rows (mouse wheel + click-drag) ----
+// Delegated on document so it keeps working across re-renders (bindEvents()
+// re-runs on every render(), but this only needs to be wired up once).
+(function enableHorizontalScrollRows(){
+  const ROW_SELECTOR = ".tile-row, .catalog-row, .track-picker-row";
+
+  // Mouse wheel / trackpad: a vertical wheel gesture over a horizontally
+  // scrollable row scrolls it sideways instead of scrolling the page.
+  document.addEventListener("wheel", function(e){
+    const row = e.target.closest(ROW_SELECTOR);
+    if (!row) return;
+    if (row.scrollWidth <= row.clientWidth) return; // nothing to scroll
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return; // already a horizontal gesture, let it be native
+    e.preventDefault();
+    row.scrollLeft += e.deltaY;
+  }, { passive: false });
+
+  // Click-and-drag (mouse) support, in addition to native touch swipe which
+  // overflow-x:auto already provides on mobile.
+  let dragEl = null, startX = 0, startScroll = 0, moved = false;
+  document.addEventListener("mousedown", function(e){
+    const row = e.target.closest(ROW_SELECTOR);
+    if (!row) return;
+    dragEl = row; startX = e.pageX; startScroll = row.scrollLeft; moved = false;
+    row.classList.add("dragging");
+  });
+  document.addEventListener("mousemove", function(e){
+    if (!dragEl) return;
+    const dx = e.pageX - startX;
+    if (Math.abs(dx) > 4) moved = true;
+    dragEl.scrollLeft = startScroll - dx;
+  });
+  function endDrag(){
+    if (!dragEl) return;
+    dragEl.classList.remove("dragging");
+    dragEl = null;
+  }
+  document.addEventListener("mouseup", endDrag);
+  document.addEventListener("mouseleave", endDrag);
+  // Suppress the click that would otherwise fire on a tile right after a
+  // real drag (so dragging the row doesn't accidentally select a tile).
+  document.addEventListener("click", function(e){
+    if (moved){ e.stopPropagation(); e.preventDefault(); moved = false; }
+  }, true);
+})();
 
 // ---- AUTH GUARD (boot) ----
 // Real session check. getSession() resolves from the client's cached
