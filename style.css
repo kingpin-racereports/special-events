@@ -1,12 +1,12 @@
 :root {
-  --bg-void: #0A1130;
-  --bg-panel: #121B42;
-  --bg-panel-alt: #182453;
-  --line: #28345F;
-  --text: #F5F7FC;
-  --text-muted: #9AA6D1;
-  --accent: #2E6FE0;
-  --accent-deep: #1D4A9E;
+  --bg-void: #0b0d10;
+  --bg-panel: #14181e;
+  --bg-panel-alt: #171c23;
+  --line: rgba(255, 255, 255, 0.08);
+  --text: #eef2f6;
+  --text-muted: #8d96a3;
+  --accent: #35b7e0;
+  --accent-deep: #1c6d8c;
   --font-display: "Oswald", sans-serif;
   --font-body: "Inter", sans-serif;
   --font-mono: "Roboto Mono", monospace;
@@ -151,7 +151,7 @@ img { display: block; max-width: 100%; }
   border-radius: 2px;
   transition: background 0.2s ease, transform 0.2s ease;
 }
-.hero-cta:hover { background: #4C86EC; transform: translateY(-1px); }
+.hero-cta:hover { background: #55c6ea; transform: translateY(-1px); }
 
 /* ---------- Reports ---------- */
 
