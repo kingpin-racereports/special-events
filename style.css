@@ -4,7 +4,7 @@
   --bg-panel-alt: #05215a;
   --line: rgba(140, 160, 255, 0.14);
   --text: #f4f6fb;
-  --text-muted: #a6afd6;
+  --text-muted: #d6d8de;
   --accent: #3d6fe8;
   --accent-deep: #031a4a;
   --font-display: "Oswald", sans-serif;
@@ -146,13 +146,21 @@ img { display: block; max-width: 100%; }
   font-size: 0.78rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--bg-void);
-  background: var(--accent);
+  color: #fff;
+  background: transparent;
+  border: 1px solid #fff;
   padding: 0.75rem 1.3rem;
   border-radius: 2px;
-  transition: background 0.2s ease, transform 0.2s ease;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
 }
-.hero-cta:hover { background: #55c6ea; transform: translateY(-1px); }
+.hero-cta:hover,
+.hero-cta:active,
+.hero-cta:focus-visible {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg-void);
+  transform: translateY(-1px);
+}
 
 /* ---------- Reports ---------- */
 
