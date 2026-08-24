@@ -1,15 +1,16 @@
 :root {
-  --bg-void: #0b1030;
-  --bg-panel: #131a45;
-  --bg-panel-alt: #1b2456;
+  --bg-void: #031a4a;
+  --bg-panel: #05215a;
+  --bg-panel-alt: #05215a;
   --line: rgba(140, 160, 255, 0.14);
   --text: #f4f6fb;
   --text-muted: #a6afd6;
   --accent: #3d6fe8;
-  --accent-deep: #1e3e93;
-  --font-display: "Barlow Condensed", sans-serif;
+  --accent-deep: #031a4a;
+  --font-display: "Oswald", sans-serif;
+  --font-hero: "Anton", sans-serif;
   --font-body: "Inter", sans-serif;
-  --font-mono: "JetBrains Mono", monospace;
+  --font-mono: "Roboto Mono", monospace;
 }
 
 * { box-sizing: border-box; }
@@ -50,12 +51,12 @@ img { display: block; max-width: 100%; }
   align-items: center;
   justify-content: space-between;
   padding: 0.9rem 5vw;
-  background: linear-gradient(180deg, rgba(11,16,48,0.85), rgba(11,16,48,0));
+  background: linear-gradient(180deg, rgba(11,13,16,0.85), rgba(11,13,16,0));
   transition: background 0.25s ease, box-shadow 0.25s ease;
 }
 
 .site-header.scrolled {
-  background: rgba(11, 16, 48, 0.92);
+  background: rgba(8, 10, 35, 0.5);
   box-shadow: 0 1px 0 var(--line);
   backdrop-filter: blur(8px);
 }
@@ -83,10 +84,10 @@ img { display: block; max-width: 100%; }
 
 .brand-text { display: flex; flex-direction: column; line-height: 1.15; }
 .brand-name {
-  font-family: var(--font-display);
-  font-weight: 600;
+  font-family: var(--font-hero);
+  font-weight: 400;
   font-size: 1rem;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.03em;
 }
 .brand-sub {
   font-family: var(--font-mono);
@@ -124,10 +125,10 @@ img { display: block; max-width: 100%; }
 .hero-inner { max-width: 780px; }
 
 .hero h1 {
-  font-family: var(--font-display);
-  font-weight: 700;
+  font-family: var(--font-hero);
+  font-weight: 400;
   font-size: clamp(2.6rem, 8vw, 5.2rem);
-  line-height: 0.98;
+  line-height: 0.92;
   letter-spacing: 0.01em;
   margin: 0 0 0.9rem;
 }
@@ -147,11 +148,11 @@ img { display: block; max-width: 100%; }
   text-transform: uppercase;
   color: var(--bg-void);
   background: var(--accent);
-  padding: 0.75rem 1.5rem;
-  border-radius: 999px;
+  padding: 0.75rem 1.3rem;
+  border-radius: 2px;
   transition: background 0.2s ease, transform 0.2s ease;
 }
-.hero-cta:hover { background: #6e93f2; transform: translateY(-1px); }
+.hero-cta:hover { background: #55c6ea; transform: translateY(-1px); }
 
 /* ---------- Reports ---------- */
 
@@ -178,7 +179,7 @@ img { display: block; max-width: 100%; }
   background: var(--bg-panel);
   border: 1px solid var(--line);
   border-left: 3px solid var(--accent);
-  border-radius: 14px;
+  border-radius: 4px;
   overflow: hidden;
   transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
