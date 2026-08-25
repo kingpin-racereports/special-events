@@ -135,11 +135,18 @@
   .chip .val{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;}
 
   /* ---- timeline ---- */
-  .timeline{display:flex;height:60px;background:var(--panelRaised);width:100%;border-radius:12px;overflow:hidden;}
-  .timeline .seg{display:flex;flex:1 1 0;min-width:0;flex-direction:column;align-items:center;justify-content:center;color:#0A0C10;border-right:1px solid rgba(10,12,16,0.25);padding:2px 3px;overflow:hidden;}
-  .timeline .seg:last-child{border-right:none;}
-  .timeline .seg .drv{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:12px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
-  .timeline .seg .tm{font-family:'JetBrains Mono',monospace;font-size:10px;color:rgba(10,12,16,0.65);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+  /* Redesigned as a row of individually-rounded "stint cards" rather than
+     solid color blocks glued edge-to-edge: each card gets a tinted wash
+     of the driver's accent color, a bold top accent stripe, a color dot
+     next to the driver name, and the start time in mono underneath.
+     flex-grow is set per-segment (in JS) proportional to the stint's
+     actual length in minutes, so a 90-minute stint visibly reads wider
+     than a 45-minute one instead of every segment getting equal space. */
+  .timeline{display:flex;gap:6px;width:100%;}
+  .timeline .seg{display:flex;flex-direction:column;justify-content:center;gap:3px;min-width:0;border-radius:10px;border:1px solid transparent;border-top:3px solid transparent;padding:9px 10px 8px;overflow:hidden;}
+  .timeline .seg .drv{display:flex;align-items:center;gap:5px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:13px;line-height:1.15;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+  .timeline .seg .drv .dot{width:6px;height:6px;border-radius:999px;flex-shrink:0;}
+  .timeline .seg .tm{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--textFaint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;padding-left:11px;}
 
   .stint-table{margin-top:12px;border-radius:12px;border:1px solid var(--border);overflow:hidden;display:grid;grid-template-columns:minmax(64px,1.0fr) minmax(64px,0.65fr) minmax(46px,0.55fr) minmax(38px,0.45fr) minmax(26px,0.3fr);column-gap:3px;row-gap:0;}
   .stint-table .head{display:grid;grid-template-columns:subgrid;grid-column:1 / -1;font-family:'JetBrains Mono',monospace;font-size:10.5px;text-transform:uppercase;padding:8px 5px 8px 32px;background:var(--panel);color:var(--textFaint);}
@@ -151,6 +158,15 @@
   .stint-ghost-num{position:absolute;left:10px;bottom:-4px;width:auto;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:40px;line-height:1;color:var(--text);opacity:0.16;z-index:1;pointer-events:none;user-select:none;overflow:visible;}
   .row-removed .stint-ghost-num{opacity:0.05;}
   .stint-table .dot{width:7px;height:7px;border-radius:999px;display:inline-block;margin-right:4px;flex-shrink:0;}
+  /* ---- "currently on track" live indicator ---- */
+  /* Abrupt flash rather than a smooth breathing pulse: holds full size,
+     snaps down small and dim, snaps back — reads as a blink, not a swell. */
+  @keyframes livePulse{0%,42%,58%,100%{opacity:1;transform:scale(1);}50%{opacity:0.2;transform:scale(0.5);}}
+  .timeline .seg .live-dot{width:7px;height:7px;border-radius:999px;flex-shrink:0;background:var(--red);animation:livePulse 1.2s ease-in-out infinite;}
+  .timeline .seg.seg-live{border-color:var(--red);background:rgba(226,68,92,0.10);box-shadow:none;transform:translateY(-2px);transition:transform .2s;}
+  .stint-table .row-live .dot{background:var(--red)!important;animation:livePulse 1.2s ease-in-out infinite;}
+  .stint-table .row.row-live{position:relative;background:rgba(226,68,92,0.08);}
+  .stint-table .row.row-live::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--red);}
   .stint-time{padding:4px 0;font-size:10px;width:100%;min-width:0;border-radius:6px;text-align:center;}
   .stint-pos{padding:4px 2px;font-size:11px;width:100%;min-width:0;border-radius:6px;border:1px solid var(--borderLight);text-align:center;}
   .driver-cell{display:flex;align-items:center;gap:4px;min-width:0;}
@@ -245,7 +261,8 @@
     .setup-grid{grid-template-columns:1fr;}
     .setup-grid .col-2{grid-column:auto;}
     .chip-grid{grid-template-columns:1fr;}
-    .timeline{height:54px;}
+    .timeline{gap:4px;}
+    .timeline .seg{padding:7px 6px 6px;}
   }
 </style>
 </head>
@@ -551,6 +568,25 @@ function positionCellStyle(posValue, startPos){
   const textColor = t > 0.5 ? "#0A0C10" : "var(--text)";
   return { bg:`rgba(${r},${g},${b},${alpha})`, color: textColor };
 }
+// "Currently on track" — which stint actually has a driver in the car
+// right now. This is NOT simply "whichever stint's scheduled window
+// contains the current time": a stint's scheduled end passing doesn't
+// mean the driver actually came in — that only becomes true once the
+// stint is confirmed finished (via the Finish Stint button or an end-time
+// edit, which set s.finished). So this walks stints in order and picks
+// the FIRST one that hasn't been finished yet — that's whoever is really
+// out there, even if they're running long past their scheduled end and
+// the next driver's scheduled slot has technically already started. If
+// that stint hasn't reached its own (possibly cascade-adjusted) start
+// time yet, nobody's confirmed on track (race hasn't started, or there's
+// a genuine gap — quiet time, a pending driver change, etc).
+function computeLiveStintIndex(stints, archived){
+  if (archived) return -1;
+  const now = new Date();
+  const idx = stints.findIndex(s=>!s.removed && !s.finished);
+  if (idx === -1) return -1; // every stint already finished (or none exist)
+  return now >= stints[idx].start ? idx : -1;
+}
 function parsePosition(v){
   if (v == null) return null;
   const m = String(v).match(/\d+/);
@@ -766,7 +802,7 @@ function renderSetup(){
               <div class="catalog-tile" data-act="select-catalog" data-id="${cd.id}" role="button" tabindex="0" style="border-color:${cd.accent};">
                 <div class="strip" style="background:var(--panelRaised);">
                   ${carStripContent(cd.number, cd.team, cd.accent)}
-                  <span class="num">${esc(cd.number)}</span>
+                  <span class="num" style="border:2px solid ${cd.accent};color:${cd.accent};">${esc(cd.number)}</span>
                   ${cd.custom ? `<button class="del" data-act="del-catalog" data-id="${cd.id}" data-label="#${esc(cd.number)} ${esc(cd.team)}" onclick="event.stopPropagation()">${icon("x",12)}</button>` : ""}
                 </div>
                 <div class="body">
@@ -803,7 +839,7 @@ function renderSetup(){
           <div class="car-detail" style="border-color:${car.accent};">
             <div class="strip" style="background:var(--panelRaised);">
               ${carStripContent(car.number, car.team, car.accent)}
-              <span class="num">${esc(car.number)}</span>
+              <span class="num" style="border:2px solid ${car.accent};color:${car.accent};">${esc(car.number)}</span>
             </div>
             <div class="content">
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
@@ -885,7 +921,7 @@ function carCard(car){
     <div class="car-card" style="border-color:${car.accent};">
       <div class="strip" style="background:var(--panelRaised);">
         ${carStripContent(car.number, car.team, car.accent)}
-        <span class="num">${esc(car.number)}</span>
+        <span class="num" style="border:2px solid ${car.accent};color:${car.accent};">${esc(car.number)}</span>
         <button class="del" data-act="remove-car" data-id="${car.id}" data-label="#${esc(car.number)} ${esc(car.team)}">${icon("x",12)}</button>
       </div>
       <div class="body">
@@ -992,6 +1028,12 @@ function carPlanSection(cp, plan, archived){
   const deltaLabel = delta!=null ? (delta>0?`+${delta}`:`${delta}`) : null;
   const deltaColor = delta>0?T.green:(delta<0?T.red:T.textMuted);
 
+  // "Currently on track" — see computeLiveStintIndex() for why this keys
+  // off each stint's `finished` flag rather than just the scheduled
+  // window. Re-synced periodically without a full re-render — see
+  // updateLiveHighlights().
+  const liveIdx = computeLiveStintIndex(stints, archived);
+
   // Collapsible tile: currently enabled only on the archive/plan view for
   // archived races — the tile header (image + team/finish info) toggles
   // visibility of everything below it (Seat Time, Horizontal Planner,
@@ -1029,11 +1071,23 @@ function carPlanSection(cp, plan, archived){
       ${archived ? raceSummaryBlock(cp) : ""}
 
       <div class="timeline">
-        ${stints.filter(s=>!s.removed).map(s=>{
+        ${stints.map((s,i)=>{
+          if (s.removed) return "";
           const color = DRIVER_PALETTE[s.driverIndex % DRIVER_PALETTE.length];
-          return `<div class="seg" style="background:${color};">
-            <span class="drv">${esc(shortNames[s.driver]||s.driver||"TBD")}</span>
-            <span class="tm">${formatTimeCompact(s.start)}</span>
+          const [r,g,b] = hexToRgb(color);
+          const grow = Math.max(s.lengthMin, 1);
+          const isLive = i === liveIdx;
+          // Live state overrides the driver-tinted look with the same thin
+          // red border + tinted wash used for warning entries in the Stint
+          // Adjustments log, so "currently on track" reads as one
+          // consistent visual language across the app.
+          const liveStyle = isLive ? `border-color:var(--red);background:rgba(226,68,92,0.10);box-shadow:none;` : "";
+          const tmContent = isLive
+            ? `<span style="color:var(--red);font-weight:600;letter-spacing:0.04em;">ON TRACK</span>`
+            : (s.finished ? formatDuration(s.lengthMin) : formatTimeCompact(s.start));
+          return `<div class="seg ${isLive?'seg-live':''}" data-car="${car.id}" data-stint="${i}" data-color="${color}" data-start-iso="${s.start.toISOString()}" style="flex-grow:${grow};flex-basis:0;background:rgba(${r},${g},${b},0.14);border-top-color:${color};${liveStyle}">
+            <span class="drv">${esc(shortNames[s.driver]||s.driver||"TBD")}<span class="${isLive?'live-dot':'dot'}" style="background:${isLive?'var(--red)':color};"></span></span>
+            <span class="tm">${tmContent}</span>
           </div>`;
         }).join("")}
       </div>
@@ -1064,6 +1118,7 @@ function carPlanSection(cp, plan, archived){
           const flags = s.flags || [];
           const flagBadges = flags.map(fk => FLAG_TYPES.find(f=>f.key===fk)?.emoji || "").join("");
           const hasNoteContent = flags.length>0 || !!(s.notes && s.notes.trim());
+          const isLiveRow = i === liveIdx;
 
           const driverCell = readOnly
             ? `<span class="driver-cell"><span class="dot" style="background:${dotColor};flex-shrink:0;"></span><span style="font-size:13px;">${esc(shortNames[s.driver]||s.driver||"TBD")}</span></span>`
@@ -1087,7 +1142,7 @@ function carPlanSection(cp, plan, archived){
             : `<span></span>`;
 
           return `
-          <div class="row">
+          <div class="row ${isLiveRow?'row-live':''}" data-car="${car.id}" data-stint="${i}">
             <span class="stint-ghost-num">${i+1}</span>
             ${driverCell}
             <span class="font-mono" style="white-space:nowrap;font-size:11px;padding-left:20px;">${formatTimeCompact(s.start)}</span>
@@ -2031,6 +2086,53 @@ async function archiveRace(){
 // Checked once per session load — a simple "am I in the engineers table"
 // lookup. maybeSingle() (not single()) since zero rows is the normal,
 // expected case for a driver, not an error.
+// ---- "currently on track" live-highlight ticker ----
+// carPlanSection() already computes the correct live stint at render time,
+// but if someone leaves the plan page open without triggering any other
+// re-render, that highlight would go stale as time passes. Rather than
+// calling the full render() on a timer — which would blow away an
+// in-progress stint note edit (the textarea only commits on blur) — this
+// directly patches just the timeline segments and stint-table rows that
+// need to change, using the data- attributes carPlanSection() writes out
+// for exactly this purpose.
+function updateLiveHighlights(){
+  if (!state.plan || state.currentStatus === "archived") return;
+  state.plan.carPlans.forEach(cp=>{
+    const liveIdx = computeLiveStintIndex(cp.stints, false);
+
+    document.querySelectorAll(`.timeline .seg[data-car="${cp.car.id}"]`).forEach(el=>{
+      const idx = +el.getAttribute("data-stint");
+      const color = el.getAttribute("data-color");
+      const isLive = idx === liveIdx;
+      const [r,g,b] = hexToRgb(color);
+      el.classList.toggle("seg-live", isLive);
+      el.style.background = isLive ? "rgba(226,68,92,0.10)" : `rgba(${r},${g},${b},0.14)`;
+      el.style.borderColor = isLive ? "var(--red)" : "transparent";
+      if (!isLive) el.style.borderTopColor = color; // border-color shorthand above also reset the top accent stripe — reassert it
+      el.style.boxShadow = "none";
+      const dotEl = el.querySelector(".dot, .live-dot");
+      if (dotEl){
+        dotEl.className = isLive ? "live-dot" : "dot";
+        dotEl.style.background = isLive ? "var(--red)" : color;
+      }
+      const tmEl = el.querySelector(".tm");
+      if (tmEl){
+        const stint = cp.stints[idx];
+        tmEl.innerHTML = isLive
+          ? `<span style="color:var(--red);font-weight:600;letter-spacing:0.04em;">ON TRACK</span>`
+          : (stint && stint.finished ? formatDuration(stint.lengthMin) : formatTimeCompact(new Date(el.getAttribute("data-start-iso"))));
+      }
+    });
+
+    document.querySelectorAll(`.stint-table .row[data-car="${cp.car.id}"]`).forEach(el=>{
+      const idx = +el.getAttribute("data-stint");
+      const isLive = idx === liveIdx;
+      el.classList.toggle("row-live", isLive);
+    });
+  });
+}
+setInterval(updateLiveHighlights, 30000);
+
 async function checkIsEngineer(){
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return false;
