@@ -1117,19 +1117,24 @@ function carPlanSection(cp, plan, archived){
           if (s.removed) return "";
           const color = DRIVER_PALETTE[s.driverIndex % DRIVER_PALETTE.length];
           const [r,g,b] = hexToRgb(color);
-          const grow = Math.max(s.lengthMin, 1);
           const isLive = i === liveIdx;
+          // The live card gets extra proportional width on top of its
+          // normal time-based share — "ON TRACK" is the widest label in
+          // the whole row, and this is already the one card we want to
+          // draw the eye to, so a bit more room does double duty.
+          const grow = Math.max(s.lengthMin, 1) * (isLive ? 1.6 : 1);
           // Live state overrides the driver-tinted look with the same thin
           // red border + tinted wash used for warning entries in the Stint
           // Adjustments log, so "currently on track" reads as one
           // consistent visual language across the app.
           const liveStyle = isLive ? `border-color:var(--red);background:rgba(226,68,92,0.10);box-shadow:none;` : "";
           const tmContent = isLive
-            ? `<span style="color:var(--red);font-weight:600;letter-spacing:0.04em;">ON TRACK</span>`
+            ? `<span style="color:var(--red);font-weight:600;">ON TRACK</span>`
             : (s.finished ? formatDuration(s.lengthMin) : formatTimeUltraCompact(s.start));
+          const tmStyle = isLive ? `white-space:normal;overflow:visible;line-height:1.1;` : "";
           return `<div class="seg ${isLive?'seg-live':''}" data-car="${car.id}" data-stint="${i}" data-color="${color}" data-start-iso="${s.start.toISOString()}" style="flex-grow:${grow};flex-basis:0;background:rgba(${r},${g},${b},0.14);border-top-color:${color};${liveStyle}">
             <span class="drv" title="${esc(s.driver||'TBD')}">${esc(timelineAbbrev[s.driver]||s.driver||"TBD")}<span class="${isLive?'live-dot':'dot'}" style="background:${isLive?'var(--red)':color};"></span></span>
-            <span class="tm">${tmContent}</span>
+            <span class="tm" style="${tmStyle}">${tmContent}</span>
           </div>`;
         }).join("")}
       </div>
@@ -2147,11 +2152,13 @@ function updateLiveHighlights(){
       const color = el.getAttribute("data-color");
       const isLive = idx === liveIdx;
       const [r,g,b] = hexToRgb(color);
+      const stint = cp.stints[idx];
       el.classList.toggle("seg-live", isLive);
       el.style.background = isLive ? "rgba(226,68,92,0.10)" : `rgba(${r},${g},${b},0.14)`;
       el.style.borderColor = isLive ? "var(--red)" : "transparent";
       if (!isLive) el.style.borderTopColor = color; // border-color shorthand above also reset the top accent stripe — reassert it
       el.style.boxShadow = "none";
+      if (stint) el.style.flexGrow = Math.max(stint.lengthMin, 1) * (isLive ? 1.6 : 1); // live card gets extra room for "ON TRACK"
       const dotEl = el.querySelector(".dot, .live-dot");
       if (dotEl){
         dotEl.className = isLive ? "live-dot" : "dot";
@@ -2159,10 +2166,17 @@ function updateLiveHighlights(){
       }
       const tmEl = el.querySelector(".tm");
       if (tmEl){
-        const stint = cp.stints[idx];
-        tmEl.innerHTML = isLive
-          ? `<span style="color:var(--red);font-weight:600;letter-spacing:0.04em;">ON TRACK</span>`
-          : (stint && stint.finished ? formatDuration(stint.lengthMin) : formatTimeUltraCompact(new Date(el.getAttribute("data-start-iso"))));
+        if (isLive){
+          tmEl.style.whiteSpace = "normal";
+          tmEl.style.overflow = "visible";
+          tmEl.style.lineHeight = "1.1";
+          tmEl.innerHTML = `<span style="color:var(--red);font-weight:600;">ON TRACK</span>`;
+        } else {
+          tmEl.style.whiteSpace = "";
+          tmEl.style.overflow = "";
+          tmEl.style.lineHeight = "";
+          tmEl.innerHTML = (stint && stint.finished ? formatDuration(stint.lengthMin) : formatTimeUltraCompact(new Date(el.getAttribute("data-start-iso"))));
+        }
       }
     });
 
