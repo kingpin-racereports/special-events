@@ -610,6 +610,31 @@ function buildShortNames(fullNames){
   });
   return map;
 }
+// Compact 3-letter driver codes for the horizontal timeline specifically —
+// full/short names don't reliably fit in the narrow, proportionally-sized
+// stint cards. Normally the first 3 letters of the last name ("Atchley" ->
+// "ATC"); if two drivers on the same car share a last name, disambiguates
+// with a first-name initial + first 2 letters of the last name instead
+// ("Tom Driver" / "Alex Driver" -> "TDR" / "ADR"). Scoped to the timeline
+// only — the stint table keeps using buildShortNames().
+function buildTimelineAbbrev(fullNames){
+  const lastCounts = {};
+  fullNames.forEach(n=>{
+    const parts = n.trim().split(/\s+/);
+    const last = parts[parts.length-1];
+    lastCounts[last] = (lastCounts[last]||0) + 1;
+  });
+  const map = {};
+  fullNames.forEach(n=>{
+    const parts = n.trim().split(/\s+/);
+    const last = parts[parts.length-1];
+    const first = parts[0];
+    map[n] = (lastCounts[last] > 1 && parts.length > 1)
+      ? (first[0] + last.slice(0,2)).toUpperCase()
+      : last.slice(0,3).toUpperCase();
+  });
+  return map;
+}
 function podiumColor(pos){
   if(pos===1) return T.gold;
   if(pos===2) return T.silver;
@@ -1022,6 +1047,7 @@ function carPlanSection(cp, plan, archived){
   // signed-in person isn't an engineer, i.e. the driver read-only view.
   const readOnly = archived || !state.isEngineer;
   const shortNames = buildShortNames(car.drivers.filter(d=>d.trim()));
+  const timelineAbbrev = buildTimelineAbbrev(car.drivers.filter(d=>d.trim()));
   const carPodium = archived ? podiumColor(car.finishPosition) : null;
   const hasDelta = archived && car.startingPosition!=null && car.finishPosition!=null;
   const delta = hasDelta ? car.startingPosition - car.finishPosition : null;
@@ -1086,7 +1112,7 @@ function carPlanSection(cp, plan, archived){
             ? `<span style="color:var(--red);font-weight:600;letter-spacing:0.04em;">ON TRACK</span>`
             : (s.finished ? formatDuration(s.lengthMin) : formatTimeCompact(s.start));
           return `<div class="seg ${isLive?'seg-live':''}" data-car="${car.id}" data-stint="${i}" data-color="${color}" data-start-iso="${s.start.toISOString()}" style="flex-grow:${grow};flex-basis:0;background:rgba(${r},${g},${b},0.14);border-top-color:${color};${liveStyle}">
-            <span class="drv">${esc(shortNames[s.driver]||s.driver||"TBD")}<span class="${isLive?'live-dot':'dot'}" style="background:${isLive?'var(--red)':color};"></span></span>
+            <span class="drv" title="${esc(s.driver||'TBD')}">${esc(timelineAbbrev[s.driver]||s.driver||"TBD")}<span class="${isLive?'live-dot':'dot'}" style="background:${isLive?'var(--red)':color};"></span></span>
             <span class="tm">${tmContent}</span>
           </div>`;
         }).join("")}
