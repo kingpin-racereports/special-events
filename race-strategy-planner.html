@@ -113,9 +113,17 @@
   .car-detail-plan .strip{height:200px;}
   .car-detail .num{position:absolute;bottom:-10px;left:12px;background:var(--bg);border-radius:7px;padding:0 8px;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:20px;}
   .car-detail .content{padding:20px 16px 16px;}
-  .driver-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+  .driver-row{display:flex;align-items:center;gap:8px;}
   .driver-row .idx{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);width:18px;}
   .driver-row button{background:none;border:none;color:var(--textFaint);display:flex;}
+  .driver-group{margin-bottom:14px;}
+  .stint-len-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 0 26px;}
+  .stint-len-label{font-family:'JetBrains Mono',monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:0.06em;color:var(--textFaint);}
+  .segmented{display:flex;border:1px solid var(--borderLight);border-radius:8px;overflow:hidden;flex-shrink:0;}
+  .segmented button{background:var(--panel);border:none;color:var(--textMuted);font-size:12px;padding:5px 10px;font-weight:500;}
+  .segmented button+button{border-left:1px solid var(--borderLight);}
+  .segmented button.active{background:var(--blue);color:#0A0C10;font-weight:600;}
+  .stint-len-auto{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--textMuted);}
   .add-driver{margin-top:6px;display:flex;align-items:center;gap:4px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;background:none;border:none;}
 
   /* ---- buttons general ---- */
@@ -135,38 +143,19 @@
   .chip .val{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;}
 
   /* ---- timeline ---- */
-  /* Redesigned as a row of individually-rounded "stint cards" rather than
-     solid color blocks glued edge-to-edge: each card gets a tinted wash
-     of the driver's accent color, a bold top accent stripe, a color dot
-     next to the driver name, and the start time in mono underneath.
-     flex-grow is set per-segment (in JS) proportional to the stint's
-     actual length in minutes, so a 90-minute stint visibly reads wider
-     than a 45-minute one instead of every segment getting equal space. */
-  .timeline{display:flex;gap:6px;width:100%;}
-  .timeline .seg{display:flex;flex-direction:column;justify-content:center;gap:3px;min-width:0;border-radius:10px;border:1px solid transparent;border-top:3px solid transparent;padding:9px 10px 8px;overflow:hidden;}
-  .timeline .seg .drv{display:flex;align-items:center;justify-content:center;gap:5px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:13px;line-height:1.15;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
-  .timeline .seg .drv .dot{display:none;} /* per-driver dot removed — top border accent already color-codes each card; only the live red dot (see .live-dot) remains visible */
-  .timeline .seg .tm{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--textFaint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;text-align:center;}
+  .timeline{display:flex;height:60px;background:var(--panelRaised);width:100%;border-radius:12px;overflow:hidden;}
+  .timeline .seg{display:flex;flex:1 1 0;min-width:0;flex-direction:column;align-items:center;justify-content:center;color:#0A0C10;border-right:1px solid rgba(10,12,16,0.25);padding:2px 3px;overflow:hidden;}
+  .timeline .seg:last-child{border-right:none;}
+  .timeline .seg .drv{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:12px;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+  .timeline .seg .tm{font-family:'JetBrains Mono',monospace;font-size:10px;color:rgba(10,12,16,0.65);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
 
-  .stint-table{margin-top:12px;border-radius:12px;border:1px solid var(--border);overflow:hidden;display:grid;grid-template-columns:minmax(64px,1.0fr) minmax(64px,0.65fr) minmax(46px,0.55fr) minmax(38px,0.45fr) minmax(26px,0.3fr);column-gap:3px;row-gap:0;}
-  .stint-table .head{display:grid;grid-template-columns:subgrid;grid-column:1 / -1;font-family:'JetBrains Mono',monospace;font-size:10.5px;text-transform:uppercase;padding:8px 5px 8px 32px;background:var(--panel);color:var(--textFaint);}
-  .stint-table .row{position:relative;display:grid;grid-template-columns:subgrid;grid-column:1 / -1;align-items:center;padding:8px 5px 8px 32px;font-size:13px;border-top:1px solid var(--border);}
+  .stint-table{margin-top:12px;border-radius:12px;border:1px solid var(--border);overflow:hidden;display:grid;grid-template-columns:minmax(24px,0.3fr) minmax(64px,1.0fr) minmax(64px,0.65fr) minmax(46px,0.55fr) minmax(38px,0.45fr) minmax(26px,0.3fr);column-gap:3px;row-gap:0;}
+  .stint-table .head{display:grid;grid-template-columns:subgrid;grid-column:1 / -1;font-family:'JetBrains Mono',monospace;font-size:10.5px;text-transform:uppercase;padding:8px 5px;background:var(--panel);color:var(--textFaint);}
+  .stint-table .row{display:grid;grid-template-columns:subgrid;grid-column:1 / -1;align-items:center;padding:8px 5px;font-size:13px;border-top:1px solid var(--border);}
   .stint-table .row span, .stint-table .head span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
   .row-removed{opacity:0.5;color:var(--textFaint);font-size:12.5px;}
   .row-removed span{color:var(--textFaint)!important;}
-  /* Ghosted stint-number watermark — replaces the old numeric Stint column. */
-  .stint-ghost-num{position:absolute;left:10px;bottom:-4px;width:auto;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:40px;line-height:1;color:var(--text);opacity:0.16;z-index:1;pointer-events:none;user-select:none;overflow:visible;}
-  .row-removed .stint-ghost-num{opacity:0.05;}
   .stint-table .dot{width:7px;height:7px;border-radius:999px;display:inline-block;margin-right:4px;flex-shrink:0;}
-  /* ---- "currently on track" live indicator ---- */
-  /* Abrupt flash rather than a smooth breathing pulse: holds full size,
-     snaps down small and dim, snaps back — reads as a blink, not a swell. */
-  @keyframes livePulse{0%,42%,58%,100%{opacity:1;transform:scale(1);}50%{opacity:0.2;transform:scale(0.5);}}
-  .timeline .seg .live-dot{width:7px;height:7px;border-radius:999px;flex-shrink:0;background:var(--red);animation:livePulse 1.2s ease-in-out infinite;}
-  .timeline .seg.seg-live{border-color:var(--red);background:rgba(226,68,92,0.10);box-shadow:none;transform:translateY(-2px);transition:transform .2s;}
-  .stint-table .row-live .dot{background:var(--red)!important;animation:livePulse 1.2s ease-in-out infinite;}
-  .stint-table .row.row-live{position:relative;background:rgba(226,68,92,0.08);}
-  .stint-table .row.row-live::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--red);}
   .stint-time{padding:4px 0;font-size:10px;width:100%;min-width:0;border-radius:6px;text-align:center;}
   .stint-pos{padding:4px 2px;font-size:11px;width:100%;min-width:0;border-radius:6px;border:1px solid var(--borderLight);text-align:center;}
   .driver-cell{display:flex;align-items:center;gap:4px;min-width:0;}
@@ -198,7 +187,7 @@
   .row-quiet{background:rgba(139,107,240,0.08);}
   .row-quiet .qt-text{font-style:italic;color:var(--textMuted);}
   .stint-pos::placeholder{color:var(--textFaint);}
-  .stint-table .head span:nth-child(3), .stint-table .head span:nth-child(4){text-align:center;}
+  .stint-table .head span:nth-child(4), .stint-table .head span:nth-child(5){text-align:center;}
 
   .archive-box{margin-bottom:40px;border-radius:16px;background:var(--panel);border:1px solid var(--border);padding:16px;max-width:460px;display:flex;flex-direction:column;gap:14px;}
   .archive-box .head{display:flex;align-items:center;gap:8px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:16px;}
@@ -261,10 +250,7 @@
     .setup-grid{grid-template-columns:1fr;}
     .setup-grid .col-2{grid-column:auto;}
     .chip-grid{grid-template-columns:1fr;}
-    .timeline{gap:3px;}
-    .timeline .seg{padding:6px 4px 5px;}
-    .timeline .seg .drv{font-size:12px;}
-    .timeline .seg .tm{font-size:9px;}
+    .timeline{height:54px;}
   }
 </style>
 </head>
@@ -381,13 +367,14 @@ let state = {
   track: "",
   customTrack: "",
   startTime: "10:00",
-  stintMinutes: 60,
   durationHours: 4,
 
   plan: null,
   finishDrafts: {},
   openStintNotes: new Set(), // UI-only: which stint rows have their note field expanded
   expandedCarPlans: new Set(), // UI-only: which cars' plan sections are expanded (archive view — collapsed by default)
+  addingReserve: new Set(), // UI-only: which cars currently have the "Add Reserve Driver" input open
+  reserveDraft: {}, // UI-only: in-progress reserve driver name per car id, keyed by car.id
 };
 
 // ---- persistence (Supabase — see supabase-client.js for setup) ----
@@ -407,7 +394,6 @@ function mapRaceRowToRecord(row){
     eventDateISO: row.event_date,
     track: row.track || "",
     startTime: (row.start_time || "10:00:00").slice(0,5),
-    stintMinutes: row.stint_minutes,
     durationHours: Number(row.duration_hours),
     status: row.status,
     cars: (row.cars || []).map(mapCarRowToCarRecord),
@@ -423,7 +409,8 @@ function mapCarRowToCarRecord(row){
   return {
     id: row.id, catalogId: row.catalog_id, number: row.number, team: row.team,
     manufacturer: row.manufacturer, model: row.model, accent: row.accent,
-    drivers: row.drivers || [], startingPosition: row.starting_position,
+    drivers: row.drivers || [], driverStintMode: row.driver_stint_mode || [],
+    startingPosition: row.starting_position,
     finishPosition: row.finish_position, retiredAtStint: row.retired_at_stint,
   };
 }
@@ -519,20 +506,6 @@ function formatTimeCompact(d){
   h = h % 12; if (h === 0) h = 12;
   return `${h}:${m}${ap}`;
 }
-// Even tighter than formatTimeCompact, for the horizontal timeline's
-// narrow, proportionally-sized stint cards specifically. Drops ":00" for
-// the very common on-the-hour case ("9a" instead of "9:00a") — full
-// precision is kept for anything off the hour ("9:15a"), which matters
-// more once cascades/edits have shifted a stint's real start time.
-function formatTimeUltraCompact(d){
-  if(!d) return "—";
-  const dt = (d instanceof Date) ? d : new Date(d);
-  let h = dt.getHours();
-  const m = dt.getMinutes();
-  const ap = h >= 12 ? "p" : "a";
-  h = h % 12; if (h === 0) h = 12;
-  return m === 0 ? `${h}${ap}` : `${h}:${String(m).padStart(2,"0")}${ap}`;
-}
 function addMinutes(date, mins){ return new Date(date.getTime() + mins*60000); }
 function toTimeInputValue(d){
   const hh = String(d.getHours()).padStart(2,"0");
@@ -584,25 +557,6 @@ function positionCellStyle(posValue, startPos){
   const textColor = t > 0.5 ? "#0A0C10" : "var(--text)";
   return { bg:`rgba(${r},${g},${b},${alpha})`, color: textColor };
 }
-// "Currently on track" — which stint actually has a driver in the car
-// right now. This is NOT simply "whichever stint's scheduled window
-// contains the current time": a stint's scheduled end passing doesn't
-// mean the driver actually came in — that only becomes true once the
-// stint is confirmed finished (via the Finish Stint button or an end-time
-// edit, which set s.finished). So this walks stints in order and picks
-// the FIRST one that hasn't been finished yet — that's whoever is really
-// out there, even if they're running long past their scheduled end and
-// the next driver's scheduled slot has technically already started. If
-// that stint hasn't reached its own (possibly cascade-adjusted) start
-// time yet, nobody's confirmed on track (race hasn't started, or there's
-// a genuine gap — quiet time, a pending driver change, etc).
-function computeLiveStintIndex(stints, archived){
-  if (archived) return -1;
-  const now = new Date();
-  const idx = stints.findIndex(s=>!s.removed && !s.finished);
-  if (idx === -1) return -1; // every stint already finished (or none exist)
-  return now >= stints[idx].start ? idx : -1;
-}
 function parsePosition(v){
   if (v == null) return null;
   const m = String(v).match(/\d+/);
@@ -626,31 +580,6 @@ function buildShortNames(fullNames){
   });
   return map;
 }
-// Compact 3-letter driver codes for the horizontal timeline specifically —
-// full/short names don't reliably fit in the narrow, proportionally-sized
-// stint cards. Normally the first 3 letters of the last name ("Atchley" ->
-// "ATC"); if two drivers on the same car share a last name, disambiguates
-// with a first-name initial + first 2 letters of the last name instead
-// ("Tom Driver" / "Alex Driver" -> "TDR" / "ADR"). Scoped to the timeline
-// only — the stint table keeps using buildShortNames().
-function buildTimelineAbbrev(fullNames){
-  const lastCounts = {};
-  fullNames.forEach(n=>{
-    const parts = n.trim().split(/\s+/);
-    const last = parts[parts.length-1];
-    lastCounts[last] = (lastCounts[last]||0) + 1;
-  });
-  const map = {};
-  fullNames.forEach(n=>{
-    const parts = n.trim().split(/\s+/);
-    const last = parts[parts.length-1];
-    const first = parts[0];
-    map[n] = (lastCounts[last] > 1 && parts.length > 1)
-      ? (first[0] + last.slice(0,2)).toUpperCase()
-      : last.slice(0,3).toUpperCase();
-  });
-  return map;
-}
 function podiumColor(pos){
   if(pos===1) return T.gold;
   if(pos===2) return T.silver;
@@ -658,6 +587,14 @@ function podiumColor(pos){
   return null;
 }
 function esc(s){ return (s==null?"":String(s)).replace(/[&<>"']/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+// Stint-length preset for a driver: 60 / 90 / 120 / 150 minutes.
+// Anything unset or unrecognized (e.g. a car added before this feature
+// existed) reads as the 60 default, so older race records keep working.
+function stintModeOf(car, idx){
+  const raw = car.driverStintMode && car.driverStintMode[idx];
+  return (raw === '90' || raw === '120' || raw === '150') ? raw : '60';
+}
 
 // ---- livery placeholder (mimics CarHeaderImage fallback) ----
 // Accent color now lives on the tile's border (see raceTile/carCard/etc),
@@ -814,7 +751,7 @@ function renderSetup(){
   const catalog = state.catalog.filter(cd=>!usedCatalogIds.has(cd.id));
   const canCreatePlan = cars.length>0 && cars.every(c=>c.drivers.some(d=>d.trim()))
       && (state.track && (state.track!=="Other" || state.customTrack.trim()))
-      && state.startTime && Number(state.stintMinutes)>0 && Number(state.durationHours)>0;
+      && state.startTime && Number(state.durationHours)>0;
 
   return `
     <div class="page fade-in">
@@ -843,7 +780,7 @@ function renderSetup(){
               <div class="catalog-tile" data-act="select-catalog" data-id="${cd.id}" role="button" tabindex="0" style="border-color:${cd.accent};">
                 <div class="strip" style="background:var(--panelRaised);">
                   ${carStripContent(cd.number, cd.team, cd.accent)}
-                  <span class="num" style="border:2px solid ${cd.accent};color:${cd.accent};">${esc(cd.number)}</span>
+                  <span class="num">${esc(cd.number)}</span>
                   ${cd.custom ? `<button class="del" data-act="del-catalog" data-id="${cd.id}" data-label="#${esc(cd.number)} ${esc(cd.team)}" onclick="event.stopPropagation()">${icon("x",12)}</button>` : ""}
                 </div>
                 <div class="body">
@@ -880,19 +817,36 @@ function renderSetup(){
           <div class="car-detail" style="border-color:${car.accent};">
             <div class="strip" style="background:var(--panelRaised);">
               ${carStripContent(car.number, car.team, car.accent)}
-              <span class="num" style="border:2px solid ${car.accent};color:${car.accent};">${esc(car.number)}</span>
+              <span class="num">${esc(car.number)}</span>
             </div>
             <div class="content">
               <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
                 <span style="width:10px;height:10px;border-radius:999px;background:${car.accent};display:inline-block;"></span>
                 <span class="font-display" style="font-weight:600;font-size:15px;">#${esc(car.number)} · ${esc(car.team)}</span>
               </div>
-              ${car.drivers.map((d,idx)=>`
-                <div class="driver-row">
-                  <span class="idx">${idx+1}</span>
-                  <input class="field" style="font-size:14px;" placeholder="Driver name" value="${esc(d)}" data-act="update-driver" data-car="${car.id}" data-idx="${idx}" />
-                  ${car.drivers.length>1 ? `<button data-act="remove-driver" data-car="${car.id}" data-idx="${idx}">${icon("x",15)}</button>` : ""}
-                </div>`).join("")}
+              ${(()=>{
+                return car.drivers.map((d,idx)=>{
+                  const mode = stintModeOf(car, idx);
+                  return `
+                <div class="driver-group">
+                  <div class="driver-row">
+                    <span class="idx">${idx+1}</span>
+                    <input class="field" style="font-size:14px;" placeholder="Driver name" value="${esc(d)}" data-act="update-driver" data-car="${car.id}" data-idx="${idx}" />
+                    ${car.drivers.length>1 ? `<button data-act="remove-driver" data-car="${car.id}" data-idx="${idx}">${icon("x",15)}</button>` : ""}
+                  </div>
+                  <div class="stint-len-row">
+                    <span class="stint-len-label">${icon("timer",11)} Stint Length</span>
+                    <div class="segmented">
+                      <button type="button" class="${mode==='60'?'active':''}" data-act="set-stint-mode" data-mode="60" data-car="${car.id}" data-idx="${idx}">60</button>
+                      <button type="button" class="${mode==='90'?'active':''}" data-act="set-stint-mode" data-mode="90" data-car="${car.id}" data-idx="${idx}">90</button>
+                      <button type="button" class="${mode==='120'?'active':''}" data-act="set-stint-mode" data-mode="120" data-car="${car.id}" data-idx="${idx}">120</button>
+                      <button type="button" class="${mode==='150'?'active':''}" data-act="set-stint-mode" data-mode="150" data-car="${car.id}" data-idx="${idx}">150</button>
+                    </div>
+                    <span class="stint-len-auto">min</span>
+                  </div>
+                </div>`;
+                }).join("");
+              })()}
               <button class="add-driver" style="color:${car.accent};" data-act="add-driver" data-car="${car.id}">${icon("plus",14)} Additional Driver</button>
 
               <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
@@ -922,10 +876,6 @@ function renderSetup(){
             <input type="time" class="field" id="startTime" value="${esc(state.startTime)}" />
           </div>
           <div>
-            <label class="label">${icon("timer",12)} Stint Time (min)</label>
-            <input type="number" min="1" class="field" id="stintMinutes" value="${esc(state.stintMinutes)}" />
-          </div>
-          <div class="col-2">
             <label class="label">${icon("flag",12)} Race Duration (hours)</label>
             <input type="number" min="0.5" step="0.5" class="field" id="durationHours" value="${esc(state.durationHours)}" />
           </div>
@@ -962,7 +912,7 @@ function carCard(car){
     <div class="car-card" style="border-color:${car.accent};">
       <div class="strip" style="background:var(--panelRaised);">
         ${carStripContent(car.number, car.team, car.accent)}
-        <span class="num" style="border:2px solid ${car.accent};color:${car.accent};">${esc(car.number)}</span>
+        <span class="num">${esc(car.number)}</span>
         <button class="del" data-act="remove-car" data-id="${car.id}" data-label="#${esc(car.number)} ${esc(car.team)}">${icon("x",12)}</button>
       </div>
       <div class="body">
@@ -1063,18 +1013,11 @@ function carPlanSection(cp, plan, archived){
   // signed-in person isn't an engineer, i.e. the driver read-only view.
   const readOnly = archived || !state.isEngineer;
   const shortNames = buildShortNames(car.drivers.filter(d=>d.trim()));
-  const timelineAbbrev = buildTimelineAbbrev(car.drivers.filter(d=>d.trim()));
   const carPodium = archived ? podiumColor(car.finishPosition) : null;
   const hasDelta = archived && car.startingPosition!=null && car.finishPosition!=null;
   const delta = hasDelta ? car.startingPosition - car.finishPosition : null;
   const deltaLabel = delta!=null ? (delta>0?`+${delta}`:`${delta}`) : null;
   const deltaColor = delta>0?T.green:(delta<0?T.red:T.textMuted);
-
-  // "Currently on track" — see computeLiveStintIndex() for why this keys
-  // off each stint's `finished` flag rather than just the scheduled
-  // window. Re-synced periodically without a full re-render — see
-  // updateLiveHighlights().
-  const liveIdx = computeLiveStintIndex(stints, archived);
 
   // Collapsible tile: currently enabled only on the archive/plan view for
   // archived races — the tile header (image + team/finish info) toggles
@@ -1113,34 +1056,17 @@ function carPlanSection(cp, plan, archived){
       ${archived ? raceSummaryBlock(cp) : ""}
 
       <div class="timeline">
-        ${stints.map((s,i)=>{
-          if (s.removed) return "";
+        ${stints.filter(s=>!s.removed).map(s=>{
           const color = DRIVER_PALETTE[s.driverIndex % DRIVER_PALETTE.length];
-          const [r,g,b] = hexToRgb(color);
-          const isLive = i === liveIdx;
-          // The live card gets extra proportional width on top of its
-          // normal time-based share — "ON TRACK" is the widest label in
-          // the whole row, and this is already the one card we want to
-          // draw the eye to, so a bit more room does double duty.
-          const grow = Math.max(s.lengthMin, 1) * (isLive ? 1.6 : 1);
-          // Live state overrides the driver-tinted look with the same thin
-          // red border + tinted wash used for warning entries in the Stint
-          // Adjustments log, so "currently on track" reads as one
-          // consistent visual language across the app.
-          const liveStyle = isLive ? `border-color:var(--red);background:rgba(226,68,92,0.10);box-shadow:none;` : "";
-          const tmContent = isLive
-            ? `<span style="color:var(--red);font-weight:600;">ON TRACK</span>`
-            : (s.finished ? formatDuration(s.lengthMin) : formatTimeUltraCompact(s.start));
-          const tmStyle = isLive ? `white-space:normal;overflow:visible;line-height:1.1;` : "";
-          return `<div class="seg ${isLive?'seg-live':''}" data-car="${car.id}" data-stint="${i}" data-color="${color}" data-start-iso="${s.start.toISOString()}" style="flex-grow:${grow};flex-basis:0;background:rgba(${r},${g},${b},0.14);border-top-color:${color};${liveStyle}">
-            <span class="drv" title="${esc(s.driver||'TBD')}">${esc(timelineAbbrev[s.driver]||s.driver||"TBD")}<span class="${isLive?'live-dot':'dot'}" style="background:${isLive?'var(--red)':color};"></span></span>
-            <span class="tm" style="${tmStyle}">${tmContent}</span>
+          return `<div class="seg" style="background:${color};">
+            <span class="drv">${esc(shortNames[s.driver]||s.driver||"TBD")}</span>
+            <span class="tm">${formatTimeCompact(s.start)}</span>
           </div>`;
         }).join("")}
       </div>
 
       <div class="stint-table">
-        <div class="head"><span>Driver</span><span style="padding-left:20px;">Start</span><span>End</span><span>Position</span><span></span></div>
+        <div class="head"><span>Stint</span><span>Driver</span><span style="padding-left:20px;">Start</span><span>End</span><span>Position</span><span></span></div>
         ${stints.map((s,i)=>{
           if (s.removed){
             let msg;
@@ -1153,8 +1079,8 @@ function carPlanSection(cp, plan, archived){
             }
             return `
             <div class="row row-removed">
-              <span class="stint-ghost-num">${i+1}</span>
-              <span style="grid-column:1 / -1;font-style:italic;text-decoration:line-through;">${msg}</span>
+              <span class="font-mono" style="text-decoration:line-through;">${String(i+1).padStart(2,"0")}</span>
+              <span style="grid-column:2 / -1;font-style:italic;">${msg}</span>
             </div>`;
           }
           const posStyle = positionCellStyle(s.position, car.startingPosition);
@@ -1165,7 +1091,6 @@ function carPlanSection(cp, plan, archived){
           const flags = s.flags || [];
           const flagBadges = flags.map(fk => FLAG_TYPES.find(f=>f.key===fk)?.emoji || "").join("");
           const hasNoteContent = flags.length>0 || !!(s.notes && s.notes.trim());
-          const isLiveRow = i === liveIdx;
 
           const driverCell = readOnly
             ? `<span class="driver-cell"><span class="dot" style="background:${dotColor};flex-shrink:0;"></span><span style="font-size:13px;">${esc(shortNames[s.driver]||s.driver||"TBD")}</span></span>`
@@ -1189,8 +1114,8 @@ function carPlanSection(cp, plan, archived){
             : `<span></span>`;
 
           return `
-          <div class="row ${isLiveRow?'row-live':''}" data-car="${car.id}" data-stint="${i}">
-            <span class="stint-ghost-num">${i+1}</span>
+          <div class="row">
+            <span class="font-mono" style="color:var(--textMuted)">${String(i+1).padStart(2,"0")}</span>
             ${driverCell}
             <span class="font-mono" style="white-space:nowrap;font-size:11px;padding-left:20px;">${formatTimeCompact(s.start)}</span>
             ${endCell}
@@ -1226,11 +1151,23 @@ function carPlanSection(cp, plan, archived){
           </div>` : ""}
           ${(!s.removed && s.quietMinutes) ? `
           <div class="row row-quiet">
-            <span class="qt-text" style="grid-column:1 / -1;">💤&nbsp; Quiet Time — ${formatDuration(s.quietMinutes)} (${formatTimeCompact(s.end)}–${formatTimeCompact(addMinutes(s.end, s.quietMinutes))})</span>
+            <span class="font-mono" style="opacity:0.7;">💤</span>
+            <span class="qt-text" style="grid-column:2 / -1;">Quiet Time — ${formatDuration(s.quietMinutes)} (${formatTimeCompact(s.end)}–${formatTimeCompact(addMinutes(s.end, s.quietMinutes))})</span>
           </div>` : ""}`;
         }).join("")}
       </div>
       ${car.startingPosition==null ? `<p style="font-size:11px;color:var(--textFaint);margin:6px 2px 0;">Set a class starting position on the Setup page to enable the finish-position heatmap.</p>` : ""}
+
+      ${!readOnly ? `
+      <div class="reserve-driver-block">
+        ${state.addingReserve.has(car.id) ? `
+          <div style="display:flex;gap:8px;align-items:center;margin-top:10px;">
+            <input class="field" style="font-size:13px;" placeholder="Reserve driver name" value="${esc(state.reserveDraft[car.id]||'')}" data-act="update-reserve-draft" data-car="${car.id}" />
+            <button class="btn-primary" style="padding:8px 14px;font-size:13px;white-space:nowrap;" data-act="confirm-add-reserve" data-car="${car.id}">Add</button>
+            <button style="background:none;border:none;color:var(--textFaint);display:flex;" data-act="cancel-add-reserve" data-car="${car.id}">${icon("x",15)}</button>
+          </div>
+        ` : `<button class="add-driver" style="color:${car.accent};margin-top:10px;" data-act="start-add-reserve" data-car="${car.id}">${icon("plus",14)} Add Reserve Driver</button>`}
+      </div>` : ""}
 
       ${(cp.log && cp.log.length) ? `
       <div class="log-head">
@@ -1290,7 +1227,7 @@ function bindEvents(){
 
   app.querySelectorAll("[data-act]").forEach(el=>{
     const act = el.getAttribute("data-act");
-    if (["update-driver","update-start-pos","finish-draft","edit-stint-pos","edit-stint-driver","edit-stint-note"].includes(act)) return; // input events bound below
+    if (["update-driver","update-start-pos","finish-draft","edit-stint-pos","edit-stint-driver","edit-stint-note","update-reserve-draft"].includes(act)) return; // input events bound below
     el.addEventListener("click", (e)=>{
       e.preventDefault();
       handleAction(act, el, e);
@@ -1319,7 +1256,6 @@ function bindEvents(){
     state.eventDate = d.toISOString();
   });
   bindLiveInput("startTime", v=> state.startTime=v);
-  bindLiveInput("stintMinutes", v=> state.stintMinutes=v);
   bindLiveInput("durationHours", v=> state.durationHours=v);
   bindLiveInput("ncNumber", v=> state.newCar.number=v);
   bindLiveInput("ncTeam", v=> state.newCar.team=v);
@@ -1332,6 +1268,18 @@ function bindEvents(){
       const car = state.cars.find(c=>c.id===carId);
       if (car) car.drivers[idx] = el.value;
       updateSetupButtonState();
+    });
+  });
+  app.querySelectorAll('[data-act="update-reserve-draft"]').forEach(el=>{
+    el.addEventListener("input", ()=>{
+      const carId = el.getAttribute("data-car");
+      state.reserveDraft[carId] = el.value;
+    });
+    el.addEventListener("keydown", (e)=>{
+      if (e.key === "Enter"){
+        e.preventDefault();
+        handleAction("confirm-add-reserve", el);
+      }
     });
   });
   app.querySelectorAll('[data-act="update-start-pos"]').forEach(el=>{
@@ -1379,7 +1327,7 @@ function updateSetupButtonState(){
   const cars = state.cars;
   const canCreatePlan = cars.length>0 && cars.every(c=>c.drivers.some(d=>d.trim()))
       && (state.track && (state.track!=="Other" || state.customTrack.trim()))
-      && state.startTime && Number(state.stintMinutes)>0 && Number(state.durationHours)>0;
+      && state.startTime && Number(state.durationHours)>0;
   btn.disabled = !canCreatePlan;
 }
 
@@ -1415,17 +1363,17 @@ async function handleAction(act, el){
           ...c,
           id: uid("car"),
           drivers: [...c.drivers],
+          driverStintMode: c.driverStintMode ? [...c.driverStintMode] : c.drivers.map(()=>'60'),
           finishPosition: null,
         }));
         state.track = TRACKS.includes(src.track) ? src.track : (src.track ? "Other" : "");
         state.customTrack = TRACKS.includes(src.track) ? "" : (src.track || "");
         state.startTime = src.startTime;
-        state.stintMinutes = src.stintMinutes;
         state.durationHours = src.durationHours;
         state.duplicateSource = null;
       } else {
         state.cars = []; state.track=""; state.customTrack="";
-        state.startTime="10:00"; state.stintMinutes=60; state.durationHours=4;
+        state.startTime="10:00"; state.durationHours=4;
       }
 
       state.page = "setup";
@@ -1506,19 +1454,72 @@ async function handleAction(act, el){
       render(); break;
     case "add-driver": {
       const car = state.cars.find(c=>c.id===el.getAttribute("data-car"));
-      if (car){ car.drivers.push(""); render(); }
+      if (car){
+        car.drivers.push("");
+        if (!car.driverStintMode) car.driverStintMode = car.drivers.slice(0,-1).map(()=>'60');
+        car.driverStintMode.push('60');
+        render();
+      }
       break;
     }
     case "remove-driver": {
       const car = state.cars.find(c=>c.id===el.getAttribute("data-car"));
       const idx = +el.getAttribute("data-idx");
-      if (car && car.drivers.length>1){ car.drivers.splice(idx,1); render(); }
+      if (car && car.drivers.length>1){
+        car.drivers.splice(idx,1);
+        if (car.driverStintMode) car.driverStintMode.splice(idx,1);
+        render();
+      }
+      break;
+    }
+    case "set-stint-mode": {
+      const car = state.cars.find(c=>c.id===el.getAttribute("data-car"));
+      const idx = +el.getAttribute("data-idx");
+      const mode = el.getAttribute("data-mode");
+      if (car){
+        if (!car.driverStintMode) car.driverStintMode = car.drivers.map(()=>'60');
+        car.driverStintMode[idx] = mode;
+        render();
+      }
       break;
     }
     case "createPlan":
       createRacePlan(); break;
     case "plan-edit":
       state.page = "setup"; render(); break;
+    case "start-add-reserve": {
+      const carId = el.getAttribute("data-car");
+      state.addingReserve.add(carId);
+      if (!(carId in state.reserveDraft)) state.reserveDraft[carId] = "";
+      render();
+      break;
+    }
+    case "cancel-add-reserve": {
+      const carId = el.getAttribute("data-car");
+      state.addingReserve.delete(carId);
+      delete state.reserveDraft[carId];
+      render();
+      break;
+    }
+    case "confirm-add-reserve": {
+      const carId = el.getAttribute("data-car");
+      const name = (state.reserveDraft[carId] || "").trim();
+      if (!name) return;
+      const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
+      if (cp){
+        // Reserve drivers join the car's roster the same way a Setup-page
+        // driver would — they become selectable in every stint's driver
+        // dropdown immediately, defaulting to the 60min preset.
+        if (!cp.car.driverStintMode) cp.car.driverStintMode = cp.car.drivers.map(()=>'60');
+        cp.car.drivers.push(name);
+        cp.car.driverStintMode.push('60');
+      }
+      state.addingReserve.delete(carId);
+      delete state.reserveDraft[carId];
+      await syncPlanToRaceRecord();
+      render();
+      break;
+    }
     case "archiveRace":
       await archiveRace(); break;
     case "clear-stint-log": {
@@ -1593,7 +1594,6 @@ function openRace(race){
   state.track = TRACKS.includes(race.track) ? race.track : "Other";
   state.customTrack = TRACKS.includes(race.track) ? "" : race.track;
   state.startTime = race.startTime;
-  state.stintMinutes = race.stintMinutes;
   state.durationHours = race.durationHours;
 
   const p = race.plan;
@@ -1611,6 +1611,8 @@ function openRace(race){
   };
   state.finishDrafts = {};
   state.expandedCarPlans = new Set();
+  state.addingReserve = new Set();
+  state.reserveDraft = {};
   state.page = "plan";
   render();
 }
@@ -1620,7 +1622,7 @@ function addCarFromCatalog(def){
     id: uid("car"),
     number: def.number, team: def.team, manufacturer: def.manufacturer, model: def.model,
     accent: def.accent, imageUrl: def.imageUrl || null, catalogId: def.id,
-    drivers: [""], startingPosition: null, finishPosition: null,
+    drivers: [""], driverStintMode: ['60'], startingPosition: null, finishPosition: null,
   });
   state.addingCar = false; state.addingCustom = false;
   render();
@@ -1643,7 +1645,7 @@ async function createRacePlan(){
   const cars = state.cars;
   const canCreatePlan = cars.length>0 && cars.every(c=>c.drivers.some(d=>d.trim()))
       && (state.track && (state.track!=="Other" || state.customTrack.trim()))
-      && state.startTime && Number(state.stintMinutes)>0 && Number(state.durationHours)>0;
+      && state.startTime && Number(state.durationHours)>0;
   if (!canCreatePlan) return;
 
   const resolvedTrack = state.track === "Other" ? state.customTrack.trim() : state.track;
@@ -1651,13 +1653,12 @@ async function createRacePlan(){
   const startDateTime = new Date(state.eventDate || Date.now());
   startDateTime.setHours(hh, mm, 0, 0);
   const totalMinutes = Number(state.durationHours) * 60;
-  const stintLen = Number(state.stintMinutes);
   const endDateTime = addMinutes(startDateTime, totalMinutes);
 
   const raceFields = {
     event_name: state.eventName,
     event_date: (state.eventDate ? new Date(state.eventDate) : new Date()).toISOString().slice(0,10),
-    track: resolvedTrack, start_time: state.startTime, stint_minutes: Number(state.stintMinutes),
+    track: resolvedTrack, start_time: state.startTime,
     duration_hours: Number(state.durationHours), status: "planned",
     plan_start_at: startDateTime.toISOString(), plan_end_at: endDateTime.toISOString(), total_minutes: totalMinutes,
   };
@@ -1683,19 +1684,30 @@ async function createRacePlan(){
   // time so each one's generated id is available for its own stints.
   const carPlans = [];
   for (const c of cars){
-    const validDrivers = c.drivers.filter(d=>d.trim());
+    const validIdx = c.drivers.map((d,idx)=>({d,idx})).filter(o=>o.d.trim());
+    const validDrivers = validIdx.map(o=>o.d);
+    const validStintModes = validIdx.map(o=>stintModeOf(c, o.idx));
     const carFields = {
       race_id: raceId, catalog_id: c.catalogId || null, number: c.number, team: c.team,
       manufacturer: c.manufacturer, model: c.model, accent: c.accent, drivers: validDrivers,
+      driver_stint_mode: validStintModes,
       starting_position: parsePosition(c.startingPosition),
       finish_position: c.finishPosition != null ? parsePosition(c.finishPosition) : null,
     };
     const { data: carRow, error: carErr } = await supabase.from("cars").insert(carFields).select().single();
     if (carErr){ console.error("insert car failed:", carErr); continue; }
 
+    // Each driver's stint length comes from one of the four preset
+    // buttons on Setup: 60 / 90 / 120 / 150 minutes. A car can mix
+    // presets freely — each driver's length is fully independent of the
+    // others. If a driver's actual stint needs to run long or short of
+    // their preset, use Finish on the planner page to lock in the real
+    // end time — the cascade there re-times everything downstream.
+    const stintLenFor = (rotationPos) => Number(validStintModes[rotationPos % validStintModes.length] || '60');
     let elapsed = 0, di = 0; const stints = [];
     while (elapsed < totalMinutes){
-      const segLen = Math.min(stintLen, totalMinutes - elapsed);
+      const wantLen = stintLenFor(di);
+      const segLen = Math.min(wantLen, totalMinutes - elapsed);
       const start = addMinutes(startDateTime, elapsed);
       const end = addMinutes(startDateTime, elapsed + segLen);
       stints.push({ driver: validDrivers[di % validDrivers.length], driverIndex: di % validDrivers.length, start, end, plannedEnd: new Date(end), lengthMin: segLen, position: null, notes: "", flags: [], removed: false, quietMinutes: 0, finished: false });
@@ -1717,6 +1729,8 @@ async function createRacePlan(){
   state.currentRaceId = raceId;
   state.currentStatus = "planned";
   state.finishDrafts = {};
+  state.addingReserve = new Set();
+  state.reserveDraft = {};
   state.page = "plan";
 
   state.races = await loadRaces(); // refresh the Home/Archive list to include this race
@@ -1758,7 +1772,11 @@ async function syncPlanToRaceRecord(){
   }).eq("id", state.currentRaceId);
 
   for (const cp of plan.carPlans){
-    await supabase.from("cars").update({ retired_at_stint: cp.retiredAtStint }).eq("id", cp.car.id);
+    await supabase.from("cars").update({
+      retired_at_stint: cp.retiredAtStint,
+      drivers: cp.car.drivers,
+      driver_stint_mode: cp.car.driverStintMode || [],
+    }).eq("id", cp.car.id);
 
     const stintRows = cp.stints.map((s,i)=>({
       car_id: cp.car.id, stint_index: i, driver: s.driver, driver_index: s.driverIndex,
@@ -2133,62 +2151,6 @@ async function archiveRace(){
 // Checked once per session load — a simple "am I in the engineers table"
 // lookup. maybeSingle() (not single()) since zero rows is the normal,
 // expected case for a driver, not an error.
-// ---- "currently on track" live-highlight ticker ----
-// carPlanSection() already computes the correct live stint at render time,
-// but if someone leaves the plan page open without triggering any other
-// re-render, that highlight would go stale as time passes. Rather than
-// calling the full render() on a timer — which would blow away an
-// in-progress stint note edit (the textarea only commits on blur) — this
-// directly patches just the timeline segments and stint-table rows that
-// need to change, using the data- attributes carPlanSection() writes out
-// for exactly this purpose.
-function updateLiveHighlights(){
-  if (!state.plan || state.currentStatus === "archived") return;
-  state.plan.carPlans.forEach(cp=>{
-    const liveIdx = computeLiveStintIndex(cp.stints, false);
-
-    document.querySelectorAll(`.timeline .seg[data-car="${cp.car.id}"]`).forEach(el=>{
-      const idx = +el.getAttribute("data-stint");
-      const color = el.getAttribute("data-color");
-      const isLive = idx === liveIdx;
-      const [r,g,b] = hexToRgb(color);
-      const stint = cp.stints[idx];
-      el.classList.toggle("seg-live", isLive);
-      el.style.background = isLive ? "rgba(226,68,92,0.10)" : `rgba(${r},${g},${b},0.14)`;
-      el.style.borderColor = isLive ? "var(--red)" : "transparent";
-      if (!isLive) el.style.borderTopColor = color; // border-color shorthand above also reset the top accent stripe — reassert it
-      el.style.boxShadow = "none";
-      if (stint) el.style.flexGrow = Math.max(stint.lengthMin, 1) * (isLive ? 1.6 : 1); // live card gets extra room for "ON TRACK"
-      const dotEl = el.querySelector(".dot, .live-dot");
-      if (dotEl){
-        dotEl.className = isLive ? "live-dot" : "dot";
-        dotEl.style.background = isLive ? "var(--red)" : color;
-      }
-      const tmEl = el.querySelector(".tm");
-      if (tmEl){
-        if (isLive){
-          tmEl.style.whiteSpace = "normal";
-          tmEl.style.overflow = "visible";
-          tmEl.style.lineHeight = "1.1";
-          tmEl.innerHTML = `<span style="color:var(--red);font-weight:600;">ON TRACK</span>`;
-        } else {
-          tmEl.style.whiteSpace = "";
-          tmEl.style.overflow = "";
-          tmEl.style.lineHeight = "";
-          tmEl.innerHTML = (stint && stint.finished ? formatDuration(stint.lengthMin) : formatTimeUltraCompact(new Date(el.getAttribute("data-start-iso"))));
-        }
-      }
-    });
-
-    document.querySelectorAll(`.stint-table .row[data-car="${cp.car.id}"]`).forEach(el=>{
-      const idx = +el.getAttribute("data-stint");
-      const isLive = idx === liveIdx;
-      el.classList.toggle("row-live", isLive);
-    });
-  });
-}
-setInterval(updateLiveHighlights, 30000);
-
 async function checkIsEngineer(){
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return false;
