@@ -2119,35 +2119,33 @@ async function updateStintPosition(carId, stintIdx, value){
   render();
 }
 
-// Re-runs the driver rotation for every stint after anchorIdx, cycling
-// through the car's drivers starting right after whoever is in anchorIdx.
-// This is what makes a single dropdown change at one stint "bump" the
-// rest of that car's rotation down a slot, instead of leaving every
-// later stint pointing at a driver who no longer lines up — the crew
-// shouldn't have to hand-edit each downstream dropdown to account for
-// one out-of-sequence insertion.
+// Pushes whoever just got bumped out of anchorIdx (carryName/carryIdx —
+// the driver that stint used to have) down into the very next stint,
+// which in turn hands ITS previous driver down to the one after that,
+// and so on — a true insert-and-shift, not a reset back to canonical
+// A/B/C/D array order. This is what lets one dropdown change ("put Jeff
+// in stint 4") ripple downstream as "everyone who was there slides one
+// stint later," preserving whatever order they were actually in before
+// the edit (even if that order was already the result of an earlier
+// manual swap), instead of snapping back to the car's default rotation.
 //
-// - Removed stints (retired car, or absorbed by an earlier overrun) are
-//   skipped entirely — they're not really happening, so they don't
-//   consume a rotation slot.
-// - Stints already locked in with a real recorded end time (finished)
-//   keep their actual driver untouched (that already happened), but the
-//   rotation still resumes from whoever really drove it, so anything
-//   further downstream stays correctly lined up.
-function reassignRotationFrom(cp, anchorIdx){
-  const validDrivers = cp.car.drivers.filter(d=>d.trim());
-  if (!validDrivers.length) return;
-  let rot = (cp.stints[anchorIdx].driverIndex + 1) % validDrivers.length;
-  for (let j = anchorIdx + 1; j < cp.stints.length; j++){
-    const s = cp.stints[j];
+// - Removed stints (retired car, or absorbed by an earlier overrun) don't
+//   hold a slot — the carried driver passes straight through them.
+// - Hitting a stint already locked in with a real recorded end time
+//   (finished) stops the chain — that already happened and can't be
+//   rewritten, so whoever was still being carried has nowhere left to go.
+function shiftDriversDownFrom(cp, anchorIdx, carryName, carryIdx){
+  const stints = cp.stints;
+  for (let j = anchorIdx + 1; j < stints.length && carryName != null; j++){
+    const s = stints[j];
     if (s.removed) continue;
-    if (s.finished){
-      rot = (s.driverIndex + 1) % validDrivers.length;
-      continue;
-    }
-    s.driverIndex = rot;
-    s.driver = validDrivers[rot];
-    rot = (rot + 1) % validDrivers.length;
+    if (s.finished) break;
+    const nextCarryName = s.driver;
+    const nextCarryIdx = s.driverIndex;
+    s.driver = carryName;
+    s.driverIndex = carryIdx;
+    carryName = nextCarryName;
+    carryIdx = nextCarryIdx;
   }
 }
 
@@ -2164,13 +2162,14 @@ function reassignRotationFrom(cp, anchorIdx){
 // with a real recorded end time (finished === true) is left alone — a
 // driver-label swap on history shouldn't rewrite what already happened.
 //
-// On top of the time cascade, EVERY downstream (non-finished, non-removed)
-// stint also gets its driver bumped down one rotation slot via
-// reassignRotationFrom — this runs regardless of whether the length
-// actually changed, since dropping a different driver into this slot
-// means whoever was originally scheduled here (and everyone after) shifts
-// down one place. That's the whole point of this change: one dropdown
-// edit, and the rest of the rotation sorts itself out.
+// On top of the time cascade, the driver this stint HAD before the edit
+// gets carried into the next stint via shiftDriversDownFrom — bumping
+// that stint's own previous driver into the one after it, and so on down
+// the line — regardless of whether the length actually changed. That's
+// the whole point of this change: one dropdown edit inserts the new
+// driver here and slides everyone who was already scheduled after them
+// one stint later, so the crew doesn't have to hand-edit every downstream
+// dropdown to account for the insertion.
 async function updateStintDriver(carId, stintIdx, driverName){
   const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
   if (!cp) return;
@@ -2178,6 +2177,11 @@ async function updateStintDriver(carId, stintIdx, driverName){
   if (!stint) return;
   const validDrivers = cp.car.drivers.filter(d=>d.trim());
   const idx = validDrivers.indexOf(driverName);
+
+  const displacedName = stint.driver;
+  const displacedIdx = stint.driverIndex;
+  const driverActuallyChanged = idx >= 0 && driverName !== displacedName;
+
   stint.driver = driverName;
   stint.driverIndex = idx >= 0 ? idx : 0;
 
@@ -2207,13 +2211,13 @@ async function updateStintDriver(carId, stintIdx, driverName){
     }
   }
 
-  if (idx >= 0){
-    reassignRotationFrom(cp, stintIdx);
+  if (driverActuallyChanged){
+    shiftDriversDownFrom(cp, stintIdx, displacedName, displacedIdx);
   }
 
   if (timeNote){
     logStintNote(cp, stintIdx, `Stint ${stintIdx+1} reassigned to ${driverName} — ${timeNote}.`, timeNote.startsWith("completely absorbed") ? "warn" : undefined);
-  } else if (idx >= 0){
+  } else if (driverActuallyChanged){
     logStintNote(cp, stintIdx, `Stint ${stintIdx+1} reassigned to ${driverName} — downstream driver rotation shifted accordingly.`);
   }
 
