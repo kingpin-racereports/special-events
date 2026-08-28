@@ -2339,6 +2339,16 @@ async function checkIsEngineer(){
   return !!data;
 }
 
+async function checkIsOnRoster(){
+  // Gate on the `roster` table (email allowlist). RLS restricts each
+  // signed-in user to seeing only their own row (matched by email on the
+  // JWT), so no client-side filter is needed — 0 rows back means either
+  // they're not on the roster, or RLS is correctly hiding everyone else's.
+  const { data, error } = await supabase.from("roster").select("email").maybeSingle();
+  if (error){ console.error("checkIsOnRoster failed:", error); return false; }
+  return !!data;
+}
+
 async function startApp(){
   state.isEngineer = await checkIsEngineer();
   state.races = await loadRaces();
@@ -2346,10 +2356,24 @@ async function startApp(){
   render();
 }
 
+async function bootIfAuthorized(){
+  const onRoster = await checkIsOnRoster();
+  if (!onRoster){
+    // Signed in, but not on the allowlist — this account can authenticate
+    // with Supabase but isn't permitted to use the app. Sign out
+    // immediately so no session lingers, then bounce to the login page
+    // with a flag it can use to show an "unauthorized" message.
+    await supabase.auth.signOut();
+    window.location.replace("index.html?unauthorized=1");
+    return;
+  }
+  await startApp();
+}
+
 (async function boot(){
   const { data: { session } } = await supabase.auth.getSession();
   if (session){
-    await startApp();
+    await bootIfAuthorized();
     return;
   }
 
@@ -2359,7 +2383,7 @@ async function startApp(){
     if (newSession){
       settled = true;
       sub.subscription.unsubscribe();
-      startApp();
+      bootIfAuthorized();
     }
   });
 
