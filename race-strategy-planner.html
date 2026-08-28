@@ -2349,25 +2349,29 @@ async function checkIsOnRoster(){
   return !!data;
 }
 
-async function startApp(){
-  state.isEngineer = await checkIsEngineer();
+async function startApp(isEngineer){
+  state.isEngineer = isEngineer;
   state.races = await loadRaces();
   state.catalog = await loadCatalog();
   render();
 }
 
 async function bootIfAuthorized(){
-  const onRoster = await checkIsOnRoster();
-  if (!onRoster){
-    // Signed in, but not on the allowlist — this account can authenticate
-    // with Supabase but isn't permitted to use the app. Sign out
-    // immediately so no session lingers, then bounce to the login page
-    // with a flag it can use to show an "unauthorized" message.
+  // Engineers are always authorized to use the app — `roster` only needs
+  // to list drivers who AREN'T also engineers. This avoids keeping the
+  // same email in both `roster` and `engineer_invites`/`engineers`.
+  const [onRoster, isEngineer] = await Promise.all([checkIsOnRoster(), checkIsEngineer()]);
+  if (!onRoster && !isEngineer){
+    // Signed in, but not on the allowlist and not an engineer — this
+    // account can authenticate with Supabase but isn't permitted to use
+    // the app. Sign out immediately so no session lingers, then bounce to
+    // the login page with a flag it can use to show an "unauthorized"
+    // message.
     await supabase.auth.signOut();
     window.location.replace("index.html?unauthorized=1");
     return;
   }
-  await startApp();
+  await startApp(isEngineer);
 }
 
 (async function boot(){
