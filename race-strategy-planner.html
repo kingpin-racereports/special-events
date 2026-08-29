@@ -226,6 +226,10 @@
   .row-quiet{background:rgba(139,107,240,0.08);}
   .row-quiet .qt-text{font-style:italic;color:var(--textMuted);}
   .stint-pos::placeholder{color:var(--textFaint);}
+  /* Read-only position badge (finished/archived stints) — square, fixed
+     size, centered in its column, rather than stretching to the full
+     column width like the editable input does. */
+  .stint-pos-badge{width:26px;height:26px;padding:0;margin:0 auto;flex-shrink:0;}
   .stint-table .head span:nth-child(3), .stint-table .head span:nth-child(4){text-align:center;}
 
   .archive-box{margin-bottom:40px;border-radius:16px;background:var(--panel);border:1px solid var(--border);padding:16px;max-width:460px;display:flex;flex-direction:column;gap:14px;}
@@ -318,6 +322,7 @@
     .stint-table{grid-template-columns:minmax(71px,1.35fr) minmax(55px,0.54fr) minmax(42px,0.48fr) minmax(34px,0.38fr) minmax(23px,0.26fr);}
     .stint-driver{font-size:10.8px;padding:4px 1.5px;}
     .stint-pos{font-size:10.5px;padding:4px 0;}
+    .stint-pos-badge{width:22px;height:22px;}
   }
 </style>
 </head>
@@ -1401,7 +1406,7 @@ function carPlanSection(cp, plan, archived){
             : `<button class="finish-stint-cell" data-act="prompt-finish-stint" data-car="${car.id}" data-stint="${i}" title="Finish Stint"><span class="em">🏁</span>Finish</button>`;
 
           const posCell = readOnly
-            ? `<span class="font-mono stint-pos" style="background:${posStyle.bg};color:${posStyle.color};display:flex;align-items:center;justify-content:center;">${s.position ? esc(s.position) : "–"}</span>`
+            ? `<span class="font-mono stint-pos stint-pos-badge" style="background:${posStyle.bg};color:${posStyle.color};display:flex;align-items:center;justify-content:center;">${s.position ? esc(s.position) : "–"}</span>`
             : `<input type="text" class="field stint-pos font-mono" placeholder="P–" value="${esc(s.position ?? '')}" data-act="edit-stint-pos" data-car="${car.id}" data-stint="${i}" style="background:${posStyle.bg};color:${posStyle.color};" />`;
 
           const noteToggle = (!readOnly || hasNoteContent)
