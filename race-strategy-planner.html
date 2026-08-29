@@ -168,9 +168,12 @@
   .stint-table .row span, .stint-table .head span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
   .row-removed{opacity:0.5;color:var(--textFaint);font-size:12.5px;}
   .row-removed span{color:var(--textFaint)!important;}
+  .row-negligible-final{opacity:0.65;color:var(--textFaint);font-size:12.5px;}
+  .row-negligible-final span{color:var(--textFaint)!important;}
   /* Ghosted stint-number watermark — replaces the old numeric Stint column. */
   .stint-ghost-num{position:absolute;left:10px;bottom:-4px;width:auto;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:40px;line-height:1;color:var(--text);opacity:0.16;z-index:1;pointer-events:none;user-select:none;overflow:visible;}
   .row-removed .stint-ghost-num{opacity:0.05;}
+  .row-negligible-final .stint-ghost-num{opacity:0.08;}
   .stint-table .dot{width:7px;height:7px;border-radius:999px;display:inline-block;margin-right:4px;flex-shrink:0;}
   /* ---- "currently on track" live indicator ---- */
   /* Abrupt flash rather than a smooth breathing pulse: holds full size,
@@ -181,6 +184,8 @@
   .stint-table .row-live .dot{background:var(--red)!important;animation:livePulse 1.2s ease-in-out infinite;}
   .stint-table .row.row-live{position:relative;background:rgba(226,68,92,0.08);}
   .stint-table .row.row-live::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--red);}
+  .stint-table .row.row-finished{opacity:0.62;}
+  .stint-table .fin-flag{font-size:11px;line-height:1;margin-right:4px;flex-shrink:0;}
   .stint-time{padding:4px 0;font-size:10px;width:100%;min-width:0;border-radius:6px;text-align:center;}
   .stint-pos{padding:4px 2px;font-size:11px;width:100%;min-width:0;border-radius:6px;border:1px solid var(--borderLight);text-align:center;}
   .driver-cell{display:flex;align-items:center;gap:4px;min-width:0;}
@@ -361,6 +366,17 @@ const FLAG_TYPES = [
   { key:"meatball", emoji:"⚫🟠", label:"Meatball", color: "#E0752E" },
   { key:"quiet",    emoji:"💤", label:"Quiet Time", color: T.purple },
 ];
+// Threshold for the "negligible final stint" rule: if the very last stint
+// in a car's plan gets squeezed down to this many minutes or fewer by the
+// overrun/absorb cascade, it's too small a sliver to hand a driver as its
+// own stint. Rather than creating a real stint entry for it (which forces
+// a driver assignment on a few leftover minutes), the schedule just notes
+// the remaining delta — real start/end times elsewhere are never altered
+// by this, it only changes what gets displayed as a schedulable stint.
+const FINAL_STINT_NEGLIGIBLE_MIN = 20;
+function finalStintNegligibleThresholdMin(){
+  return FINAL_STINT_NEGLIGIBLE_MIN;
+}
 const TRACKS = [
   "Barber Motorsports Park","Canadian Tire Motorsports Park","Circuit de Spa-Francorchamps",
   "Circuit of the Americas","Daytona International Speedway","Detroit Grand Prix",
@@ -646,7 +662,7 @@ function positionCellStyle(posValue, startPos){
 function computeLiveStintIndex(stints, archived){
   if (archived) return -1;
   const now = new Date();
-  const idx = stints.findIndex(s=>!s.removed && !s.finished);
+  const idx = stints.findIndex(s=>!s.removed && !s.negligibleFinal && !s.finished);
   if (idx === -1) return -1; // every stint already finished (or none exist)
   return now >= stints[idx].start ? idx : -1;
 }
@@ -1277,7 +1293,7 @@ function carPlanSection(cp, plan, archived){
 
       <div class="timeline">
         ${stints.map((s,i)=>{
-          if (s.removed) return "";
+          if (s.removed || s.negligibleFinal) return "";
           const color = DRIVER_PALETTE[s.driverIndex % DRIVER_PALETTE.length];
           const [r,g,b] = hexToRgb(color);
           const isLive = i === liveIdx;
@@ -1320,6 +1336,18 @@ function carPlanSection(cp, plan, archived){
               <span style="grid-column:1 / -1;font-style:italic;text-decoration:line-through;">${msg}</span>
             </div>`;
           }
+          if (s.negligibleFinal){
+            // Too small a sliver of time to schedule as its own stint —
+            // noted instead (see cascadeStintsFrom). Real start/end times
+            // are left exactly as computed; this is presentation only.
+            return `
+            <div class="row row-negligible-final">
+              <span class="stint-ghost-num">${i+1}</span>
+              <span style="grid-column:1 / -1;font-style:italic;color:var(--textFaint);display:flex;align-items:center;gap:6px;">
+                <span>⛽</span>Only ${s.negligibleMinutes} min remains — not scheduled as its own stint. Worth flagging if fuel numbers are tight.
+              </span>
+            </div>`;
+          }
           const posStyle = positionCellStyle(s.position, car.startingPosition);
           const validDrivers = car.drivers.filter(d=>d.trim());
           const dotColor = DRIVER_PALETTE[s.driverIndex % DRIVER_PALETTE.length];
@@ -1329,11 +1357,18 @@ function carPlanSection(cp, plan, archived){
           const flagBadges = flags.map(fk => FLAG_TYPES.find(f=>f.key===fk)?.emoji || "").join("");
           const hasNoteContent = flags.length>0 || !!(s.notes && s.notes.trim());
           const isLiveRow = i === liveIdx;
+          const isFinishedRow = !isLiveRow && s.finished;
+          // Finished rows recede slightly and swap the driver dot for a
+          // checkered flag, so "done" reads at a glance without touching
+          // the horizontal timeline above.
+          const dotEl = isFinishedRow
+            ? `<span class="fin-flag">🏁</span>`
+            : `<span class="dot" style="background:${dotColor};flex-shrink:0;"></span>`;
 
           const driverCell = readOnly
-            ? `<span class="driver-cell"><span class="dot" style="background:${dotColor};flex-shrink:0;"></span><span style="font-size:13px;">${esc(shortNames[s.driver]||s.driver||"TBD")}</span></span>`
+            ? `<span class="driver-cell">${dotEl}<span style="font-size:13px;">${esc(shortNames[s.driver]||s.driver||"TBD")}</span></span>`
             : `<span class="driver-cell">
-                <span class="dot" style="background:${dotColor};flex-shrink:0;"></span>
+                ${dotEl}
                 <select class="field stint-driver" data-act="edit-stint-driver" data-car="${car.id}" data-stint="${i}">
                   ${validDrivers.length===0 ? `<option value="">TBD</option>` : validDrivers.map(d=>`<option value="${esc(d)}" ${s.driver===d?"selected":""}>${esc(shortNames[d]||d)}</option>`).join("")}
                 </select>
@@ -1352,7 +1387,7 @@ function carPlanSection(cp, plan, archived){
             : `<span></span>`;
 
           return `
-          <div class="row ${isLiveRow?'row-live':''}" data-car="${car.id}" data-stint="${i}">
+          <div class="row ${isLiveRow?'row-live':''} ${isFinishedRow?'row-finished':''}" data-car="${car.id}" data-stint="${i}">
             <span class="stint-ghost-num">${i+1}</span>
             ${driverCell}
             <span class="font-mono" style="white-space:nowrap;font-size:11px;padding-left:14px;">${formatTimeCompact(s.start)}</span>
@@ -2092,6 +2127,7 @@ function cascadeStintsFrom(cp, anchorIdx, cursor){
   const stints = cp.stints;
   const nowRemoved = [];
   const nowRestored = [];
+  const newlyNegligibleFinal = [];
   for (let j=anchorIdx+1; j<stints.length; j++){
     const s = stints[j];
     if (cp.retiredAtStint != null && j > cp.retiredAtStint){
@@ -2101,6 +2137,7 @@ function cascadeStintsFrom(cp, anchorIdx, cursor){
     if (s.end <= cursor){
       if (!s.removed) nowRemoved.push(j);
       s.removed = true;
+      s.negligibleFinal = false;
       s.start = new Date(cursor);
       // cursor doesn't advance — this stint contributed no time
     } else {
@@ -2113,6 +2150,22 @@ function cascadeStintsFrom(cp, anchorIdx, cursor){
       // finishing an earlier stint) would silently erase that gap when it
       // recalculates this stint's downstream neighbor.
       cursor = addMinutes(s.end, s.quietMinutes || 0);
+
+      // "Negligible final stint" rule: the very last stint in the plan,
+      // squeezed down to a sliver by an upstream overrun, isn't worth
+      // creating as its own driver-assigned stint. Real start/end times
+      // are untouched by this — it only changes whether it's presented
+      // as a schedulable stint or folded into a note.
+      const isFinalStint = j === stints.length - 1;
+      const threshold = finalStintNegligibleThresholdMin();
+      if (isFinalStint && s.lengthMin > 0 && s.lengthMin <= threshold){
+        if (!s.negligibleFinal) newlyNegligibleFinal.push(j);
+        s.negligibleFinal = true;
+        s.negligibleMinutes = s.lengthMin;
+      } else if (s.negligibleFinal){
+        s.negligibleFinal = false;
+        delete s.negligibleMinutes;
+      }
     }
   }
 
@@ -2134,7 +2187,7 @@ function cascadeStintsFrom(cp, anchorIdx, cursor){
     }
   }
 
-  return { nowRemoved, nowRestored };
+  return { nowRemoved, nowRestored, newlyNegligibleFinal };
 }
 
 // Editing a stint's end time hands the freed-up (or overrun) time to
@@ -2183,7 +2236,7 @@ async function updateStintEnd(carId, stintIdx, timeStr){
   // up stretching/absorbing real stints instead of just pushing the
   // schedule later untouched.
   const cursor = newEnd;
-  const { nowRemoved, nowRestored } = cascadeStintsFrom(cp, stintIdx, cursor);
+  const { nowRemoved, nowRestored, newlyNegligibleFinal } = cascadeStintsFrom(cp, stintIdx, cursor);
 
   // Any quiet-time break scheduled after THIS stint is dead time nobody
   // drives through. It must push everything downstream later by exactly
@@ -2214,6 +2267,18 @@ async function updateStintEnd(carId, stintIdx, timeStr){
         : `Stint ${stintIdx+1} adjusted back to its original schedule.`;
     logStintNote(cp, stintIdx, label);
   }
+
+  // The final stint got squeezed down to a sliver too small to hand a
+  // driver as its own stint — not absorbed to zero, just noted. Its real
+  // start/end times are untouched; only the fact that it isn't being
+  // scheduled as a stand-alone stint gets logged.
+  if (newlyNegligibleFinal.length){
+    newlyNegligibleFinal.forEach(i=>{
+      const mins = stints[i].negligibleMinutes;
+      logStintNote(cp, i, `Only ${mins} min remains for the final stint — too short to schedule as its own stint. Noted here in case fuel numbers are tight near the ${finalStintNegligibleThresholdMin()} min mark.`, "warn");
+    });
+  }
+
 
   recomputePlanEndTime();
   await syncPlanToRaceRecord();
