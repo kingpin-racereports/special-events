@@ -516,7 +516,7 @@ function mapCarRowToCarRecord(row){
     manufacturer: row.manufacturer, model: row.model, accent: row.accent,
     drivers: row.drivers || [], driverStintMode: row.driver_stint_mode || [],
     startingPosition: row.starting_position,
-    finishPosition: row.finish_position, retiredAtStint: row.retired_at_stint,
+    finishPosition: parseFinishPosition(row.finish_position), retiredAtStint: row.retired_at_stint,
   };
 }
 
@@ -712,6 +712,18 @@ function parsePosition(v){
   if (v == null) return null;
   const m = String(v).match(/\d+/);
   return m ? parseInt(m[0],10) : null;
+}
+// Class finish position accepts either a numeric spot or "DNF" — a car that
+// retires still needs to be archivable without a class position, since it
+// never crossed the line. Returns a number, the literal string "DNF", or
+// null if the field is empty/unrecognized. The `cars.finish_position`
+// column is text, so both forms round-trip through Supabase cleanly.
+function parseFinishPosition(v){
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  if (/^dnf$/i.test(s)) return "DNF";
+  return parsePosition(s);
 }
 function buildShortNames(fullNames){
   const lastCounts = {};
@@ -1198,7 +1210,7 @@ function renderPlan(){
   const primaryCar = plan.carPlans[0] && plan.carPlans[0].car;
   const podium = archived && primaryCar ? podiumColor(primaryCar.finishPosition) : null;
   const bannerColor = podium || T.textMuted;
-  const allFilled = plan.carPlans.every(cp => parsePosition(state.finishDrafts[cp.car.id]) != null);
+  const allFilled = plan.carPlans.every(cp => parseFinishPosition(state.finishDrafts[cp.car.id]) != null);
 
   return `
     <div class="page page-wide fade-in">
@@ -1286,7 +1298,7 @@ function carPlanSection(cp, plan, archived){
   const shortNames = buildShortNames(car.drivers.filter(d=>d.trim()));
   const timelineAbbrev = buildTimelineAbbrev(car.drivers.filter(d=>d.trim()));
   const carPodium = archived ? podiumColor(car.finishPosition) : null;
-  const hasDelta = archived && car.startingPosition!=null && car.finishPosition!=null;
+  const hasDelta = archived && car.startingPosition!=null && typeof car.finishPosition === "number";
   const delta = hasDelta ? car.startingPosition - car.finishPosition : null;
   const deltaLabel = delta!=null ? (delta>0?`+${delta}`:`${delta}`) : null;
   const deltaColor = delta>0?T.green:(delta<0?T.red:T.textMuted);
@@ -1321,7 +1333,7 @@ function carPlanSection(cp, plan, archived){
             ${car.startingPosition!=null ? `<span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);">Start P${car.startingPosition}</span>`:""}
             ${archived && car.finishPosition!=null ? `
               ${carPodium?icon("trophy",13,"color:"+carPodium):""}
-              <span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:11px;color:${carPodium||T.text}">Finish P${car.finishPosition}</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:11px;color:${carPodium||T.text}">${car.finishPosition==='DNF' ? 'DNF' : 'Finish P'+car.finishPosition}</span>
               ${deltaLabel?`<span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:11px;color:${deltaColor}">${deltaLabel}</span>`:""}
             ` : ""}
             ${collapsible ? `<span class="ico" style="color:var(--textFaint);display:flex;">${icon(isCollapsed?"chevronDown":"chevronUp",16)}</span>` : ""}
@@ -1620,7 +1632,7 @@ function bindEvents(){
     el.addEventListener("input", ()=>{
       const carId = el.getAttribute("data-car");
       state.finishDrafts[carId] = el.value;
-      const allFilled = state.plan.carPlans.every(cp => parsePosition(state.finishDrafts[cp.car.id]) != null);
+      const allFilled = state.plan.carPlans.every(cp => parseFinishPosition(state.finishDrafts[cp.car.id]) != null);
       const btn = document.getElementById("archiveRace");
       if (btn) btn.disabled = !allFilled;
     });
@@ -2051,7 +2063,7 @@ async function createRacePlan(){
       manufacturer: c.manufacturer, model: c.model, accent: c.accent, drivers: validDrivers,
       driver_stint_mode: validStintModes,
       starting_position: parsePosition(c.startingPosition),
-      finish_position: c.finishPosition != null ? parsePosition(c.finishPosition) : null,
+      finish_position: c.finishPosition != null ? parseFinishPosition(c.finishPosition) : null,
     };
     const { data: carRow, error: carErr } = await supabase.from("cars").insert(carFields).select().single();
     if (carErr){ console.error("insert car failed:", carErr); continue; }
@@ -2549,7 +2561,7 @@ async function retireCarAction(carId, stintIdx){
 
 async function archiveRace(){
   const finishByCarId = {};
-  state.plan.carPlans.forEach(cp=>{ finishByCarId[cp.car.id] = parsePosition(state.finishDrafts[cp.car.id]); });
+  state.plan.carPlans.forEach(cp=>{ finishByCarId[cp.car.id] = parseFinishPosition(state.finishDrafts[cp.car.id]); });
 
   // Finish positions must land BEFORE the race flips to archived — the
   // RLS update policy on `cars` blocks any write once the parent race's
