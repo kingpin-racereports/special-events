@@ -3,17 +3,25 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="dark" />
 <title>Race Strategy Planner</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root{
+    color-scheme: dark;
     --bg:#05215a; --panel:#031a4a; --panelRaised:#1B2456;
     --border:#2A3468; --borderLight:#3C4880;
     --text:#F4F6FB; --textMuted:#A6AFD6; --textFaint:#6870A0;
     --blue:#3D6FE8; --amber:#F2A63E; --green:#3FB27F; --red:#E2445C;
     --purple:#8B6BF0; --gold:#E0B84B; --silver:#C6CBD3; --bronze:#C97F4B;
   }
+  /* Explicitly declaring the dark scheme above tells browsers (Samsung
+     Internet in particular) this page already has a hand-authored dark
+     theme, so their own "auto dark mode" won't additionally reprocess
+     images/backgrounds — without this, Samsung Internet was dimming
+     white-background assets like the track map PNG and the logo that
+     Chrome left alone. */
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;background:var(--bg);color:var(--text);}
   body{font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased;}
@@ -642,9 +650,11 @@ function positionCellStyle(posValue, startPos){
   const maxDelta = 8;
   const clamped = Math.max(-maxDelta, Math.min(maxDelta, delta));
   const t = Math.abs(clamped) / maxDelta; // 0..1
-  const alpha = (0.14 + t*0.6).toFixed(2);
+  // Bumped up from a 0.14–0.74 range — the low end was nearly invisible for
+  // small position swings, which is most of them in practice.
+  const alpha = (0.32 + t*0.55).toFixed(2);
   const [r,g,b] = hexToRgb(clamped <= 0 ? T.green : T.red);
-  const textColor = t > 0.5 ? "#0A0C10" : "var(--text)";
+  const textColor = t > 0.35 ? "#0A0C10" : "var(--text)";
   return { bg:`rgba(${r},${g},${b},${alpha})`, color: textColor };
 }
 // "Currently on track" — which stint actually has a driver in the car
