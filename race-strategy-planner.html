@@ -657,6 +657,16 @@ function logStintNote(cp, stintIdx, text, type){
     }).then(({ error })=>{ if (error) console.error("logStintNote insert failed:", error); });
   }
 }
+// Retire log entries are matched by their fixed message pattern rather than
+// a stored flag — the log table has no column for that, and text-matching
+// survives a reload from Supabase the same way freshly-created entries do.
+// A car's retirement is already fully explained by the message itself; the
+// stint it happened on may carry a flag/note of its own (e.g. a meatball
+// noting mechanical trouble), and that's already visible on the stint row —
+// repeating it under the log line would just be noise.
+function isRetireLogEntry(text){
+  return /^Car retired after Stint \d+\.$/.test(text);
+}
 function hexToRgb(hex){
   hex = hex.replace("#","");
   const n = parseInt(hex,16);
@@ -1480,7 +1490,7 @@ function carPlanSection(cp, plan, archived){
       </div>
       <div class="stint-log">
         ${cp.log.map(m=>{
-          const refStint = (m.stintIdx!=null) ? stints[m.stintIdx] : null;
+          const refStint = (!isRetireLogEntry(m.text) && m.stintIdx!=null) ? stints[m.stintIdx] : null;
           const refFlags = (refStint && refStint.flags) ? refStint.flags : [];
           const refFlagBadges = refFlags.map(fk => FLAG_TYPES.find(f=>f.key===fk)?.emoji || "").join(" ");
           const refNote = refStint && refStint.notes ? refStint.notes.trim() : "";
@@ -2531,7 +2541,7 @@ async function retireCarAction(carId, stintIdx){
   for (let j=stintIdx+1; j<cp.stints.length; j++){
     cp.stints[j].removed = true;
   }
-  logStintNote(cp, stintIdx, `Car Retired after Stint ${stintIdx+1} - Retired today. Ready for tomorrow.`, "warn");
+  logStintNote(cp, stintIdx, `Car retired after Stint ${stintIdx+1}.`, "warn");
   recomputePlanEndTime();
   await syncPlanToRaceRecord();
   render();
