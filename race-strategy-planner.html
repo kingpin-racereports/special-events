@@ -156,7 +156,7 @@
   .timeline .seg .drv .dot{display:none;} /* per-driver dot removed — top border accent already color-codes each card; only the live red dot (see .live-dot) remains visible */
   .timeline .seg .tm{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--textFaint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;text-align:center;}
 
-  .stint-table{margin-top:12px;border-radius:12px;border:1px solid var(--border);overflow:hidden;display:grid;grid-template-columns:minmax(72px,1.4fr) minmax(56px,0.55fr) minmax(44px,0.5fr) minmax(36px,0.4fr) minmax(24px,0.28fr);column-gap:3px;row-gap:0;}
+  .stint-table{margin-top:12px;border-radius:12px;border:1px solid var(--border);overflow:hidden;display:grid;grid-template-columns:minmax(68px,1.2fr) minmax(60px,0.6fr) minmax(45px,0.53fr) minmax(37px,0.43fr) minmax(25px,0.29fr);column-gap:3px;row-gap:0;}
   .stint-table .head{display:grid;grid-template-columns:subgrid;grid-column:1 / -1;font-family:'JetBrains Mono',monospace;font-size:10.5px;text-transform:uppercase;padding:8px 5px 8px 32px;background:var(--panel);color:var(--textFaint);}
   .stint-table .row{position:relative;display:grid;grid-template-columns:subgrid;grid-column:1 / -1;align-items:center;padding:8px 5px 8px 32px;font-size:13px;border-top:1px solid var(--border);}
   .stint-table .row span, .stint-table .head span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
@@ -290,8 +290,8 @@
     .timeline .seg{padding:6px 4px 5px;}
     .timeline .seg .drv{font-size:12px;}
     .timeline .seg .tm{font-size:9px;}
-    .stint-table{grid-template-columns:minmax(78px,1.7fr) minmax(46px,0.42fr) minmax(38px,0.4fr) minmax(30px,0.3fr) minmax(20px,0.22fr);}
-    .stint-driver{font-size:10.5px;padding:4px 1px;}
+    .stint-table{grid-template-columns:minmax(71px,1.35fr) minmax(55px,0.54fr) minmax(42px,0.48fr) minmax(34px,0.38fr) minmax(23px,0.26fr);}
+    .stint-driver{font-size:10.8px;padding:4px 1.5px;}
   }
 </style>
 </head>
@@ -1251,7 +1251,7 @@ function carPlanSection(cp, plan, archived){
       </div>
 
       <div class="stint-table">
-        <div class="head"><span>Driver</span><span style="padding-left:8px;">Start</span><span>End</span><span>Position</span><span></span></div>
+        <div class="head"><span>Driver</span><span style="padding-left:14px;">Start</span><span>End</span><span>Position</span><span></span></div>
         ${stints.map((s,i)=>{
           if (s.removed){
             let msg;
@@ -1303,7 +1303,7 @@ function carPlanSection(cp, plan, archived){
           <div class="row ${isLiveRow?'row-live':''}" data-car="${car.id}" data-stint="${i}">
             <span class="stint-ghost-num">${i+1}</span>
             ${driverCell}
-            <span class="font-mono" style="white-space:nowrap;font-size:11px;padding-left:8px;">${formatTimeCompact(s.start)}</span>
+            <span class="font-mono" style="white-space:nowrap;font-size:11px;padding-left:14px;">${formatTimeCompact(s.start)}</span>
             ${endCell}
             ${posCell}
             ${noteToggle}
