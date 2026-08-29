@@ -172,7 +172,7 @@
      snaps down small and dim, snaps back — reads as a blink, not a swell. */
   @keyframes livePulse{0%,42%,58%,100%{opacity:1;transform:scale(1);}50%{opacity:0.2;transform:scale(0.5);}}
   .timeline .seg .live-dot{width:7px;height:7px;border-radius:999px;flex-shrink:0;background:var(--red);animation:livePulse 1.2s ease-in-out infinite;}
-  .timeline .seg.seg-live{border-color:var(--red);background:rgba(226,68,92,0.10);box-shadow:none;transform:translateY(-2px);transition:transform .2s;}
+  .timeline .seg.seg-live{border-color:var(--red);background:rgba(226,68,92,0.10);box-shadow:none;transform:translateY(-2px);transition:transform .2s;min-width:76px;flex-shrink:0;}
   .stint-table .row-live .dot{background:var(--red)!important;animation:livePulse 1.2s ease-in-out infinite;}
   .stint-table .row.row-live{position:relative;background:rgba(226,68,92,0.08);}
   .stint-table .row.row-live::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--red);}
@@ -296,6 +296,7 @@
     .timeline .seg{padding:6px 4px 5px;}
     .timeline .seg .drv{font-size:12px;}
     .timeline .seg .tm{font-size:9px;}
+    .timeline .seg.seg-live{min-width:60px;}
     .stint-table{grid-template-columns:minmax(71px,1.35fr) minmax(55px,0.54fr) minmax(42px,0.48fr) minmax(34px,0.38fr) minmax(23px,0.26fr);}
     .stint-driver{font-size:10.8px;padding:4px 1.5px;}
   }
