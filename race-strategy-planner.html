@@ -213,6 +213,10 @@
   .archive-box{margin-bottom:40px;border-radius:16px;background:var(--panel);border:1px solid var(--border);padding:16px;max-width:460px;display:flex;flex-direction:column;gap:14px;}
   .archive-box .head{display:flex;align-items:center;gap:8px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:16px;}
   .archive-box p{margin:0;font-size:14px;color:var(--textMuted);}
+
+  .track-detail-box{margin-top:24px;margin-bottom:40px;border-radius:16px;background:var(--panel);border:1px solid var(--border);padding:16px;}
+  .track-detail-head{display:flex;align-items:center;gap:8px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:16px;margin-bottom:12px;}
+  .track-detail-img{width:100%;height:auto;display:block;border-radius:10px;}
   .fin-label{font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.04em;color:var(--textFaint);display:flex;align-items:center;gap:6px;margin-bottom:4px;}
   .btn-gold{border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;padding:10px 0;display:flex;align-items:center;justify-content:center;gap:6px;border:none;background:var(--gold);color:#0A0C10;}
   .btn-gold:disabled{background:var(--panelRaised);color:var(--textFaint);cursor:not-allowed;}
@@ -731,6 +735,30 @@ function trackStripContent(track, accent){
   return `<img src="images/tracks/${slug}.png" alt="${esc(track)} track layout" class="track-layout-img" onerror="handleTrackImgError(this, '${accent}')" />`;
 }
 
+// ---- detailed track map (plan page only) ----
+// A larger, more detailed map than the small thumbnail used on the track
+// picker and race-tile strips. Reuses the exact same slug convention as
+// trackStripContent above, just with a "-detail" suffix on the filename
+// (images/tracks/<slug>-detail.png) — no new table or column needed,
+// since track images were never stored in the database at all; the path
+// is derived purely from the track name string. Drop the higher-res file
+// in alongside the existing thumbnails using that naming pattern and it
+// picks it up automatically.
+// Unlike the thumbnail's diagonal-stripe fallback (which always shows
+// SOMETHING, since a plan always has a track), a missing detail image
+// here just hides the whole section — this is a supplementary extra, not
+// something every track necessarily has a file for yet.
+function trackDetailSection(trackName){
+  const slug = trackSlug(trackName);
+  if (!slug) return "";
+  return `
+    <div class="track-detail-box" id="trackDetailBox">
+      <div class="track-detail-head">${icon("mapPin",13)} Track Map</div>
+      <img src="images/tracks/${slug}-detail.png" alt="${esc(trackName)} detailed track map" class="track-detail-img"
+           onerror="this.closest('#trackDetailBox').style.display='none';" />
+    </div>`;
+}
+
 // ---- car header image, same convention/fallback as the track image ----
 // Expects images at images/cars/<number>-<team-slug>.png. If that image is
 // missing (404) or the car has no number, falls back to the same
@@ -748,6 +776,7 @@ function carStripContent(number, team, accent){
 // ============================================================================
 // RENDER
 // ============================================================================
+let lastRenderedPage = null; // used to scroll to top only on an actual page change, not every re-render
 function render(){
   const app = document.getElementById("app");
   if (state.confirmDelete){
@@ -773,6 +802,11 @@ function render(){
   }
   app.innerHTML = html;
   bindEvents();
+
+  if (state.page !== lastRenderedPage){
+    window.scrollTo(0, 0);
+    lastRenderedPage = state.page;
+  }
 
   if (trackScrollLeft != null){
     const row = document.querySelector(".track-picker-row");
@@ -1131,6 +1165,8 @@ function renderPlan(){
         ${infoChip("clock","Green Flag",formatTime(plan.startDateTime))}
         ${infoChip("timer","Checkered Flag",formatTime(plan.endDateTime))}
       </div>
+
+      ${trackDetailSection(plan.track)}
 
       ${!readOnly ? `
       <div class="archive-box fade-in">
