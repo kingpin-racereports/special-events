@@ -230,6 +230,10 @@
      size, centered in its column, rather than stretching to the full
      column width like the editable input does. */
   .stint-pos-badge{width:26px;height:26px;padding:0;margin:0 auto;flex-shrink:0;}
+  /* Editable position input — same square-badge treatment as the read-only
+     version, just a few pixels wider so there's room to actually see the
+     cursor/typed digits while editing. */
+  .stint-pos-edit{width:32px;height:28px;padding:0;margin:0 auto;flex-shrink:0;}
   .stint-table .head span:nth-child(3), .stint-table .head span:nth-child(4){text-align:center;}
 
   .archive-box{margin-bottom:40px;border-radius:16px;background:var(--panel);border:1px solid var(--border);padding:16px;max-width:460px;display:flex;flex-direction:column;gap:14px;}
@@ -323,6 +327,7 @@
     .stint-driver{font-size:10.8px;padding:4px 1.5px;}
     .stint-pos{font-size:10.5px;padding:4px 0;}
     .stint-pos-badge{width:22px;height:22px;}
+    .stint-pos-edit{width:27px;height:24px;}
   }
 </style>
 </head>
@@ -1407,7 +1412,7 @@ function carPlanSection(cp, plan, archived){
 
           const posCell = readOnly
             ? `<span class="font-mono stint-pos stint-pos-badge" style="background:${posStyle.bg};color:${posStyle.color};display:flex;align-items:center;justify-content:center;">${s.position ? esc(s.position) : "–"}</span>`
-            : `<input type="text" class="field stint-pos font-mono" placeholder="P–" value="${esc(s.position ?? '')}" data-act="edit-stint-pos" data-car="${car.id}" data-stint="${i}" style="background:${posStyle.bg};color:${posStyle.color};" />`;
+            : `<input type="text" class="field stint-pos stint-pos-edit font-mono" placeholder="P–" value="${esc(s.position ?? '')}" data-act="edit-stint-pos" data-car="${car.id}" data-stint="${i}" style="background:${posStyle.bg};color:${posStyle.color};" />`;
 
           const noteToggle = (!readOnly || hasNoteContent)
             ? `<button class="stint-note-toggle" data-act="toggle-stint-note" data-car="${car.id}" data-stint="${i}" title="${isOpen?'Hide note':(readOnly?'View note':'Add a note')}">${flagBadges ? `<span class="flag-badge">${flagBadges}</span>` : icon(isOpen?"x":(readOnly?"clock":"plus"),13)}</button>`
