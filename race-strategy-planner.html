@@ -48,7 +48,8 @@
   svg.i{stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
 
   /* ---- Home ---- */
-  .home-wrap{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;}
+  .home-wrap{min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:40px 24px;}
+  .home-main{flex:1;width:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;}
   .races-strip{width:100%;max-width:768px;margin-bottom:40px;}
   .races-head{display:flex;align-items:center;justify-content:between;justify-content:space-between;margin-bottom:12px;padding:0 4px;}
   .archive-link{display:flex;align-items:center;gap:4px;font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.14em;color:var(--gold);background:none;border:none;}
@@ -236,10 +237,11 @@
   .modal .confirm.positive{background:var(--blue);}
 
   /* ---- engineer sign-in ---- */
-  .auth-row{width:100%;display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-bottom:10px;}
+  .auth-row{display:flex;justify-content:center;align-items:center;gap:10px;}
   .auth-status{font-size:12px;color:var(--textMuted);display:flex;align-items:center;gap:6px;}
   .auth-link{background:none;border:none;color:var(--blue);font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:4px;padding:4px 2px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;}
   .auth-link:hover{text-decoration:underline;}
+  .auth-row-bottom{padding-top:40px;display:flex;justify-content:center;width:100%;}
   .google-btn{width:100%;box-sizing:border-box;padding:11px 0;border-radius:8px;border:1px solid var(--borderLight);background:var(--panelRaised);color:var(--text);font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:15px;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;}
   .google-btn:hover{border-color:var(--blue);}
   .google-btn:disabled{opacity:.5;cursor:default;}
@@ -806,13 +808,16 @@ function renderHome(){
   const active = state.races.filter(r=>r.status!=="archived");
   const archivedCount = state.races.filter(r=>r.status==="archived").length;
 
-  // The plan is viewable by anyone without an account — this row is the
-  // one place an engineer signs in to unlock editing. Kept on the home
-  // page specifically (rather than a separate gate page) so read-only
-  // visitors land straight on the plan with zero friction.
-  const authRow = state.isEngineer
-    ? `<div class="auth-row"><span class="auth-status">${icon("flag",13,"color:"+T.blue)} Signed in as Engineer</span><button class="auth-link" data-act="engineer-sign-out">Sign Out</button></div>`
-    : `<div class="auth-row"><button class="auth-link" data-act="open-engineer-login">Engineer Sign In ${icon("arrowRight",13)}</button></div>`;
+  // Not signed in: a plain "Engineer Sign In" link, pinned to the very
+  // bottom of the page and centered (margin-top:auto on a flex column
+  // pushes it to the bottom of .home-wrap without disturbing the
+  // vertical centering of everything above it).
+  // Signed in: nothing shown down here — Sign Out lives right under the
+  // Create a Race button instead (see nameFlow below), since that's
+  // where an engineer's attention already is.
+  const bottomAuthRow = state.isEngineer
+    ? ""
+    : `<div class="auth-row-bottom"><button class="auth-link" data-act="open-engineer-login">Engineer Sign In ${icon("arrowRight",13)}</button></div>`;
 
   let strip = "";
   if (active.length>0 || archivedCount>0){
@@ -835,17 +840,22 @@ function renderHome(){
         <p style="font-size:12px;color:var(--textFaint);margin:0;">${state.duplicateSource ? "Cars, drivers, track, and timing carry over — you'll verify everything on the next page." : "Today's date is captured automatically for your records."}</p>
       </div>`
     : (state.isEngineer
-        ? `<button class="create-btn" id="startCreate" data-act="startCreate">${icon("plus",20,"color:"+T.blue)}<span>Create a Race</span></button>`
-        : `<p class="empty-note" style="text-align:center;">New races are created by your race engineer.</p>`);
+        ? `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;">
+             <button class="create-btn" id="startCreate" data-act="startCreate">${icon("plus",20,"color:"+T.blue)}<span>Create a Race</span></button>
+             <div class="auth-row"><span class="auth-status">${icon("flag",13,"color:"+T.blue)} Signed in as Engineer</span><button class="auth-link" data-act="engineer-sign-out">Sign Out</button></div>
+           </div>`
+        : "");
 
   return `
     <div class="home-wrap">
-      ${authRow}
-      ${strip}
-      <div style="width:100%;max-width:420px;display:flex;flex-direction:column;align-items:center;text-align:center;" class="fade-in">
-        ${(!(active.length>0)) ? `<div class="create-circle">${icon("flag",22)}</div>` : ""}
-        ${nameFlow}
+      <div class="home-main">
+        ${strip}
+        <div style="width:100%;max-width:420px;display:flex;flex-direction:column;align-items:center;text-align:center;" class="fade-in">
+          ${(!(active.length>0)) ? `<div class="create-circle">${icon("flag",22)}</div>` : ""}
+          ${nameFlow}
+        </div>
       </div>
+      ${bottomAuthRow}
     </div>
     ${state.showEngineerLogin ? renderEngineerLoginModal() : ""}`;
 }
