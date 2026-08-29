@@ -374,6 +374,17 @@ const FLAG_TYPES = [
   { key:"meatball", emoji:"⚫🟠", label:"Meatball", color: "#E0752E" },
   { key:"quiet",    emoji:"💤", label:"Quiet Time", color: T.purple },
 ];
+// The compact flag badge shown on a stint row (before its note is expanded)
+// has room for one glance-able symbol. A meatball flag is a much more
+// serious/urgent signal than a caution or quiet-time marker, so if it's
+// present alongside anything else, it alone gets shown in that badge —
+// the other flags are still there and still visible once the note is
+// expanded, this only affects the compact field badge.
+function priorityFlagBadge(flags){
+  if (!flags || !flags.length) return "";
+  if (flags.includes("meatball")) return FLAG_TYPES.find(f=>f.key==="meatball").emoji;
+  return flags.map(fk => FLAG_TYPES.find(f=>f.key===fk)?.emoji || "").join("");
+}
 // Threshold for the "negligible final stint" rule: if the very last stint
 // in a car's plan gets squeezed down to this many minutes or fewer by the
 // overrun/absorb cascade, it's too small a sliver to hand a driver as its
@@ -1364,7 +1375,7 @@ function carPlanSection(cp, plan, archived){
           const noteKey = car.id+"__"+i;
           const isOpen = state.openStintNotes.has(noteKey);
           const flags = s.flags || [];
-          const flagBadges = flags.map(fk => FLAG_TYPES.find(f=>f.key===fk)?.emoji || "").join("");
+          const flagBadges = priorityFlagBadge(flags);
           const hasNoteContent = flags.length>0 || !!(s.notes && s.notes.trim());
           const isLiveRow = i === liveIdx;
           const isFinishedRow = !isLiveRow && s.finished;
