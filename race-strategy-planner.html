@@ -57,6 +57,11 @@
   .tile-row,.catalog-row,.track-picker-row{-webkit-overflow-scrolling:touch;touch-action:pan-x;cursor:grab;}
   .tile-row.dragging,.catalog-row.dragging,.track-picker-row.dragging{cursor:grabbing;}
   .tile-row-center{justify-content:safe center;}
+  /* Archive page reuses .tile-row as a wrapping grid (flex-wrap:wrap) rather
+     than a horizontal scroller, so the pan-x restriction above has nothing
+     to scroll horizontally but still blocks vertical touch scrolling of the
+     page. Restore normal touch panning for that wrapped variant. */
+  .tile-row.tile-row-wrap{touch-action:auto;cursor:default;}
   .create-circle{width:56px;height:56px;border-radius:999px;border:1px solid var(--borderLight);color:var(--textMuted);display:flex;align-items:center;justify-content:center;margin-bottom:32px;}
   .create-btn{display:flex;align-items:center;gap:12px;border-radius:999px;padding:16px 28px;background:var(--panel);border:1px solid var(--borderLight);color:var(--text);transition:border-color .15s;}
   .create-btn:hover{border-color:var(--blue);}
@@ -947,7 +952,7 @@ function renderArchive(){
       <p style="font-size:13px;color:var(--textFaint);margin:0 0 24px;">${archived.length} archived race${archived.length!==1?"s":""}</p>
       ${archived.length===0
         ? `<p class="empty-note">No archived races yet.</p>`
-        : `<div class="tile-row tile-row-center no-scrollbar" style="flex-wrap:wrap;">${archived.map(raceTile).join("")}</div>`}
+        : `<div class="tile-row tile-row-center tile-row-wrap no-scrollbar" style="flex-wrap:wrap;">${archived.map(raceTile).join("")}</div>`}
     </div>`;
 }
 
