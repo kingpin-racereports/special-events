@@ -234,6 +234,22 @@
   .modal .confirm{background:var(--red);color:#0A0C10;}
   .modal .confirm.positive{background:var(--blue);}
 
+  /* ---- engineer sign-in ---- */
+  .auth-row{width:100%;display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-bottom:10px;}
+  .auth-status{font-size:12px;color:var(--textMuted);display:flex;align-items:center;gap:6px;}
+  .auth-link{background:none;border:none;color:var(--blue);font-size:12px;font-weight:600;cursor:pointer;display:flex;align-items:center;gap:4px;padding:4px 2px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.08em;}
+  .auth-link:hover{text-decoration:underline;}
+  .google-btn{width:100%;box-sizing:border-box;padding:11px 0;border-radius:8px;border:1px solid var(--borderLight);background:var(--panelRaised);color:var(--text);font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:15px;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;}
+  .google-btn:hover{border-color:var(--blue);}
+  .google-btn:disabled{opacity:.5;cursor:default;}
+  .or-divider{display:flex;align-items:center;gap:10px;margin:16px 0;color:var(--textFaint);font-size:11px;text-transform:uppercase;letter-spacing:0.08em;font-family:'JetBrains Mono',monospace;}
+  .or-divider::before,.or-divider::after{content:"";flex:1;height:1px;background:var(--border);}
+  .login-email-input{width:100%;box-sizing:border-box;padding:11px 12px;border-radius:8px;border:1px solid var(--borderLight);background:var(--bg);color:var(--text);font-size:14px;margin-bottom:10px;}
+  .magic-btn{width:100%;padding:11px 0;border-radius:8px;border:none;background:var(--blue);color:#0A0C10;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:15px;cursor:pointer;}
+  .magic-btn:disabled{opacity:.5;cursor:default;}
+  .login-sent{font-size:13px;color:var(--green);margin:0;}
+  .login-error{font-size:12px;color:var(--red);margin:10px 0 0;}
+
   .empty-note{font-size:14px;color:var(--textFaint);padding:0 4px;}
   section h2{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:18px;margin:0 0 12px;}
 
@@ -288,12 +304,14 @@
 <script src="supabase-client.js"></script>
 <script>
 /* ============================================================================
- * AUTH GUARD — restricts this page to signed-in users only.
+ * ENGINEER SIGN-IN — this page is publicly viewable (read-only) with no
+ * account required. Signing in (via the "Engineer Sign In" control on the
+ * home page) only unlocks edit access for accounts listed in the
+ * `engineers` table — it isn't a gate on viewing the page at all.
  *
- * The actual check runs in the boot sequence at the very bottom of this
- * file (search "AUTH GUARD (boot)") rather than here, since it needs
- * render()/loadRaces()/etc. to already be defined. Nothing in between
- * renders any race data before that check passes.
+ * The session/engineer check runs in the boot sequence at the very bottom
+ * of this file (search "AUTH BOOT") rather than here, since it needs
+ * render()/loadRaces()/etc. to already be defined.
  * ==========================================================================
  */
 
@@ -373,6 +391,10 @@ let state = {
   currentStatus: "planned",
   confirmDelete: null,
   isEngineer: false, // role-gate for edit controls — set once at boot via checkIsEngineer(). Defaults to false (read-only) so a failed/slow check never wrongly grants edit access.
+  showEngineerLogin: false, // toggles the inline sign-in modal, reachable from the home page
+  loginEmail: "",
+  loginStatus: "idle", // idle | sending | sent | error
+  loginErrorMsg: "",
 
   catalog: [],
   showNameInput: false,
@@ -780,6 +802,15 @@ function render(){
 function renderHome(){
   const active = state.races.filter(r=>r.status!=="archived");
   const archivedCount = state.races.filter(r=>r.status==="archived").length;
+
+  // The plan is viewable by anyone without an account — this row is the
+  // one place an engineer signs in to unlock editing. Kept on the home
+  // page specifically (rather than a separate gate page) so read-only
+  // visitors land straight on the plan with zero friction.
+  const authRow = state.isEngineer
+    ? `<div class="auth-row"><span class="auth-status">${icon("flag",13,"color:"+T.blue)} Signed in as Engineer</span><button class="auth-link" data-act="engineer-sign-out">Sign Out</button></div>`
+    : `<div class="auth-row"><button class="auth-link" data-act="open-engineer-login">Engineer Sign In ${icon("arrowRight",13)}</button></div>`;
+
   let strip = "";
   if (active.length>0 || archivedCount>0){
     strip = `
@@ -806,10 +837,37 @@ function renderHome(){
 
   return `
     <div class="home-wrap">
+      ${authRow}
       ${strip}
       <div style="width:100%;max-width:420px;display:flex;flex-direction:column;align-items:center;text-align:center;" class="fade-in">
         ${(!(active.length>0)) ? `<div class="create-circle">${icon("flag",22)}</div>` : ""}
         ${nameFlow}
+      </div>
+    </div>
+    ${state.showEngineerLogin ? renderEngineerLoginModal() : ""}`;
+}
+
+function renderEngineerLoginModal(){
+  const sending = state.loginStatus === "sending";
+  const sent = state.loginStatus === "sent";
+  const err = state.loginStatus === "error";
+  return `
+    <div class="modal-overlay">
+      <div class="modal">
+        <h3>${icon("flag",18,"color:"+T.blue)} Engineer Sign In</h3>
+        <p>Sign in to create and edit race plans. Anyone can already view plans without an account.</p>
+        <button class="google-btn" data-act="engineer-google-login" ${sending?"disabled":""}>${icon("arrowRight",15)} Continue with Google</button>
+        <div class="or-divider"><span>or</span></div>
+        ${sent
+          ? `<p class="login-sent">Check <strong>${esc(state.loginEmail)}</strong> for a sign-in link.</p>`
+          : `
+            <input id="loginEmail" class="login-email-input" type="email" placeholder="you@kingpinracing.com" value="${esc(state.loginEmail)}" ${sending?"disabled":""} enterkeyhint="go" />
+            <button id="magicSendBtn" class="magic-btn" data-act="engineer-magiclink-login" ${sending || !state.loginEmail.trim() ? "disabled":""}>${sending?"Sending…":"Email me a sign-in link"}</button>
+          `}
+        ${err ? `<p class="login-error">${esc(state.loginErrorMsg || "Something went wrong. Try again.")}</p>` : ""}
+        <div class="row" style="margin-top:16px;">
+          <button class="cancel" data-act="close-engineer-login">Close</button>
+        </div>
       </div>
     </div>`;
 }
@@ -1372,6 +1430,19 @@ function bindEvents(){
     });
   }
   bindLiveInput("customTrack", v=> state.customTrack=v);
+  bindLiveInput("loginEmail", v=> state.loginEmail = v, ()=>{
+    const btn = document.getElementById("magicSendBtn");
+    if (btn) btn.disabled = !state.loginEmail.trim();
+  });
+  const loginEmailEl = document.getElementById("loginEmail");
+  if (loginEmailEl){
+    loginEmailEl.addEventListener("keydown", (e)=>{
+      if (e.key === "Enter" && state.loginEmail.trim()){
+        e.preventDefault();
+        handleAction("engineer-magiclink-login");
+      }
+    });
+  }
   bindLiveInput("raceDate", v=>{
     if (!v) return;
     const [yy,mo,da] = v.split("-").map(Number);
@@ -1457,6 +1528,38 @@ function updateSetupButtonState(){
 
 async function handleAction(act, el){
   switch(act){
+    case "open-engineer-login":
+      state.showEngineerLogin = true; state.loginStatus = "idle"; state.loginErrorMsg = "";
+      render(); break;
+    case "close-engineer-login":
+      state.showEngineerLogin = false; render(); break;
+    case "engineer-google-login": {
+      // Redirect-based flow — the browser navigates to Google and back to
+      // this exact page, so there's nothing further to do here on success;
+      // the boot sequence picks up the new session on reload.
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: window.location.href.split("?")[0] },
+      });
+      if (error){ state.loginStatus = "error"; state.loginErrorMsg = error.message; render(); }
+      break;
+    }
+    case "engineer-magiclink-login": {
+      const email = state.loginEmail.trim();
+      if (!email) return;
+      state.loginStatus = "sending"; render();
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: { emailRedirectTo: window.location.href.split("?")[0] },
+      });
+      state.loginStatus = error ? "error" : "sent";
+      state.loginErrorMsg = error ? error.message : "";
+      render(); break;
+    }
+    case "engineer-sign-out":
+      await supabase.auth.signOut();
+      state.isEngineer = false;
+      render(); break;
     case "startCreate":
       state.duplicateSource = null;
       state.showNameInput = true; render(); break;
@@ -2119,57 +2222,9 @@ async function updateStintPosition(carId, stintIdx, value){
   render();
 }
 
-// Pushes whoever just got bumped out of anchorIdx (carryName/carryIdx —
-// the driver that stint used to have) down into the very next stint,
-// which in turn hands ITS previous driver down to the one after that,
-// and so on — a true insert-and-shift, not a reset back to canonical
-// A/B/C/D array order. This is what lets one dropdown change ("put Jeff
-// in stint 4") ripple downstream as "everyone who was there slides one
-// stint later," preserving whatever order they were actually in before
-// the edit (even if that order was already the result of an earlier
-// manual swap), instead of snapping back to the car's default rotation.
-//
-// - Removed stints (retired car, or absorbed by an earlier overrun) don't
-//   hold a slot — the carried driver passes straight through them.
-// - Hitting a stint already locked in with a real recorded end time
-//   (finished) stops the chain — that already happened and can't be
-//   rewritten, so whoever was still being carried has nowhere left to go.
-function shiftDriversDownFrom(cp, anchorIdx, carryName, carryIdx){
-  const stints = cp.stints;
-  for (let j = anchorIdx + 1; j < stints.length && carryName != null; j++){
-    const s = stints[j];
-    if (s.removed) continue;
-    if (s.finished) break;
-    const nextCarryName = s.driver;
-    const nextCarryIdx = s.driverIndex;
-    s.driver = carryName;
-    s.driverIndex = carryIdx;
-    carryName = nextCarryName;
-    carryIdx = nextCarryIdx;
-  }
-}
-
 // Lets a stint's driver be reassigned after the plan was generated (e.g.
-// swapping the rotation on the fly, or slotting someone in out of their
-// usual sequence). driverIndex is kept in sync so the color dot / palette
-// stays consistent with the car's driver list.
-//
-// The incoming driver brings THEIR OWN planned stint length (the 60/90/
-// 120/150 preset from Setup) with them — this stint is resized to match,
-// and the same absorb/restore cascade used by a manual end-time edit
-// (see updateStintEnd/cascadeStintsFrom) runs from there so everything
-// downstream re-times correctly. A stint that's already been locked in
-// with a real recorded end time (finished === true) is left alone — a
-// driver-label swap on history shouldn't rewrite what already happened.
-//
-// On top of the time cascade, the driver this stint HAD before the edit
-// gets carried into the next stint via shiftDriversDownFrom — bumping
-// that stint's own previous driver into the one after it, and so on down
-// the line — regardless of whether the length actually changed. That's
-// the whole point of this change: one dropdown edit inserts the new
-// driver here and slides everyone who was already scheduled after them
-// one stint later, so the crew doesn't have to hand-edit every downstream
-// dropdown to account for the insertion.
+// swapping the rotation on the fly). driverIndex is kept in sync so the
+// color dot / palette stays consistent with the car's driver list.
 async function updateStintDriver(carId, stintIdx, driverName){
   const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
   if (!cp) return;
@@ -2177,50 +2232,8 @@ async function updateStintDriver(carId, stintIdx, driverName){
   if (!stint) return;
   const validDrivers = cp.car.drivers.filter(d=>d.trim());
   const idx = validDrivers.indexOf(driverName);
-
-  const displacedName = stint.driver;
-  const displacedIdx = stint.driverIndex;
-  const driverActuallyChanged = idx >= 0 && driverName !== displacedName;
-
   stint.driver = driverName;
   stint.driverIndex = idx >= 0 ? idx : 0;
-
-  let timeNote = null;
-
-  if (idx >= 0 && !stint.finished){
-    const newLen = Number(stintModeOf(cp.car, idx));
-    const deltaMin = newLen - stint.lengthMin;
-
-    if (deltaMin !== 0){
-      const newEnd = addMinutes(stint.start, newLen);
-      stint.end = newEnd;
-      stint.lengthMin = newLen;
-      stint.plannedEnd = new Date(newEnd); // this driver's preset IS the new plan for this slot
-
-      const { nowRemoved, nowRestored } = cascadeStintsFrom(cp, stintIdx, newEnd);
-      if (nowRemoved.length){
-        const list = nowRemoved.map(i=>`Stint ${i+1}`).join(", ");
-        timeNote = `completely absorbed ${list} — ${nowRemoved.length>1?"they've":"it's"} been removed from the schedule`;
-      } else if (nowRestored.length){
-        const list = nowRestored.map(i=>`Stint ${i+1}`).join(", ");
-        timeNote = `${list} restored to the schedule`;
-      } else {
-        timeNote = `length set to ${newLen} min, schedule shifted accordingly`;
-      }
-      recomputePlanEndTime();
-    }
-  }
-
-  if (driverActuallyChanged){
-    shiftDriversDownFrom(cp, stintIdx, displacedName, displacedIdx);
-  }
-
-  if (timeNote){
-    logStintNote(cp, stintIdx, `Stint ${stintIdx+1} reassigned to ${driverName} — ${timeNote}.`, timeNote.startsWith("completely absorbed") ? "warn" : undefined);
-  } else if (driverActuallyChanged){
-    logStintNote(cp, stintIdx, `Stint ${stintIdx+1} reassigned to ${driverName} — downstream driver rotation shifted accordingly.`);
-  }
-
   await syncPlanToRaceRecord();
   render();
 }
@@ -2354,17 +2367,16 @@ async function archiveRace(){
   }, true);
 })();
 
-// ---- AUTH GUARD (boot) ----
-// Real session check. getSession() resolves from the client's cached
-// session (localStorage) — fast, no network round-trip in the common
-// case. The onAuthStateChange listener below is a safety net specifically
-// for the moment right after a magic-link or Google redirect lands here:
-// the client may still be parsing the token out of the URL when
-// getSession() first resolves, so we give it a brief window to finish
-// before concluding there's really no session and bouncing to index.html.
-// Checked once per session load — a simple "am I in the engineers table"
-// lookup. maybeSingle() (not single()) since zero rows is the normal,
-// expected case for a driver, not an error.
+// ---- AUTH BOOT ----
+// This page renders for everyone, session or not — getSession() resolves
+// from the client's cached session (localStorage), fast, no network
+// round-trip in the common case. If a session exists, checkIsEngineer()
+// (a simple "am I in the engineers table" lookup) decides whether edit
+// controls unlock; maybeSingle() (not single()) since zero rows is the
+// normal, expected case for a non-engineer account, not an error. The
+// onAuthStateChange listener below upgrades to engineer mode if a session
+// shows up shortly after load (e.g. a magic-link click landing here), and
+// downgrades back to read-only on sign-out.
 // ---- "currently on track" live-highlight ticker ----
 // carPlanSection() already computes the correct live stint at render time,
 // but if someone leaves the plan page open without triggering any other
@@ -2429,16 +2441,6 @@ async function checkIsEngineer(){
   return !!data;
 }
 
-async function checkIsOnRoster(){
-  // Gate on the `roster` table (email allowlist). RLS restricts each
-  // signed-in user to seeing only their own row (matched by email on the
-  // JWT), so no client-side filter is needed — 0 rows back means either
-  // they're not on the roster, or RLS is correctly hiding everyone else's.
-  const { data, error } = await supabase.from("roster").select("email").maybeSingle();
-  if (error){ console.error("checkIsOnRoster failed:", error); return false; }
-  return !!data;
-}
-
 async function startApp(isEngineer){
   state.isEngineer = isEngineer;
   state.races = await loadRaces();
@@ -2447,20 +2449,10 @@ async function startApp(isEngineer){
 }
 
 async function bootIfAuthorized(){
-  // Engineers are always authorized to use the app — `roster` only needs
-  // to list drivers who AREN'T also engineers. This avoids keeping the
-  // same email in both `roster` and `engineer_invites`/`engineers`.
-  const [onRoster, isEngineer] = await Promise.all([checkIsOnRoster(), checkIsEngineer()]);
-  if (!onRoster && !isEngineer){
-    // Signed in, but not on the allowlist and not an engineer — this
-    // account can authenticate with Supabase but isn't permitted to use
-    // the app. Sign out immediately so no session lingers, then bounce to
-    // the login page with a flag it can use to show an "unauthorized"
-    // message.
-    await supabase.auth.signOut();
-    window.location.replace("index.html?unauthorized=1");
-    return;
-  }
+  // Roster/allowlist gating has been rolled back — the plan is public and
+  // read-only for anyone. The only thing left to check is whether the
+  // signed-in account (if any) is an engineer, which unlocks editing.
+  const isEngineer = await checkIsEngineer();
   await startApp(isEngineer);
 }
 
@@ -2468,25 +2460,24 @@ async function bootIfAuthorized(){
   const { data: { session } } = await supabase.auth.getSession();
   if (session){
     await bootIfAuthorized();
-    return;
+  } else {
+    // No session — the plan is public and read-only, so render it
+    // immediately rather than gating on (or redirecting for) a login.
+    await startApp(false);
   }
 
-  let settled = false;
-  const { data: sub } = supabase.auth.onAuthStateChange(function(event, newSession){
-    if (settled) return;
-    if (newSession){
-      settled = true;
-      sub.subscription.unsubscribe();
+  // Safety net / upgrade path: picks up a session that lands after the
+  // initial render (e.g. a magic-link click that opened this same URL,
+  // or the tab regaining a session), and re-checks engineer status.
+  // Also downgrades back to read-only immediately on sign-out.
+  supabase.auth.onAuthStateChange(function(event, newSession){
+    if (event === "SIGNED_IN" && newSession){
       bootIfAuthorized();
+    } else if (event === "SIGNED_OUT"){
+      state.isEngineer = false;
+      render();
     }
   });
-
-  setTimeout(function(){
-    if (settled) return;
-    settled = true;
-    sub.subscription.unsubscribe();
-    window.location.replace("index.html");
-  }, 1500);
 })();
 </script>
 </body>
