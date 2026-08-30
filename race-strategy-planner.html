@@ -62,7 +62,14 @@
   .races-head{display:flex;align-items:center;justify-content:between;justify-content:space-between;margin-bottom:12px;padding:0 4px;}
   .archive-link{display:flex;align-items:center;gap:4px;font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.14em;color:var(--gold);background:none;border:none;}
   .tile-row{display:flex;gap:16px;overflow-x:auto;padding:4px 4px 8px;}
-  .tile-row,.catalog-row,.track-picker-row{-webkit-overflow-scrolling:touch;touch-action:pan-x;cursor:grab;}
+  /* Do NOT constrain touch-action on these rows. A value of pan-x lets the
+     browser scroll them sideways but BLOCKS vertical touch panning over
+     them, so a swipe starting on a tile can't scroll the page and it feels
+     stuck. `auto` gives the browser full native control: it decides per
+     gesture whether the finger is scrolling this row sideways or the page
+     vertically, and pinch-zoom keeps working. Drag-to-scroll here is
+     mouse-driven (mousedown/mousemove), so it never needed touch-action. */
+  .tile-row,.catalog-row,.track-picker-row{-webkit-overflow-scrolling:touch;touch-action:auto;cursor:grab;}
   .tile-row.dragging,.catalog-row.dragging,.track-picker-row.dragging{cursor:grabbing;}
   .tile-row-center{justify-content:safe center;}
   /* Archive page reuses .tile-row as a wrapping grid (flex-wrap:wrap) rather
@@ -2619,16 +2626,34 @@ function cascadeStintsFrom(cp, anchorIdx, cursor){
     }
   }
 
-  // A removal or restoration changes how many stints actually happen, so the
-  // driver rotation for everything after this point gets re-run from
-  // scratch — cycling through the car's drivers and skipping any removed
-  // slots — so the next real stint picks up wherever the rotation would
-  // naturally land instead of sitting on its original (now-stale) driver.
-  if (nowRemoved.length || nowRestored.length){
+  // Absorbing stints doesn't cancel those drivers — it just means their turn
+  // hasn't come yet. So the surviving stints shift down by however many
+  // slots were swallowed: if an overrun eats two stints, everyone after it
+  // moves two places later and keeps the same running order. A queue does
+  // this in one pass — each stint contributes its current driver to the back
+  // and takes the front, while a removed stint contributes its driver but
+  // claims no slot, which is exactly what pushes the sequence along.
+  //
+  // Restoration is the opposite: nothing was skipped, so the rotation is
+  // re-run cleanly from the anchor rather than shifted. Finished stints end
+  // either pass — their driver is recorded history, not a plan.
+  if (nowRemoved.length){
+    const queue = [];
+    for (let j=anchorIdx+1; j<stints.length; j++){
+      const s = stints[j];
+      if (s.finished) break;
+      queue.push({ driver: s.driver, driverIndex: s.driverIndex });
+      if (s.removed) continue; // driver stays queued, waiting for a real slot
+      const next = queue.shift();
+      s.driver = next.driver;
+      s.driverIndex = next.driverIndex;
+    }
+  } else if (nowRestored.length){
     const validDrivers = cp.car.drivers.filter(d=>d.trim());
     if (validDrivers.length){
       let rot = (stints[anchorIdx].driverIndex + 1) % validDrivers.length;
       for (let j=anchorIdx+1; j<stints.length; j++){
+        if (stints[j].finished) break;
         if (stints[j].removed) continue;
         stints[j].driverIndex = rot;
         stints[j].driver = validDrivers[rot];
