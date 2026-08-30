@@ -1006,6 +1006,16 @@ function render(){
   const existingTrackRow = document.querySelector(".track-picker-row");
   const trackScrollLeft = existingTrackRow ? existingTrackRow.scrollLeft : null;
 
+  // Expanded stint panels (notes / flags / ±15 start adjuster) are a
+  // transient working state, not something to carry around the app. Collapse
+  // them whenever the page actually changes, so the planner always loads
+  // clean. This runs BEFORE the HTML is built — collapsing afterwards would
+  // render them open for one frame and only close on the next render.
+  // Same-page re-renders are left alone, so a panel stays put while its ±15
+  // steppers are being tapped.
+  const pageChanged = state.page !== lastRenderedPage;
+  if (pageChanged && state.openStintNotes) state.openStintNotes.clear();
+
   let html = "";
   if (state.page === "home") html = renderHome();
   else if (state.page === "setup") html = renderSetup();
@@ -1019,7 +1029,7 @@ function render(){
   app.innerHTML = html;
   bindEvents();
 
-  if (state.page !== lastRenderedPage){
+  if (pageChanged){
     window.scrollTo(0, 0);
     lastRenderedPage = state.page;
   }
@@ -2734,57 +2744,16 @@ async function updateStintPosition(carId, stintIdx, value){
   render();
 }
 
-// Pushes whoever just got bumped out of anchorIdx (carryName/carryIdx —
-// the driver that stint used to have) down into the very next stint,
-// which in turn hands ITS previous driver down to the one after that,
-// and so on — a true insert-and-shift, not a reset back to canonical
-// A/B/C/D array order. This is what lets one dropdown change ("put Jeff
-// in stint 4") ripple downstream as "everyone who was there slides one
-// stint later," preserving whatever order they were actually in before
-// the edit (even if that order was already the result of an earlier
-// manual swap), instead of snapping back to the car's default rotation.
-//
-// - Removed stints (retired car, or absorbed by an earlier overrun) don't
-//   hold a slot — the carried driver passes straight through them.
-// - Hitting a stint already locked in with a real recorded end time
-//   (finished) stops the chain — that already happened and can't be
-//   rewritten, so whoever was still being carried has nowhere left to go.
-function shiftDriversDownFrom(cp, anchorIdx, carryName, carryIdx){
-  const stints = cp.stints;
-  for (let j = anchorIdx + 1; j < stints.length && carryName != null; j++){
-    const s = stints[j];
-    if (s.removed) continue;
-    if (s.finished) break;
-    const nextCarryName = s.driver;
-    const nextCarryIdx = s.driverIndex;
-    s.driver = carryName;
-    s.driverIndex = carryIdx;
-    carryName = nextCarryName;
-    carryIdx = nextCarryIdx;
-  }
-}
-
 // Lets a stint's driver be reassigned after the plan was generated (e.g.
 // swapping the rotation on the fly, or slotting someone in out of their
 // usual sequence). driverIndex is kept in sync so the color dot / palette
 // stays consistent with the car's driver list.
 //
-// The incoming driver brings THEIR OWN planned stint length (the 60/90/
-// 120/150 preset from Setup) with them — this stint is resized to match,
-// and the same absorb/restore cascade used by a manual end-time edit
-// (see updateStintEnd/cascadeStintsFrom) runs from there so everything
-// downstream re-times correctly. A stint that's already been locked in
-// with a real recorded end time (finished === true) is left alone — a
-// driver-label swap on history shouldn't rewrite what already happened.
-//
-// On top of the time cascade, the driver this stint HAD before the edit
-// gets carried into the next stint via shiftDriversDownFrom — bumping
-// that stint's own previous driver into the one after it, and so on down
-// the line — regardless of whether the length actually changed. That's
-// the whole point of this change: one dropdown edit inserts the new
-// driver here and slides everyone who was already scheduled after them
-// one stint later, so the crew doesn't have to hand-edit every downstream
-// dropdown to account for the insertion.
+// Deliberately a bare name swap: no stint resize, no downstream driver
+// shuffle. The rotation built at race creation already lays out lengths and
+// order efficiently, and start times are now tuned directly with the ±15
+// adjuster — so a dropdown change here should mean only "this stint is
+// driven by someone else," never a silent re-plan of the rest of the day.
 async function updateStintDriver(carId, stintIdx, driverName){
   const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
   if (!cp) return;
@@ -2792,50 +2761,8 @@ async function updateStintDriver(carId, stintIdx, driverName){
   if (!stint) return;
   const validDrivers = cp.car.drivers.filter(d=>d.trim());
   const idx = validDrivers.indexOf(driverName);
-
-  const displacedName = stint.driver;
-  const displacedIdx = stint.driverIndex;
-  const driverActuallyChanged = idx >= 0 && driverName !== displacedName;
-
   stint.driver = driverName;
   stint.driverIndex = idx >= 0 ? idx : 0;
-
-  let timeNote = null;
-
-  if (idx >= 0 && !stint.finished){
-    const newLen = Number(stintModeOf(cp.car, idx));
-    const deltaMin = newLen - stint.lengthMin;
-
-    if (deltaMin !== 0){
-      const newEnd = addMinutes(stint.start, newLen);
-      stint.end = newEnd;
-      stint.lengthMin = newLen;
-      stint.plannedEnd = new Date(newEnd); // this driver's preset IS the new plan for this slot
-
-      const { nowRemoved, nowRestored } = cascadeStintsFrom(cp, stintIdx, newEnd);
-      if (nowRemoved.length){
-        const list = nowRemoved.map(i=>`Stint ${i+1}`).join(", ");
-        timeNote = `completely absorbed ${list} — ${nowRemoved.length>1?"they've":"it's"} been removed from the schedule`;
-      } else if (nowRestored.length){
-        const list = nowRestored.map(i=>`Stint ${i+1}`).join(", ");
-        timeNote = `${list} restored to the schedule`;
-      } else {
-        timeNote = `length set to ${newLen} min, schedule shifted accordingly`;
-      }
-      recomputePlanEndTime();
-    }
-  }
-
-  if (driverActuallyChanged){
-    shiftDriversDownFrom(cp, stintIdx, displacedName, displacedIdx);
-  }
-
-  if (timeNote){
-    logStintNote(cp, stintIdx, `Stint ${stintIdx+1} reassigned to ${driverName} — ${timeNote}.`, timeNote.startsWith("completely absorbed") ? "warn" : undefined);
-  } else if (driverActuallyChanged){
-    logStintNote(cp, stintIdx, `Stint ${stintIdx+1} reassigned to ${driverName} — downstream driver rotation shifted accordingly.`);
-  }
-
   await syncPlanToRaceRecord();
   render();
 }
