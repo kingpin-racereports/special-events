@@ -131,8 +131,13 @@
   .driver-row .idx{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);width:18px;}
   .driver-row button{background:none;border:none;color:var(--textFaint);display:flex;}
   .driver-group{margin-bottom:14px;}
-  .stint-len-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 0 26px;}
-  .stint-len-label{font-family:'JetBrains Mono',monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:0.06em;color:var(--textFaint);}
+  /* One line, always. The label is the flexible element — it shrinks (and
+     ellipsises if it must) so the preset buttons and the custom select are
+     never pushed onto a second row on a narrow phone. */
+  .stint-len-row{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;margin:6px 0 0 26px;}
+  .stint-len-label{font-family:'JetBrains Mono',monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:0.06em;color:var(--textFaint);flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:4px;}
+  .stint-len-label svg{flex-shrink:0;}
+  .stint-len-row .segmented,.stint-len-row .stint-wheel{flex-shrink:0;}
   /* Preset buttons sit alongside the custom <select> below, so they share
      its height, radius, and mono type to read as one control group. */
   .segmented{display:flex;height:30px;border:1px solid var(--borderLight);border-radius:8px;overflow:hidden;flex-shrink:0;}
@@ -354,6 +359,12 @@
     .stint-pos{font-size:10.5px;padding:4px 0;}
     .stint-pos-badge{width:22px;height:22px;}
     .stint-pos-edit{width:27px;height:24px;}
+    /* Reclaim horizontal space so the stint-length controls stay on one
+       line: less indent, tighter gaps, narrower buttons and select. */
+    .stint-len-row{margin-left:8px;gap:6px;}
+    .stint-len-label{font-size:9.5px;letter-spacing:0.03em;}
+    .segmented button{padding:0 9px;}
+    .stint-wheel{width:74px;padding:0 19px 0 8px;background-position:calc(100% - 11px) 13px,calc(100% - 7px) 13px;}
   }
 </style>
 </head>
@@ -495,6 +506,10 @@ function icon(name, size=16, extra=""){
 // ---- state ----
 let state = {
   page: "home", // home | setup | plan | archive
+  // Breadcrumb of screens we can return to. See the navigation helpers
+  // below — every forward move pushes an entry, and Back/Esc/device-back
+  // all pop from here.
+  navStack: [],
   races: [],
   currentRaceId: null,
   currentStatus: "planned",
@@ -1080,7 +1095,7 @@ function renderArchive(){
   const archived = state.races.filter(r=>r.status==="archived");
   return `
     <div class="page fade-in">
-      <button class="btn-back" data-act="go-home">${icon("arrowLeft",15)} Back</button>
+      <button class="btn-back" data-act="nav-back">${icon("arrowLeft",15)} Back</button>
       <h1 class="font-display" style="font-weight:700;font-size:28px;margin:16px 0 4px;display:flex;align-items:center;gap:8px;">${icon("trophy",22,"color:"+T.gold)} Race Archive</h1>
       <p style="font-size:13px;color:var(--textFaint);margin:0 0 24px;">${archived.length} archived race${archived.length!==1?"s":""}</p>
       ${archived.length===0
@@ -1291,7 +1306,7 @@ function renderPlan(){
   return `
     <div class="page page-wide fade-in">
       <div class="top-actions">
-        ${readOnly ? `<span></span>` : `<button class="btn-back" data-act="plan-edit">${icon("arrowLeft",15)} Edit</button>`}
+        ${readOnly ? `<button class="btn-back" data-act="nav-back">${icon("arrowLeft",15)} Back</button>` : `<button class="btn-back" data-act="plan-edit">${icon("arrowLeft",15)} Edit</button>`}
         <div class="right">
           ${!readOnly ? `<button class="link-red" data-act="del-current-race">${icon("trash",13)} Delete</button>` : ""}
           <button class="link-muted" data-act="go-home">${icon("rotate",13)} Home</button>
@@ -1847,19 +1862,28 @@ async function handleAction(act, el){
         state.startTime="10:00"; state.durationHours=4;
       }
 
+      navPush();
       state.page = "setup";
       render(); break;
     }
     case "view-archive":
+      navPush();
       state.page = "archive"; render(); break;
     case "go-home":
+      // Home is a root screen — drop the trail rather than letting Back
+      // walk back into whatever we just left.
+      navReset();
       state.page = "home"; render(); break;
+    case "nav-back":
+      requestBack(); break;
     case "setup-back":
-      state.page = state.currentRaceId ? "plan" : "home"; render(); break;
+      requestBack(); break;
     case "open-race": {
       const raceId = el.getAttribute("data-id");
       const full = await fetchFullRace(raceId);
-      if (full) openRace(full);
+      // Record where we came from (Home or Archive) so Back returns there
+      // rather than always dumping the user on Home.
+      if (full){ navPush(); openRace(full); }
       break;
     }
     case "del-race":
@@ -1971,6 +1995,7 @@ async function handleAction(act, el){
     case "createPlan":
       createRacePlan(); break;
     case "plan-edit":
+      navPush();
       state.page = "setup"; render(); break;
     case "start-add-reserve": {
       const carId = el.getAttribute("data-car");
@@ -2058,6 +2083,44 @@ async function handleAction(act, el){
       break;
     }
   }
+}
+
+// ---- navigation history ----
+// One stack drives every "go back" affordance: the on-screen Back button,
+// the Esc key, and the phone/browser back gesture. Each forward navigation
+// calls navPush() to record where we came from and adds a matching browser
+// history entry, so popstate becomes the single place that restores a
+// previous screen — the Back button and Esc just call history.back() and
+// let that handler do the actual work. Keeping one code path means the
+// three affordances can never disagree about where "back" leads.
+function navPush(){
+  state.navStack.push({ page: state.page, raceId: state.currentRaceId });
+  try { history.pushState({ depth: state.navStack.length }, ""); } catch(_){}
+}
+// Wipe the trail — used when jumping to a root screen (Home), where
+// "back" should not walk through wherever the user had been before.
+function navReset(){
+  state.navStack = [];
+}
+async function navBack(){
+  const entry = state.navStack.pop();
+  if (!entry){ state.page = "home"; render(); return; }
+  // A plan screen needs its race refetched, not just the page name
+  // flipped, since state.plan may have been replaced since we left it.
+  if (entry.page === "plan" && entry.raceId){
+    const full = await fetchFullRace(entry.raceId);
+    if (full){ openRace(full); return; } // openRace renders
+    state.page = "home"; render(); return;
+  }
+  state.page = entry.page;
+  render();
+}
+// Called by the UI (Back button / Esc). Defers to the browser so the
+// device back button and this stay in lockstep; falls back to Home when
+// there's no history of our own left to unwind.
+function requestBack(){
+  if (state.navStack.length) history.back();
+  else { state.page = "home"; render(); }
 }
 
 function openRace(race){
@@ -2785,6 +2848,25 @@ async function checkIsEngineer(){
   if (error){ console.error("checkIsEngineer failed:", error); return false; }
   return !!data;
 }
+
+// The phone/browser back gesture and the Esc key both route through the
+// same stack the on-screen Back button uses. popstate is the only place
+// that actually unwinds a screen; the button and Esc call history.back(),
+// which triggers this.
+window.addEventListener("popstate", function(){
+  if (state.confirmDelete){ state.confirmDelete = null; render(); return; }
+  if (state.navStack.length) navBack();
+});
+document.addEventListener("keydown", function(e){
+  if (e.key !== "Escape") return;
+  // Esc closes an open confirmation dialog first; only once nothing is
+  // layered on top does it mean "go back a screen".
+  if (state.confirmDelete){ state.confirmDelete = null; render(); return; }
+  // Don't hijack Esc while the user is in a text field.
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")){ t.blur(); return; }
+  requestBack();
+});
 
 async function startApp(isEngineer){
   state.isEngineer = isEngineer;
