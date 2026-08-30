@@ -1207,7 +1207,18 @@ function renderPlan(){
   const plan = state.plan;
   const archived = state.currentStatus === "archived";
   const readOnly = archived || !state.isEngineer;
-  const primaryCar = plan.carPlans[0] && plan.carPlans[0].car;
+  // Archived results read best-to-worst by class finish position — DNFs
+  // (and anything unset) sort to the end rather than staying in whatever
+  // order the cars were originally entered in. Sort is stable, so ties
+  // (e.g. two DNFs) keep their original relative order.
+  const sortedCarPlans = archived
+    ? [...plan.carPlans].sort((a,b)=>{
+        const av = typeof a.car.finishPosition === "number" ? a.car.finishPosition : Infinity;
+        const bv = typeof b.car.finishPosition === "number" ? b.car.finishPosition : Infinity;
+        return av - bv;
+      })
+    : plan.carPlans;
+  const primaryCar = sortedCarPlans[0] && sortedCarPlans[0].car;
   const podium = archived && primaryCar ? podiumColor(primaryCar.finishPosition) : null;
   const bannerColor = podium || T.textMuted;
   const allFilled = plan.carPlans.every(cp => parseFinishPosition(state.finishDrafts[cp.car.id]) != null);
@@ -1232,7 +1243,7 @@ function renderPlan(){
       </div>` : ""}
 
       <div style="display:flex;flex-direction:column;gap:40px;margin-top:24px;">
-        ${plan.carPlans.map(cp=>carPlanSection(cp, plan, archived)).join("")}
+        ${sortedCarPlans.map(cp=>carPlanSection(cp, plan, archived)).join("")}
       </div>
 
       <div class="chip-grid" style="margin-top:40px;">
@@ -1325,11 +1336,11 @@ function carPlanSection(cp, plan, archived){
           <span class="num" style="border:2px solid ${carPodium||car.accent};color:${carPodium||T.text}">${esc(car.number)}</span>
         </div>
         <div style="padding:20px 16px 14px;display:flex;align-items:center;justify-content:space-between;">
-          <div>
+          <div style="flex:1 1 auto;min-width:0;">
             <div class="font-display" style="font-weight:600;font-size:17px;">${esc(car.team)}</div>
             <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);">${esc(car.manufacturer)} ${esc(car.model)}</div>
           </div>
-          <div style="display:flex;align-items:center;gap:8px;">
+          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;white-space:nowrap;">
             ${car.startingPosition!=null ? `<span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);">Start P${car.startingPosition}</span>`:""}
             ${archived && car.finishPosition!=null ? `
               ${carPodium?icon("trophy",13,"color:"+carPodium):""}
