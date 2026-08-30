@@ -1,0 +1,4 @@
+Client methods: ['client', 'create', 'get_announcements', 'get_championship', 'get_championships', 'get_event', 'get_events', 'get_lap_chart', 'get_laps', 'get_organization', 'get_results', 'get_server_time', 'get_session', 'get_sessions', 'iter_events']
+
+First event raw structure:
+{'id': 3681468, 'name': 'WRL - Watkins Glen - 8 + 7 ', 'organization': {'id': 209312, 'name': 'WORLD RACING LEAGUE', 'logo': None, 'url': 'www.racewrl.com', 'city': 'Chattanooga', 'country': {'id': 840, 'name': 'United States', 'alpha2': 'US'}, 'sport': 'Car', 'ref': '/api/organizations/209312'}, 'sport': 'Car', 'startDate': '2026-08-26', 'location': {'id': 527151, 'name': 'Watkins Glen ', 'length': 3.45, 'lengthUnit': 'mi', 'country': {'id': 840, 'name': 'United States', 'alpha2': 'US'}, 'lengthLabel': '3.4500 mi'}, 'uploadSoftware': {'name': 'Orbits', 'version': '5.14.0'}, 'updatedAt': '2026-08-30T00:11:23', 'sessions': None, 'cosmosId': None}
