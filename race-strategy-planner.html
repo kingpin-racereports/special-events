@@ -251,6 +251,16 @@
   .finish-stint-cell{width:100%;min-width:0;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:11px;letter-spacing:0.01em;padding:4px 2px;border-radius:6px;background:rgba(46,111,224,0.16);border:1px solid var(--blue);color:var(--blue);display:flex;align-items:center;justify-content:center;gap:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .finish-stint-cell:hover{background:rgba(46,111,224,0.28);}
   .finish-stint-cell .em{font-size:11px;line-height:1;flex-shrink:0;}
+  /* Start time shown as a tappable control in the stint table. */
+  .stint-start-btn{white-space:nowrap;font-size:11px;background:none;border:none;color:var(--text);padding:4px 2px 4px 14px;text-align:left;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px;text-decoration-color:var(--textFaint);}
+  /* ±15 stepper inside the expanded stint panel. */
+  .start-adjust{display:flex;flex-direction:column;gap:6px;margin-bottom:10px;}
+  .start-adjust-label{font-family:'JetBrains Mono',monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:0.06em;color:var(--textFaint);display:flex;align-items:center;gap:4px;}
+  .start-adjust-ctl{display:flex;align-items:center;gap:8px;}
+  .start-adjust-ctl button{min-width:52px;height:30px;border-radius:8px;background:var(--panelRaised);border:1px solid var(--borderLight);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;}
+  .start-adjust-ctl button:disabled{opacity:0.35;cursor:default;}
+  .start-adjust-val{font-size:14px;font-weight:600;min-width:62px;text-align:center;}
+  .start-adjust-hint{font-size:11px;color:var(--textFaint);line-height:1.35;}
   .row-quiet{background:rgba(139,107,240,0.08);}
   /* The stint table clips its cells to one nowrap line with an ellipsis;
      the quiet row is a single full-width caption, so it opts out of that
@@ -615,6 +625,9 @@ async function fetchFullRace(raceId){
       }));
       const log = (logRows||[]).filter(l=>l.car_id===carRow.id).map(l=>({
         stintIdx: l.stint_index, text: l.message, type: l.type, ts: new Date(l.created_at).getTime(),
+        // Keep the row id and key so a keyed entry created in an earlier
+        // session can still be revised in place instead of duplicated.
+        dbId: l.id, key: l.entry_key || null, meta: undefined,
       }));
       return { car: carRecord, stints, log, retiredAtStint: carRow.retired_at_stint };
     }),
@@ -711,13 +724,62 @@ function formatDuration(mins){
 // beneath that car's stint table) instead of a transient toast. stintIdx
 // links the entry back to whichever stint's notes/flags should be shown
 // alongside it, even if those are added after the fact.
-function logStintNote(cp, stintIdx, text, type){
+// When `key` is supplied, updates the existing entry carrying that key
+// instead of adding another one. Repeated tweaks to the same thing (nudging
+// a start time by 15 min over and over, revising a stint's end) should read
+// as one evolving statement of where things now stand, not a pile of
+// near-identical lines. `meta` carries whatever the caller needs to remember
+// across those updates — typically the original values, so the entry can
+// always describe the *cumulative* change rather than only the last nudge.
+//
+// The same coalescing has to happen in Supabase or duplicates would reappear
+// on reload, so keyed entries track their row id and UPDATE it rather than
+// inserting again. `entry_key` is persisted so the link survives a refetch.
+function logStintNote(cp, stintIdx, text, type, key, meta){
   if (!cp.log) cp.log = [];
-  cp.log.push({ stintIdx, text, type: type||"info", ts: Date.now() });
+  const resolvedType = type || "info";
+
+  if (key){
+    const existing = cp.log.find(m => m.stintIdx === stintIdx && m.key === key);
+    if (existing){
+      existing.text = text;
+      existing.type = resolvedType;
+      existing.ts = Date.now();
+      if (meta !== undefined) existing.meta = meta;
+      if (existing.dbId){
+        supabase.from("stint_log").update({ message: text, type: resolvedType })
+          .eq("id", existing.dbId)
+          .then(({ error })=>{ if (error) console.error("logStintNote update failed:", error); });
+      }
+      return existing;
+    }
+  }
+
+  const entry = { stintIdx, text, type: resolvedType, ts: Date.now(), key: key||null, meta: meta, dbId: null };
+  cp.log.push(entry);
   if (cp.car && cp.car.id){
     supabase.from("stint_log").insert({
-      car_id: cp.car.id, stint_index: stintIdx, message: text, type: type||"info",
-    }).then(({ error })=>{ if (error) console.error("logStintNote insert failed:", error); });
+      car_id: cp.car.id, stint_index: stintIdx, message: text, type: resolvedType, entry_key: key||null,
+    }).select().single().then(({ data, error })=>{
+      if (error){ console.error("logStintNote insert failed:", error); return; }
+      if (data) entry.dbId = data.id; // so later revisions update this row
+    });
+  }
+  return entry;
+}
+function findStintLogEntry(cp, stintIdx, key){
+  return (cp.log||[]).find(m => m.stintIdx === stintIdx && m.key === key) || null;
+}
+// Used when an adjustment is undone back to its original value — the entry
+// stops being true, so it's removed rather than left saying "moved 0 min".
+function removeStintLogEntry(cp, stintIdx, key){
+  if (!cp.log) return;
+  const i = cp.log.findIndex(m => m.stintIdx === stintIdx && m.key === key);
+  if (i < 0) return;
+  const [entry] = cp.log.splice(i, 1);
+  if (entry && entry.dbId){
+    supabase.from("stint_log").delete().eq("id", entry.dbId)
+      .then(({ error })=>{ if (error) console.error("removeStintLogEntry delete failed:", error); });
   }
 }
 // Retire log entries are matched by their fixed message pattern rather than
@@ -1519,6 +1581,16 @@ function carPlanSection(cp, plan, archived){
                 </select>
               </span>`;
 
+          // Start time doubles as the entry point for shifting the boundary
+          // with the previous stint — tapping it opens the stint panel where
+          // the ±15 steppers live (the table column is far too narrow for
+          // them inline).
+          const startAdj = readOnly ? { canEarlier:false, canLater:false } : stintStartAdjustability(cp, i);
+          const startAdjustable = startAdj.canEarlier || startAdj.canLater;
+          const startCell = startAdjustable
+            ? `<button class="stint-start-btn font-mono" data-act="open-stint-adjust" data-car="${car.id}" data-stint="${i}" title="Adjust start time">${formatTimeCompact(s.start)}</button>`
+            : `<span class="font-mono" style="white-space:nowrap;font-size:11px;padding-left:14px;">${formatTimeCompact(s.start)}</span>`;
+
           const endCell = (readOnly || s.finished)
             ? `<span class="font-mono" style="white-space:nowrap;font-size:11px;text-align:center;display:block;">${formatTimeCompact(s.end)}</span>`
             : `<button class="finish-stint-cell" data-act="prompt-finish-stint" data-car="${car.id}" data-stint="${i}" title="Finish Stint"><span class="em">🏁</span>Finish</button>`;
@@ -1535,7 +1607,7 @@ function carPlanSection(cp, plan, archived){
           <div class="row ${isLiveRow?'row-live':''} ${isFinishedRow?'row-finished':''}" data-car="${car.id}" data-stint="${i}">
             <span class="stint-ghost-num">${i+1}</span>
             ${driverCell}
-            <span class="font-mono" style="white-space:nowrap;font-size:11px;padding-left:14px;">${formatTimeCompact(s.start)}</span>
+            ${startCell}
             ${endCell}
             ${posCell}
             ${noteToggle}
@@ -1546,6 +1618,16 @@ function carPlanSection(cp, plan, archived){
               ${flags.length ? `<div class="flag-row">${flags.map(fk=>{ const f=FLAG_TYPES.find(x=>x.key===fk); if(!f) return ""; return `<span class="flag-btn active"><span class="em">${f.emoji}</span>${f.label}</span>`; }).join("")}</div>` : ""}
               ${s.notes && s.notes.trim() ? `<p style="margin:0;font-size:12.5px;color:var(--textMuted);">${esc(s.notes)}</p>` : (!flags.length ? `<p style="margin:0;font-size:12.5px;color:var(--textFaint);font-style:italic;">No notes for this stint.</p>` : "")}
             ` : `
+              ${startAdjustable ? `
+              <div class="start-adjust">
+                <span class="start-adjust-label">${icon("clock",11)} Start Time</span>
+                <div class="start-adjust-ctl">
+                  <button data-act="adjust-stint-start" data-car="${car.id}" data-stint="${i}" data-delta="-${STINT_START_STEP}" ${startAdj.canEarlier?"":"disabled"}>−${STINT_START_STEP}</button>
+                  <span class="start-adjust-val font-mono">${formatTimeCompact(s.start)}</span>
+                  <button data-act="adjust-stint-start" data-car="${car.id}" data-stint="${i}" data-delta="${STINT_START_STEP}" ${startAdj.canLater?"":"disabled"}>+${STINT_START_STEP}</button>
+                </div>
+                <span class="start-adjust-hint">Moves the handover with Stint ${i} — that stint absorbs the change. Later stints are unaffected.</span>
+              </div>` : ""}
               <div class="flag-row">
                 ${FLAG_TYPES.map(f=>`
                   <button class="flag-btn ${flags.includes(f.key)?'active':''}" data-act="toggle-stint-flag" data-car="${car.id}" data-stint="${i}" data-flag="${f.key}" style="${flags.includes(f.key)?`background:${f.color}26;border-color:${f.color};`:""}">
@@ -1876,6 +1958,16 @@ async function handleAction(act, el){
       state.page = "home"; render(); break;
     case "nav-back":
       requestBack(); break;
+    case "open-stint-adjust": {
+      // Tapping the start time opens that stint's panel, where the ±15
+      // steppers live.
+      const key = el.getAttribute("data-car")+"__"+el.getAttribute("data-stint");
+      state.openStintNotes.add(key);
+      render(); break;
+    }
+    case "adjust-stint-start":
+      await adjustStintStart(el.getAttribute("data-car"), +el.getAttribute("data-stint"), +el.getAttribute("data-delta"));
+      break;
     case "setup-back":
       requestBack(); break;
     case "open-race": {
@@ -2121,6 +2213,92 @@ async function navBack(){
 function requestBack(){
   if (state.navStack.length) history.back();
   else { state.page = "home"; render(); }
+}
+
+// Shifts the boundary between stint N-1 and stint N by moving stint N's
+// start time. This is deliberately NOT the overrun cascade used by Finish:
+// nothing downstream moves. The previous stint gives up (or gains) exactly
+// the time this stint gains (or gives up), and every later stint keeps its
+// original schedule. E.g. pulling Greg's 11:00 start back to 10:30 shortens
+// the previous driver to 10:30 and stretches Greg to 150 min — his end time,
+// and everyone after him, are untouched.
+//
+// Only valid while both stints are still unfinished: once a stint is
+// finished its end is a recorded fact, and the next stint is already
+// underway, so there is nothing left to plan.
+const STINT_MIN_LENGTH = 15;   // never shrink a stint below this
+const STINT_START_STEP = 15;   // stepper granularity
+
+// Returns {canEarlier, canLater} describing whether stint N's start can
+// move, so the UI can render/disable the steppers consistently.
+function stintStartAdjustability(cp, idx){
+  const s = cp.stints[idx];
+  const prev = idx > 0 ? cp.stints[idx-1] : null;
+  const off = { canEarlier:false, canLater:false };
+  if (!s || s.removed) return off;
+  if (idx === 0) return off;                        // race start is fixed
+  if (!prev || prev.removed) return off;
+  if (prev.finished || s.finished) return off;      // already run
+  if (cp.retiredAtStint != null && idx > cp.retiredAtStint) return off;
+
+  const quiet = prev.quietMinutes || 0;
+  const earliestStart = addMinutes(prev.start, STINT_MIN_LENGTH + quiet);
+  const latestStart = addMinutes(s.end, -STINT_MIN_LENGTH);
+  return {
+    canEarlier: +addMinutes(s.start, -STINT_START_STEP) >= +earliestStart,
+    canLater:   +addMinutes(s.start,  STINT_START_STEP) <= +latestStart,
+  };
+}
+
+async function adjustStintStart(carId, stintIdx, deltaMinutes){
+  const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
+  if (!cp) return;
+  const adj = stintStartAdjustability(cp, stintIdx);
+  if (deltaMinutes < 0 && !adj.canEarlier) return;
+  if (deltaMinutes > 0 && !adj.canLater) return;
+
+  const s = cp.stints[stintIdx];
+  const prev = cp.stints[stintIdx-1];
+  const quiet = prev.quietMinutes || 0;
+
+  // Remember where this stint sat before anyone started nudging it, so the
+  // log entry can report the total shift rather than the most recent 15 min.
+  // The baseline is captured once and then carried on the log entry itself.
+  const existingEntry = findStintLogEntry(cp, stintIdx, "start-adjust");
+  const baseline = (existingEntry && existingEntry.meta) ? existingEntry.meta : {
+    origStartISO: s.start.toISOString(),
+    origPrevLen: prev.lengthMin,
+    origLen: s.lengthMin,
+  };
+
+  const newStart = addMinutes(s.start, deltaMinutes);
+  // The previous stint ends where this one begins, less any quiet-time
+  // break scheduled between them (that gap must be preserved).
+  const newPrevEnd = addMinutes(newStart, -quiet);
+
+  prev.end = newPrevEnd;
+  prev.plannedEnd = new Date(newPrevEnd); // still a plan, not a recorded time
+  prev.lengthMin = Math.round((+prev.end - +prev.start)/60000);
+
+  s.start = newStart;
+  s.lengthMin = Math.round((+s.end - +s.start)/60000);
+
+  const totalDelta = Math.round((+s.start - +new Date(baseline.origStartISO))/60000);
+  if (totalDelta === 0){
+    // Nudged all the way back to where it started — nothing left to report.
+    removeStintLogEntry(cp, stintIdx, "start-adjust");
+  } else {
+    const dir = totalDelta < 0 ? "earlier" : "later";
+    logStintNote(cp, stintIdx,
+      `Stint ${stintIdx+1} start moved ${Math.abs(totalDelta)} min ${dir} to ${formatTimeCompact(s.start)} — ` +
+      `Stint ${stintIdx} now ${formatDuration(prev.lengthMin)} (was ${formatDuration(baseline.origPrevLen)}), ` +
+      `Stint ${stintIdx+1} now ${formatDuration(s.lengthMin)} (was ${formatDuration(baseline.origLen)}). ` +
+      `Later stints are unchanged.`,
+      "info", "start-adjust", baseline);
+  }
+
+  await syncPlanToRaceRecord();
+  render();
 }
 
 function openRace(race){
@@ -2516,17 +2694,17 @@ async function updateStintEnd(carId, stintIdx, timeStr){
 
   if (nowRemoved.length){
     const list = nowRemoved.map(i=>`Stint ${i+1}`).join(", ");
-    logStintNote(cp, stintIdx, `Stint ${stintIdx+1} extended by ${deltaFromPlan} min — completely absorbed ${list}. ${nowRemoved.length>1?"They've":"It's"} been removed from the schedule.`, "warn");
+    logStintNote(cp, stintIdx, `Stint ${stintIdx+1} extended by ${deltaFromPlan} min — completely absorbed ${list}. ${nowRemoved.length>1?"They've":"It's"} been removed from the schedule.`, "warn", "end-adjust");
   } else if (nowRestored.length){
     const list = nowRestored.map(i=>`Stint ${i+1}`).join(", ");
-    logStintNote(cp, stintIdx, `Stint ${stintIdx+1} adjusted — ${list} restored to the schedule.`);
+    logStintNote(cp, stintIdx, `Stint ${stintIdx+1} adjusted — ${list} restored to the schedule.`, "info", "end-adjust");
   } else if (deltaMin !== 0){
     const label = deltaFromPlan > 0
       ? `Stint ${stintIdx+1} extended by ${deltaFromPlan} min.`
       : deltaFromPlan < 0
         ? `Stint ${stintIdx+1} was short ${Math.abs(deltaFromPlan)} min.`
         : `Stint ${stintIdx+1} adjusted back to its original schedule.`;
-    logStintNote(cp, stintIdx, label);
+    logStintNote(cp, stintIdx, label, "info", "end-adjust");
   }
 
   // The final stint got squeezed down to a sliver too small to hand a
