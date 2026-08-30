@@ -340,6 +340,11 @@
   .log-clear{background:none;border:none;color:var(--textFaint);font-size:11px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.06em;}
   .log-item{font-size:13px;line-height:1.45;padding:9px 11px;border-radius:8px;background:var(--panel);border:1px solid var(--border);display:flex;align-items:flex-start;gap:7px;color:var(--textMuted);}
   .log-item .ico{flex-shrink:0;margin-top:2px;color:var(--textFaint);}
+  /* Log messages may contain \n to split related facts onto their own
+     lines. pre-line honours those newlines while still collapsing ordinary
+     runs of whitespace. */
+  .log-item .log-text{white-space:pre-line;}
+  .log-item .log-text strong{font-weight:700;color:var(--text);}
   .log-item.warn{border-color:var(--red);color:var(--text);background:rgba(226,68,92,0.08);}
   .log-item.warn .ico{color:var(--amber);}
   .setup-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
@@ -910,6 +915,13 @@ function podiumColor(pos){
   return null;
 }
 function esc(s){ return (s==null?"":String(s)).replace(/[&<>"']/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+// Log messages mark their key figures with **…**. This runs AFTER esc(), so
+// the markers survive escaping but nothing in the text itself can inject
+// markup — the only tags that reach the DOM are the ones added right here.
+function logBold(escapedText){
+  return escapedText.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+}
 
 // Stint-length for a driver, chosen either from the 60/90/120 quick-pick
 // buttons or the "Custom" select, which offers every 5-minute increment
@@ -1695,8 +1707,7 @@ function carPlanSection(cp, plan, archived){
           <div class="log-item ${m.type==='warn'?'warn':''}">
             <span class="ico">${icon(m.type==='warn'?'timer':'clock',13)}</span>
             <span>
-              ${esc(m.text)}
-              ${(refFlagBadges || refNote) ? `<br><span style="color:var(--textFaint);font-size:12px;">${refFlagBadges ? refFlagBadges+"&nbsp; " : ""}${refNote ? esc(refNote) : ""}</span>` : ""}
+              <span class="log-text">${logBold(esc(m.text))}</span>${(refFlagBadges || refNote) ? `<br><span style="color:var(--textFaint);font-size:12px;">${refFlagBadges ? refFlagBadges+"&nbsp; " : ""}${refNote ? esc(refNote) : ""}</span>` : ""}
             </span>
           </div>`;
         }).join("")}
@@ -2308,12 +2319,16 @@ async function adjustStintStart(carId, stintIdx, deltaMinutes){
     // Nudged all the way back to where it started — nothing left to report.
     removeStintLogEntry(cp, stintIdx, "start-adjust");
   } else {
+    // Two short lines, each naming a stint and its NEW time span, rather
+    // than one sentence juggling four durations. Both figures are measured
+    // against the original plan, so the entry always reads as the total
+    // change so far — not the most recent 15 min nudge.
     const dir = totalDelta < 0 ? "earlier" : "later";
+    const prevDelta = prev.lengthMin - baseline.origPrevLen;
+    const prevWord = prevDelta < 0 ? "shorter" : "longer";
     logStintNote(cp, stintIdx,
-      `Stint ${stintIdx+1} start moved ${Math.abs(totalDelta)} min ${dir} to ${formatTimeCompact(s.start)} — ` +
-      `Stint ${stintIdx} now ${formatDuration(prev.lengthMin)} (was ${formatDuration(baseline.origPrevLen)}), ` +
-      `Stint ${stintIdx+1} now ${formatDuration(s.lengthMin)} (was ${formatDuration(baseline.origLen)}). ` +
-      `Later stints are unchanged.`,
+      `Stint ${stintIdx+1} start moved **${formatDuration(Math.abs(totalDelta))}** ${dir} (${formatTimeCompact(s.start)} to ${formatTimeCompact(s.end)})\n` +
+      `Stint ${stintIdx} now **${formatDuration(Math.abs(prevDelta))}** ${prevWord} (${formatTimeCompact(prev.start)} to ${formatTimeCompact(prev.end)})`,
       "info", "start-adjust", baseline);
   }
 
