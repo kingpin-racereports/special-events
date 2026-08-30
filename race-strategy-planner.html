@@ -500,6 +500,9 @@ const defaultCatalog = [
 // ---- tiny icon set (inline SVG, mimics lucide-react) ----
 const ICONS = {
   plus:'<path d="M12 5v14M5 12h14"/>',
+  // Collapse affordance for the notes toggle. An "x" there reads as delete
+  // and made people wary of tapping it; a minus clearly means "close this".
+  minus:'<path d="M5 12h14"/>',
   arrowRight:'<path d="M5 12h14M13 5l7 7-7 7"/>',
   arrowLeft:'<path d="M19 12H5M11 19l-7-7 7-7"/>',
   x:'<path d="M18 6 6 18M6 6l12 12"/>',
@@ -1617,7 +1620,7 @@ function carPlanSection(cp, plan, archived){
             : `<input type="text" class="field stint-pos stint-pos-edit font-mono" placeholder="P–" value="${esc(s.position ?? '')}" data-act="edit-stint-pos" data-car="${car.id}" data-stint="${i}" style="background:${posStyle.bg};color:${posStyle.color};" />`;
 
           const noteToggle = (!readOnly || hasNoteContent)
-            ? `<button class="stint-note-toggle" data-act="toggle-stint-note" data-car="${car.id}" data-stint="${i}" title="${isOpen?'Hide note':(readOnly?'View note':'Add a note')}">${flagBadges ? `<span class="flag-badge">${flagBadges}</span>` : icon(isOpen?"x":(readOnly?"clock":"plus"),13)}</button>`
+            ? `<button class="stint-note-toggle" data-act="toggle-stint-note" data-car="${car.id}" data-stint="${i}" title="${isOpen?'Hide note':(readOnly?'View note':'Add a note')}">${flagBadges ? `<span class="flag-badge">${flagBadges}</span>` : icon(isOpen?"minus":(readOnly?"clock":"plus"),13)}</button>`
             : `<span></span>`;
 
           return `
