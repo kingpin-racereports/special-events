@@ -133,11 +133,39 @@
   .driver-group{margin-bottom:14px;}
   .stint-len-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 0 26px;}
   .stint-len-label{font-family:'JetBrains Mono',monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:0.06em;color:var(--textFaint);}
-  .segmented{display:flex;border:1px solid var(--borderLight);border-radius:8px;overflow:hidden;flex-shrink:0;}
-  .segmented button{background:var(--panel);border:none;color:var(--textMuted);font-size:12px;padding:5px 10px;font-weight:500;}
+  /* Preset buttons sit alongside the custom <select> below, so they share
+     its height, radius, and mono type to read as one control group. */
+  .segmented{display:flex;height:30px;border:1px solid var(--borderLight);border-radius:8px;overflow:hidden;flex-shrink:0;}
+  .segmented button{
+    background:var(--panel);border:none;color:var(--textMuted);
+    font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:500;
+    padding:0 12px;display:flex;align-items:center;justify-content:center;
+  }
   .segmented button+button{border-left:1px solid var(--borderLight);}
   .segmented button.active{background:var(--blue);color:#0A0C10;font-weight:600;}
-  .stint-len-auto{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--textMuted);}
+
+  /* Stint-length custom picker: a native <select>. Rendered by the OS as a
+     spinning wheel on iOS, a scrollable list dialog on Android, and a
+     dropdown on desktop — the options list is drawn above the page by the
+     browser itself, so it can never fight the page's own scrolling the way
+     a hand-built scroll wheel does. Reads as "Custom" while one of the
+     60/90/120 presets is active, and shows the chosen value (highlighted,
+     via .has-custom) once a non-preset length is picked. */
+  .stint-wheel{
+    appearance:none;-webkit-appearance:none;-moz-appearance:none;
+    width:86px;height:30px;padding:0 22px 0 10px;
+    background:var(--panel);color:var(--textMuted);
+    border:1px dashed var(--borderLight);border-radius:8px;
+    font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:500;
+    text-align:center;text-align-last:center;cursor:pointer;flex-shrink:0;
+    background-image:linear-gradient(45deg,transparent 50%,var(--textMuted) 50%),linear-gradient(135deg,var(--textMuted) 50%,transparent 50%);
+    background-position:calc(100% - 12px) 13px,calc(100% - 8px) 13px;
+    background-size:4px 4px,4px 4px;background-repeat:no-repeat;
+  }
+  .stint-wheel.has-custom{
+    border-style:solid;border-color:var(--blue);color:var(--blue);font-weight:600;
+    background-image:linear-gradient(45deg,transparent 50%,var(--blue) 50%),linear-gradient(135deg,var(--blue) 50%,transparent 50%);
+  }
   .add-driver{margin-top:6px;display:flex;align-items:center;gap:4px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;background:none;border:none;}
 
   /* ---- buttons general ---- */
@@ -218,13 +246,11 @@
   .finish-stint-cell{width:100%;min-width:0;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:11px;letter-spacing:0.01em;padding:4px 2px;border-radius:6px;background:rgba(46,111,224,0.16);border:1px solid var(--blue);color:var(--blue);display:flex;align-items:center;justify-content:center;gap:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .finish-stint-cell:hover{background:rgba(46,111,224,0.28);}
   .finish-stint-cell .em{font-size:11px;line-height:1;flex-shrink:0;}
-  .quiet-picker{margin-bottom:8px;}
-  .quiet-picker-label{display:block;font-family:'JetBrains Mono',monospace;font-size:10.5px;text-transform:uppercase;letter-spacing:0.06em;color:var(--textFaint);margin-bottom:6px;}
-  .quiet-picker-row{display:flex;gap:6px;}
-  .quiet-btn{flex:1;font-size:12.5px;padding:7px 0;border-radius:8px;background:var(--panelRaised);border:1px solid var(--borderLight);color:var(--textMuted);font-family:'Barlow Condensed',sans-serif;font-weight:600;}
-  .quiet-btn.active{background:rgba(139,107,240,0.18);border-color:var(--purple);color:var(--text);}
   .row-quiet{background:rgba(139,107,240,0.08);}
-  .row-quiet .qt-text{font-style:italic;color:var(--textMuted);}
+  /* The stint table clips its cells to one nowrap line with an ellipsis;
+     the quiet row is a single full-width caption, so it opts out of that
+     or it truncates to "Quiet Ti..." on narrow screens. */
+  .row-quiet .qt-text{font-style:italic;color:var(--textMuted);white-space:normal!important;overflow:visible!important;text-overflow:clip!important;}
   .stint-pos::placeholder{color:var(--textFaint);}
   /* Read-only position badge (finished/archived stints) — square, fixed
      size, centered in its column, rather than stretching to the full
@@ -383,7 +409,6 @@ const FLAG_TYPES = [
   { key:"yellow",   emoji:"🟡", label:"Caution", color: T.amber },
   { key:"black",    emoji:"⚫", label:"Penalty", color: "#D8DCE2" },
   { key:"meatball", emoji:"⚫🟠", label:"Meatball", color: "#E0752E" },
-  { key:"quiet",    emoji:"💤", label:"Quiet Time", color: T.purple },
 ];
 // The compact flag badge shown on a stint row (before its note is expanded)
 // has room for one glance-able symbol. A meatball flag is a much more
@@ -415,6 +440,29 @@ const TRACKS = [
   "Sebring International Raceway","Virginia International Raceway","Watkins Glen International",
   "Other",
 ];
+
+// ---- scheduled quiet time (automatic, not user-editable) ----
+// Two tracks impose a mandated Sunday pause at a fixed local clock time.
+// It is applied automatically when a plan is built and cannot be added,
+// edited, or removed by hand — hence no flag, picker, or action for it.
+// Keyed by the exact TRACKS entry; "Road Atlanta" is the same circuit as
+// Michelin Raceway Road Atlanta.
+const QUIET_TIME_TRACKS = {
+  "Barber Motorsports Park": { startHour: 11, startMinute: 0, minutes: 60 },  // 11:00–12:00
+  "Road Atlanta":            { startHour: 10, startMinute: 0, minutes: 120 }, // 10:00–12:00
+};
+// Returns {start, end, minutes} for the pause, or null when it doesn't
+// apply — wrong track, not a Sunday, or the window starts at/before the
+// green flag (nothing to pause).
+function quietWindowFor(track, startDateTime){
+  const rule = QUIET_TIME_TRACKS[track];
+  if (!rule) return null;
+  if (startDateTime.getDay() !== 0) return null; // 0 = Sunday, local time
+  const qs = new Date(startDateTime);
+  qs.setHours(rule.startHour, rule.startMinute, 0, 0);
+  if (+qs <= +startDateTime) return null;
+  return { start: qs, end: addMinutes(qs, rule.minutes), minutes: rule.minutes };
+}
 const defaultCatalog = [
   { id:"cat_18", number:"18", manufacturer:"Porsche", team:"Kingpin Racing", model:"991 GT3 Cup", accent: T.white },
   { id:"cat_4",  number:"4",  manufacturer:"Toyota", team:"Kingpin Racing",  model:"GR Supra GT4 EVO2", accent: T.purple },
@@ -776,12 +824,27 @@ function podiumColor(pos){
 }
 function esc(s){ return (s==null?"":String(s)).replace(/[&<>"']/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
-// Stint-length preset for a driver: 60 / 90 / 120 / 150 minutes.
-// Anything unset or unrecognized (e.g. a car added before this feature
-// existed) reads as the 60 default, so older race records keep working.
+// Stint-length for a driver, chosen either from the 60/90/120 quick-pick
+// buttons or the "Custom" select, which offers every 5-minute increment
+// from 45 to 180. Anything unset or unrecognized (e.g. a car added before
+// this feature existed, or an older '150' preset) reads as the 60 default,
+// so older race records keep working.
+const STINT_WHEEL_MIN = 45, STINT_WHEEL_MAX = 180, STINT_WHEEL_STEP = 5;
+// The three quick-pick buttons. Any other value is reached through the
+// "Custom" select, which is what that select displays whenever one of
+// these presets is the active choice.
+const STINT_PRESETS = ['60','90','120'];
+function isStintPreset(mode){ return STINT_PRESETS.includes(String(mode)); }
+function stintWheelValues(){
+  const vals = [];
+  for (let v = STINT_WHEEL_MIN; v <= STINT_WHEEL_MAX; v += STINT_WHEEL_STEP) vals.push(v);
+  return vals;
+}
 function stintModeOf(car, idx){
   const raw = car.driverStintMode && car.driverStintMode[idx];
-  return (raw === '90' || raw === '120' || raw === '150') ? raw : '60';
+  const n = Number(raw);
+  const valid = Number.isFinite(n) && n >= STINT_WHEEL_MIN && n <= STINT_WHEEL_MAX && (n - STINT_WHEEL_MIN) % STINT_WHEEL_STEP === 0;
+  return valid ? String(n) : '60';
 }
 
 // ---- livery placeholder (mimics CarHeaderImage fallback) ----
@@ -1121,9 +1184,11 @@ function renderSetup(){
                       <button type="button" class="${mode==='60'?'active':''}" data-act="set-stint-mode" data-mode="60" data-car="${car.id}" data-idx="${idx}">60</button>
                       <button type="button" class="${mode==='90'?'active':''}" data-act="set-stint-mode" data-mode="90" data-car="${car.id}" data-idx="${idx}">90</button>
                       <button type="button" class="${mode==='120'?'active':''}" data-act="set-stint-mode" data-mode="120" data-car="${car.id}" data-idx="${idx}">120</button>
-                      <button type="button" class="${mode==='150'?'active':''}" data-act="set-stint-mode" data-mode="150" data-car="${car.id}" data-idx="${idx}">150</button>
                     </div>
-                    <span class="stint-len-auto">min</span>
+                    <select class="stint-wheel ${isStintPreset(mode)?'':'has-custom'}" data-act="stint-wheel" data-car="${car.id}" data-idx="${idx}">
+                      <option value="" ${isStintPreset(mode)?"selected":""}>Custom</option>
+                      ${stintWheelValues().map(v=>`<option value="${v}" ${(!isStintPreset(mode) && String(v)===mode)?"selected":""}>${v}</option>`).join("")}
+                    </select>
                   </div>
                 </div>`;
                 }).join("");
@@ -1463,7 +1528,7 @@ function carPlanSection(cp, plan, archived){
           ${isOpen ? `
           <div class="note-row">
             ${readOnly ? `
-              ${flags.length ? `<div class="flag-row">${flags.map(fk=>{ const f=FLAG_TYPES.find(x=>x.key===fk); if(!f) return ""; const extra = (fk==="quiet" && s.quietMinutes) ? ` — ${formatDuration(s.quietMinutes)}` : ""; return `<span class="flag-btn active"><span class="em">${f.emoji}</span>${f.label}${extra}</span>`; }).join("")}</div>` : ""}
+              ${flags.length ? `<div class="flag-row">${flags.map(fk=>{ const f=FLAG_TYPES.find(x=>x.key===fk); if(!f) return ""; return `<span class="flag-btn active"><span class="em">${f.emoji}</span>${f.label}</span>`; }).join("")}</div>` : ""}
               ${s.notes && s.notes.trim() ? `<p style="margin:0;font-size:12.5px;color:var(--textMuted);">${esc(s.notes)}</p>` : (!flags.length ? `<p style="margin:0;font-size:12.5px;color:var(--textFaint);font-style:italic;">No notes for this stint.</p>` : "")}
             ` : `
               <div class="flag-row">
@@ -1472,14 +1537,6 @@ function carPlanSection(cp, plan, archived){
                     <span class="em">${f.emoji}</span><span class="lbl">${f.label}</span>
                   </button>`).join("")}
               </div>
-              ${flags.includes("quiet") ? `
-              <div class="quiet-picker">
-                <span class="quiet-picker-label">💤 Quiet Time Duration — track dependent</span>
-                <div class="quiet-picker-row">
-                  <button class="quiet-btn ${s.quietMinutes===60?'active':''}" data-act="set-quiet-minutes" data-car="${car.id}" data-stint="${i}" data-minutes="60">1 Hour</button>
-                  <button class="quiet-btn ${s.quietMinutes===120?'active':''}" data-act="set-quiet-minutes" data-car="${car.id}" data-stint="${i}" data-minutes="120">2 Hours</button>
-                </div>
-              </div>` : ""}
               ${flags.includes("meatball") ? `
               <button class="retire-btn" data-act="prompt-retire-car" data-car="${car.id}" data-stint="${i}">
                 <span class="em">⛔</span> Retire
@@ -1564,7 +1621,7 @@ function bindEvents(){
 
   app.querySelectorAll("[data-act]").forEach(el=>{
     const act = el.getAttribute("data-act");
-    if (["update-driver","update-start-pos","finish-draft","edit-stint-pos","edit-stint-driver","edit-stint-note","update-reserve-draft"].includes(act)) return; // input events bound below
+    if (["update-driver","update-start-pos","finish-draft","edit-stint-pos","edit-stint-driver","edit-stint-note","update-reserve-draft","stint-wheel"].includes(act)) return; // input/change events bound below
     el.addEventListener("click", (e)=>{
       e.preventDefault();
       handleAction(act, el, e);
@@ -1618,6 +1675,38 @@ function bindEvents(){
       const car = state.cars.find(c=>c.id===carId);
       if (car) car.drivers[idx] = el.value;
       updateSetupButtonState();
+    });
+  });
+  // Stint-length picker. A native <select>, so there is no custom scroll,
+  // snap, or drag handling to conflict with the page — the browser draws
+  // and manages the options list itself. The 60/90/120 preset buttons next
+  // to it write the same driverStintMode value, so the two controls are
+  // just two ways into one setting. Updating the DOM in place (rather than
+  // calling render()) keeps the page from jumping back to the top.
+  app.querySelectorAll('[data-act="stint-wheel"]').forEach(el=>{
+    el.addEventListener("change", ()=>{
+      const carId = el.getAttribute("data-car"), idx = +el.getAttribute("data-idx");
+      const car = state.cars.find(c=>c.id===carId);
+      if (!car) return;
+      // Selecting the "Custom" placeholder itself isn't a value — bounce
+      // back to whatever is currently set and leave state alone.
+      if (el.value === ""){
+        const current = stintModeOf(car, idx);
+        el.value = isStintPreset(current) ? "" : current;
+        return;
+      }
+      if (!car.driverStintMode) car.driverStintMode = car.drivers.map(()=>'60');
+      car.driverStintMode[idx] = String(el.value);
+      el.classList.toggle("has-custom", !isStintPreset(el.value));
+      const row = el.closest(".stint-len-row");
+      if (row){
+        row.querySelectorAll('[data-act="set-stint-mode"]').forEach(btn=>{
+          btn.classList.toggle("active", btn.getAttribute("data-mode") === String(el.value));
+        });
+      }
+      // Picking a preset value from inside the custom list is really just
+      // choosing that preset — fall back to showing "Custom".
+      if (isStintPreset(el.value)) el.value = "";
     });
   });
   app.querySelectorAll('[data-act="update-reserve-draft"]').forEach(el=>{
@@ -1861,7 +1950,21 @@ async function handleAction(act, el){
       if (car){
         if (!car.driverStintMode) car.driverStintMode = car.drivers.map(()=>'60');
         car.driverStintMode[idx] = mode;
-        render();
+        // Update this row in place rather than re-rendering the whole page,
+        // which would scroll the setup form back to the top.
+        const row = el.closest(".stint-len-row");
+        if (row){
+          row.querySelectorAll('[data-act="set-stint-mode"]').forEach(btn=>{
+            btn.classList.toggle("active", btn.getAttribute("data-mode") === mode);
+          });
+          const sel = row.querySelector('[data-act="stint-wheel"]');
+          if (sel){
+            // A preset is now driving the value, so the custom select
+            // reverts to its neutral "Custom" label.
+            sel.value = "";
+            sel.classList.remove("has-custom");
+          }
+        }
       }
       break;
     }
@@ -1922,16 +2025,6 @@ async function handleAction(act, el){
     }
     case "toggle-stint-flag": {
       await toggleStintFlag(el.getAttribute("data-car"), +el.getAttribute("data-stint"), el.getAttribute("data-flag"));
-      break;
-    }
-    case "set-quiet-minutes": {
-      const carId = el.getAttribute("data-car");
-      const stintIdx = +el.getAttribute("data-stint");
-      const minutes = +el.getAttribute("data-minutes");
-      const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
-      const current = cp ? (cp.stints[stintIdx].quietMinutes || 0) : 0;
-      // Clicking the already-active duration turns it off; otherwise switches to it.
-      await setStintQuietTime(carId, stintIdx, current === minutes ? 0 : minutes);
       break;
     }
     case "toggle-car-plan": {
@@ -2079,27 +2172,57 @@ async function createRacePlan(){
     const { data: carRow, error: carErr } = await supabase.from("cars").insert(carFields).select().single();
     if (carErr){ console.error("insert car failed:", carErr); continue; }
 
-    // Each driver's stint length comes from one of the four preset
-    // buttons on Setup: 60 / 90 / 120 / 150 minutes. A car can mix
-    // presets freely — each driver's length is fully independent of the
-    // others. If a driver's actual stint needs to run long or short of
-    // their preset, use Finish on the planner page to lock in the real
-    // end time — the cascade there re-times everything downstream.
+    // Each driver's stint length comes from the 60/90/120 presets or a
+    // custom 5-minute increment (45–180) on Setup. A car can mix lengths
+    // freely — each driver's length is fully independent of the others. If
+    // a driver's actual stint needs to run long or short of their preset,
+    // use Finish on the planner page to lock in the real end time — the
+    // cascade there re-times everything downstream.
     const stintLenFor = (rotationPos) => Number(validStintModes[rotationPos % validStintModes.length] || '60');
-    let elapsed = 0, di = 0; const stints = [];
-    while (elapsed < totalMinutes){
+
+    // Scheduled quiet time (Barber / Road Atlanta on a Sunday) is a hard
+    // clock-time pause, so the loop tracks a wall-clock cursor alongside
+    // driven minutes rather than deriving times from elapsed alone. A stint
+    // that would run through the window is cut short at the window's start
+    // — the pause hangs off that stint, and the next driver picks up when
+    // the window ends. Driven time is unaffected by the pause: the car
+    // still completes the full race duration, so the day simply finishes
+    // later by the length of the break.
+    const quiet = quietWindowFor(resolvedTrack, startDateTime);
+
+    let driven = 0, di = 0; const stints = [];
+    let cursor = new Date(startDateTime);
+    let quietApplied = false;
+
+    while (driven < totalMinutes){
+      // Sitting at the window start — take the break before opening
+      // another stint rather than starting one we'd immediately pause.
+      if (quiet && !quietApplied && +cursor >= +quiet.start){
+        if (stints.length) stints[stints.length-1].quietMinutes = quiet.minutes;
+        cursor = new Date(quiet.end);
+        quietApplied = true;
+        continue;
+      }
+
       const wantLen = stintLenFor(di);
-      const segLen = Math.min(wantLen, totalMinutes - elapsed);
-      const start = addMinutes(startDateTime, elapsed);
-      const end = addMinutes(startDateTime, elapsed + segLen);
-      stints.push({ driver: validDrivers[di % validDrivers.length], driverIndex: di % validDrivers.length, start, end, plannedEnd: new Date(end), lengthMin: segLen, position: null, notes: "", flags: [], removed: false, quietMinutes: 0, finished: false });
-      elapsed += segLen; di += 1;
+      let segLen = Math.min(wantLen, totalMinutes - driven);
+      let end = addMinutes(cursor, segLen);
+
+      // Would run into the pause — end it early, right on the window.
+      if (quiet && !quietApplied && +end > +quiet.start){
+        segLen = Math.round((+quiet.start - +cursor) / 60000);
+        end = new Date(quiet.start);
+      }
+      if (segLen <= 0) break; // safety valve; shouldn't trigger
+
+      stints.push({ driver: validDrivers[di % validDrivers.length], driverIndex: di % validDrivers.length, start: new Date(cursor), end, plannedEnd: new Date(end), lengthMin: segLen, position: null, notes: "", flags: [], removed: false, quietMinutes: 0, finished: false });
+      driven += segLen; di += 1; cursor = new Date(end);
     }
 
     const stintRows = stints.map((s,i)=>({
       car_id: carRow.id, stint_index: i, driver: s.driver, driver_index: s.driverIndex,
       start_at: s.start.toISOString(), end_at: s.end.toISOString(), planned_end_at: s.plannedEnd.toISOString(),
-      length_min: s.lengthMin, position: null, notes: "", flags: [], removed: false, quiet_minutes: 0, finished: false,
+      length_min: s.lengthMin, position: null, notes: "", flags: [], removed: false, quiet_minutes: s.quietMinutes || 0, finished: false,
     }));
     const { error: stintErr } = await supabase.from("stints").insert(stintRows);
     if (stintErr) console.error("insert stints failed:", stintErr);
@@ -2109,6 +2232,16 @@ async function createRacePlan(){
 
   state.plan = { startDateTime, endDateTime, totalMinutes, track: resolvedTrack, carPlans };
   state.currentRaceId = raceId;
+  // A scheduled quiet-time pause pushes the finish later than
+  // start + duration. The races row was inserted before the stints were
+  // built, so derive the real end from the schedule and correct it.
+  recomputePlanEndTime();
+  if (state.plan.endDateTime > endDateTime){
+    await supabase.from("races").update({
+      plan_end_at: state.plan.endDateTime.toISOString(),
+      total_minutes: state.plan.totalMinutes,
+    }).eq("id", raceId);
+  }
   state.currentStatus = "planned";
   state.finishDrafts = {};
   state.addingReserve = new Set();
@@ -2186,7 +2319,8 @@ async function syncPlanToRaceRecord(){
 // the time the cursor reaches it, or restoring + re-timing it otherwise.
 // Finishes by re-running the driver rotation across whatever changed.
 // Returns which stints were newly absorbed/newly restored, for the caller
-// to log. (Quiet time does NOT use this — see setStintQuietTime, which
+// to log. (Quiet time does NOT use this — it's a fixed clock-time pause
+// baked in when the plan is built, see quietWindowFor/createRacePlan. It
 // uniformly shifts the schedule instead of absorbing anyone's stint.)
 function cascadeStintsFrom(cp, anchorIdx, cursor){
   const stints = cp.stints;
@@ -2305,9 +2439,8 @@ async function updateStintEnd(carId, stintIdx, timeStr){
 
   // Any quiet-time break scheduled after THIS stint is dead time nobody
   // drives through. It must push everything downstream later by exactly
-  // its duration, without changing anyone's stint length — the same flat
-  // shift setStintQuietTime applies when the break is first added. Doing
-  // this as a separate step (after the overrun cascade above) keeps a
+  // its duration, without changing anyone's stint length — a flat shift.
+  // Doing this as a separate step (after the overrun cascade above) keeps a
   // scheduled rest period from ever being treated as absorbable lost time.
   if (stint.quietMinutes){
     for (let j=stintIdx+1; j<stints.length; j++){
@@ -2344,53 +2477,6 @@ async function updateStintEnd(carId, stintIdx, timeStr){
     });
   }
 
-
-  recomputePlanEndTime();
-  await syncPlanToRaceRecord();
-  render();
-}
-
-// Applies (minutes > 0), changes, or clears (minutes === 0) a scheduled
-// quiet-time break immediately after a stint — e.g. Sunday's 1-2hr pause.
-// Unlike a real end-time edit (which can eat into a later driver's stint
-// to catch back up to schedule), quiet time is dead time nobody drives
-// through: every subsequent stint keeps its exact original length and
-// driver assignment, and the whole rest of the day simply slides later by
-// the change in quiet-time duration (or earlier, if it's reduced or
-// cleared). The quiet-time break itself isn't a real stint — it's
-// rendered as an unnumbered placeholder row between this stint and the
-// next (see carPlanSection) — so it never needs its own array slot.
-async function setStintQuietTime(carId, stintIdx, minutes){
-  const cp = state.plan.carPlans.find(cp=>cp.car.id===carId);
-  if (!cp) return;
-  const stint = cp.stints[stintIdx];
-  if (!stint) return;
-
-  const newMinutes = minutes || 0;
-  const delta = newMinutes - (stint.quietMinutes || 0);
-  stint.quietMinutes = newMinutes;
-
-  if (!stint.flags) stint.flags = [];
-  const flagIdx = stint.flags.indexOf("quiet");
-  if (newMinutes && flagIdx < 0) stint.flags.push("quiet");
-  if (!newMinutes && flagIdx >= 0) stint.flags.splice(flagIdx, 1);
-
-  if (delta !== 0){
-    for (let j=stintIdx+1; j<cp.stints.length; j++){
-      const s = cp.stints[j];
-      s.start = addMinutes(s.start, delta);
-      s.end = addMinutes(s.end, delta);
-      if (s.plannedEnd) s.plannedEnd = addMinutes(s.plannedEnd, delta);
-    }
-    // Only log when the schedule actually moved — merely toggling the
-    // Quiet Time flag on and back off without ever picking a duration
-    // (accidental click) never changes anything, so it stays silent.
-    if (newMinutes){
-      logStintNote(cp, stintIdx, `Quiet Time added after Stint ${stintIdx+1} — ${formatDuration(newMinutes)}. Every stint after it shifts later by the same amount.`, "warn");
-    } else {
-      logStintNote(cp, stintIdx, `Quiet Time removed after Stint ${stintIdx+1} — the schedule shifts back up to fill the gap.`);
-    }
-  }
 
   recomputePlanEndTime();
   await syncPlanToRaceRecord();
@@ -2529,22 +2615,6 @@ async function toggleStintFlag(carId, stintIdx, flagKey){
   const stint = cp.stints[stintIdx];
   if (!stint) return;
   if (!stint.flags) stint.flags = [];
-
-  if (flagKey === "quiet"){
-    // Quiet Time needs a duration before it actually shifts anything, so
-    // turning the flag ON just reveals the 1hr/2hr picker (see
-    // carPlanSection) — the real schedule change happens in
-    // setStintQuietTime once a duration is chosen. Turning it OFF clears
-    // any already-applied break and un-shifts the stints after it.
-    if (stint.flags.includes("quiet")){
-      await setStintQuietTime(carId, stintIdx, 0);
-    } else {
-      stint.flags.push("quiet");
-      await syncPlanToRaceRecord();
-      render();
-    }
-    return;
-  }
 
   const idx = stint.flags.indexOf(flagKey);
   if (idx >= 0) stint.flags.splice(idx, 1); else stint.flags.push(flagKey);
