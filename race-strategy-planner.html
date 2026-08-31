@@ -293,6 +293,43 @@
   .track-detail-img{width:100%;height:auto;display:block;border-radius:10px;}
   .fin-label{font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.04em;color:var(--textFaint);display:flex;align-items:center;gap:6px;margin-bottom:4px;}
   .btn-gold{border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;padding:10px 0;display:flex;align-items:center;justify-content:center;gap:6px;border:none;background:var(--gold);color:#0A0C10;}
+
+  /* ---- MyLaps import panel ---- */
+  .mylaps-panel{margin-top:24px;padding:20px;border:1px solid var(--gold);border-radius:14px;background:rgba(224,184,75,0.04);}
+  .mylaps-import-box{background:var(--panelRaised);border:1px solid var(--borderLight);border-radius:10px;padding:14px 16px;}
+  .mylaps-overview-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+  .mylaps-stat-tile{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 12px 10px;}
+  .mylaps-stat-label{font-family:'JetBrains Mono',monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:0.07em;color:var(--textFaint);margin-bottom:5px;}
+  .mylaps-stat-value{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:22px;line-height:1;color:var(--text);}
+  .mylaps-stat-sub{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--textMuted);margin-top:5px;}
+  @media(max-width:480px){ .mylaps-overview-grid{grid-template-columns:repeat(2,1fr);} }
+  .mylaps-stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px 16px;margin-top:10px;}
+  .mylaps-stat{display:flex;justify-content:space-between;font-size:13px;}
+  .mylaps-stat .lbl{color:var(--textFaint);}
+
+  /* ---- MyLaps per-car stat tiles (inside collapsible body) ---- */
+  .mylaps-header-block{margin-top:0;}
+  .mylaps-carstat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:16px;}
+  .mylaps-carstat-tile{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 10px 8px;}
+  .mylaps-carstat-value{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:17px;line-height:1;color:var(--text);}
+  .mylaps-stat .val{font-family:'JetBrains Mono',monospace;color:var(--text);}
+  .mylaps-table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:12px;}
+  .mylaps-table{width:100%;min-width:480px;border-collapse:collapse;}
+  .mylaps-table thead th{text-align:left;font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--textFaint);padding:0 8px 6px;border-bottom:1px solid var(--border);font-weight:500;white-space:nowrap;}
+  .mylaps-table tbody td{padding:7px 8px;font-size:12.5px;border-bottom:1px solid rgba(42,52,104,0.5);white-space:nowrap;}
+  .mylaps-table thead th:nth-child(1), .mylaps-table tbody td:nth-child(1),
+  .mylaps-table thead th:nth-child(2), .mylaps-table tbody td:nth-child(2){padding-left:6px;padding-right:6px;}
+  .mylaps-table .num{font-family:'JetBrains Mono',monospace;color:var(--textMuted);}
+  .mylaps-table .stops{font-family:'JetBrains Mono',monospace;font-weight:600;}
+  .mylaps-table .mylaps-cls{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);}
+  @media(max-width:480px){
+    .mylaps-table thead th:nth-child(6), .mylaps-table tbody td:nth-child(6){display:none;}
+    .mylaps-table thead th:nth-child(7), .mylaps-table tbody td:nth-child(7){display:none;}
+    .mylaps-table{min-width:0;}
+  }
+  .mylaps-badge{font-family:'JetBrains Mono',monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:0.07em;padding:2px 6px;border-radius:5px;}
+  .mylaps-badge.dnf{background:rgba(226,68,92,0.15);color:var(--red);}
+  .mylaps-badge.dns{background:#000;color:#7A7F8C;}
   .btn-gold:disabled{background:var(--panelRaised);color:var(--textFaint);cursor:not-allowed;}
 
   .top-actions{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;}
@@ -568,6 +605,12 @@ let state = {
   expandedCarPlans: new Set(), // UI-only: which cars' plan sections are expanded (archive view — collapsed by default)
   addingReserve: new Set(), // UI-only: which cars currently have the "Add Reserve Driver" input open
   reserveDraft: {}, // UI-only: in-progress reserve driver name per car id, keyed by car.id
+
+  mylapsImporting: false,   // UI-only: import panel expanded
+  mylapsSessionDraft: "",   // UI-only: session id input value
+  mylapsLoading: false,     // UI-only: fetch in progress
+  mylapsError: null,        // UI-only: last fetch/parse error message
+  mylapsShowFullField: false, // UI-only: full standings table expanded
 };
 
 // ---- persistence (Supabase — see supabase-client.js for setup) ----
@@ -675,6 +718,268 @@ async function deleteCatalogEntry(id){
 }
 
 // ---- helpers ----
+// ================= MyLaps Speedhive import =================
+// Fetches + parses a session's classification and lap-time data directly
+// from api2.mylaps.com (confirmed to allow cross-origin browser fetch —
+// CORS-tested against this app's deployed origin) and computes the same
+// race-detail metrics validated in the standalone archive prototype.
+
+function mylapsTimeToSec(s){
+  if (s == null || s === "") return null;
+  const parts = s.split(":");
+  if (parts.length === 1) return parseFloat(parts[0]);
+  if (parts.length === 2) return parseInt(parts[0],10)*60 + parseFloat(parts[1]);
+  return parseInt(parts[0],10)*3600 + parseInt(parts[1],10)*60 + parseFloat(parts[2]);
+}
+
+async function fetchMylapsXML(url){
+  const res = await fetch(url, { headers: { "Accept": "application/xml, text/xml" } });
+  if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
+  const text = await res.text();
+  const contentType = res.headers.get("content-type") || "";
+
+  // If MyLaps ignored our Accept header and sent JSON instead, surface that
+  // clearly rather than feeding JSON into an XML parser.
+  const looksLikeJson = contentType.includes("json") || /^\s*[\[{]/.test(text);
+  if (looksLikeJson){
+    throw new Error(`MyLaps returned JSON instead of XML for ${url} (content-type: ${contentType || "unknown"}). First 200 chars: ${text.slice(0,200)}`);
+  }
+
+  const xmlStart = text.indexOf("<");
+  if (xmlStart === -1){
+    throw new Error(`Response for ${url} doesn't look like XML or JSON. First 200 chars: ${text.slice(0,200)}`);
+  }
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(text.slice(xmlStart), "text/xml");
+  const errNode = doc.querySelector("parsererror");
+  if (errNode){
+    throw new Error(`Could not parse MyLaps XML response for ${url}. Content-type: ${contentType || "unknown"}. First 300 chars: ${text.slice(0,300)}`);
+  }
+  return doc;
+}
+
+function parseMylapsClassification(doc){
+  const rows = [];
+  doc.querySelectorAll("rows > rows").forEach(row => {
+    const get = tag => row.querySelector(`:scope > ${tag}`)?.textContent ?? "";
+    const diff = row.querySelector(":scope > difference");
+    rows.push({
+      position: parseInt(get("position"),10),
+      positionInClass: parseInt(get("positionInClass"),10),
+      startNumber: get("startNumber"),
+      resultClass: get("resultClass"),
+      name: get("name"),
+      status: get("status"),
+      numberOfLaps: parseInt(get("numberOfLaps"),10) || 0,
+      bestLap: parseInt(get("bestLap"),10) || 0,
+      bestTime: get("bestTime"),
+      bestSpeed: parseFloat(get("bestSpeed")) || 0,
+      totalTime: get("totalTime"),
+      totalTimeSec: mylapsTimeToSec(get("totalTime")),
+      lapsBehind: diff ? parseInt(diff.querySelector("lapsBehind")?.textContent,10) : 0,
+      timeDiffSec: diff ? mylapsTimeToSec(diff.querySelector("timeDifference")?.textContent) : 0,
+    });
+  });
+  rows.sort((a,b)=>a.position-b.position);
+  return rows;
+}
+
+function parseMylapsLapTimes(doc){
+  // returns Map<position, Array<{lap, timeOfDay, lapTime, inPit, status}>>
+  const byPos = new Map();
+  doc.querySelectorAll("item").forEach(item => {
+    const pos = parseInt(item.querySelector(":scope > position")?.textContent, 10);
+    const laps = [];
+    item.querySelectorAll(":scope > laps > laps").forEach(lap => {
+      const lapTimeStr = lap.querySelector("lapTime")?.textContent ?? "";
+      laps.push({
+        lap: parseInt(lap.querySelector("lap")?.textContent,10),
+        timeOfDay: parseInt(lap.querySelector("timeOfDay")?.textContent,10),
+        lapTime: mylapsTimeToSec(lapTimeStr),
+        inPit: lap.querySelector("inPit")?.textContent === "true",
+        status: lap.querySelector("status status")?.textContent || "GREEN",
+      });
+    });
+    byPos.set(pos, laps);
+  });
+  return byPos;
+}
+
+// Consecutive inPit=true laps count as a single stop.
+function countPitStops(laps){
+  let stops = 0, prevInPit = false;
+  for (const l of laps){
+    if (l.inPit && !prevInPit) stops++;
+    prevInPit = l.inPit;
+  }
+  return stops;
+}
+
+// True interval to the car directly ahead (by finish order), truncated to
+// one decimal. Only meaningful when both cars share the same lap count —
+// otherwise falls back to the lap deficit, since a raw time subtraction
+// across different distances isn't a real gap.
+function computeIntervals(classification){
+  const running = classification.filter(r => r.startNumber.toLowerCase() !== "53x" && r.status !== "DNS");
+  let prev = null;
+  const intervals = {};
+  running.forEach(r => {
+    if (r.position === 1) { intervals[r.startNumber] = "Leader"; }
+    else if (!prev) { intervals[r.startNumber] = "—"; }
+    else if (prev.numberOfLaps === r.numberOfLaps){
+      const gap = Math.floor((r.totalTimeSec - prev.totalTimeSec)*10)/10;
+      intervals[r.startNumber] = `+${gap.toFixed(1)}s`;
+    } else {
+      const lapDiff = prev.numberOfLaps - r.numberOfLaps;
+      intervals[r.startNumber] = `+${lapDiff} Lap${lapDiff===1?"":"s"}`;
+    }
+    prev = r;
+  });
+  return intervals;
+}
+
+// Clusters YELLOW-flagged laps by time gap (>10min = separate caution
+// periods) across the whole field. Mirrors the caution-period reconstruction
+// validated in the standalone prototype.
+function computeCautions(lapsByPos){
+  const yellowTimes = [];
+  lapsByPos.forEach(laps => laps.forEach(l => { if (l.status === "YELLOW") yellowTimes.push(l.timeOfDay); }));
+  yellowTimes.sort((a,b)=>a-b);
+  if (!yellowTimes.length) return [];
+  const clusters = [];
+  let cur = [yellowTimes[0]];
+  for (let i=1;i<yellowTimes.length;i++){
+    if (yellowTimes[i] - cur[cur.length-1] > 600000){ clusters.push(cur); cur = [yellowTimes[i]]; }
+    else cur.push(yellowTimes[i]);
+  }
+  clusters.push(cur);
+  return clusters.map(c => ({ count: c.length, start: c[0], end: c[c.length-1] }));
+}
+
+// Best-pace and longest green-flag stints (>=3 consecutive non-pit GREEN
+// laps), optionally scoped to a set of result classes.
+function computeStints(classification, lapsByPos, classFilter){
+  const stints = [];
+  classification.forEach(r => {
+    if (classFilter && classFilter.size && !classFilter.has(r.resultClass)) return;
+    const laps = lapsByPos.get(r.position) || [];
+    let cur = [];
+    const flush = () => { if (cur.length >= 3) stints.push({ num: r.startNumber, name: r.name, laps: cur.slice() }); cur = []; };
+    laps.forEach(l => {
+      if (l.inPit || l.status !== "GREEN" || l.lapTime == null){ flush(); return; }
+      cur.push(l);
+    });
+    flush();
+  });
+  if (!stints.length) return { best: null, longest: null };
+
+  let best = null;
+  stints.forEach(s => {
+    const avg = s.laps.reduce((a,l)=>a+l.lapTime,0) / s.laps.length;
+    if (!best || avg < best.avg) best = { num: s.num, name: s.name, avg, lapCount: s.laps.length };
+  });
+
+  const maxLen = Math.max(...stints.map(s=>s.laps.length));
+  const longestNums = [...new Set(stints.filter(s=>s.laps.length===maxLen).map(s=>s.num))];
+  return { best, longest: { lapCount: maxLen, nums: longestNums } };
+}
+
+// Reconstructs "laps led" from lap-completion order: at each point in time,
+// whichever car has completed the most race laps (tie-broken by who reached
+// that lap count first) is credited with leading the newly-reached lap
+// number. Cross-validated against official gap data in the prototype.
+function computeLapsLed(classification, lapsByPos){
+  const events = [];
+  lapsByPos.forEach((laps, pos) => laps.forEach(l => events.push([l.timeOfDay, pos, l.lap])));
+  events.sort((a,b)=>a[0]-b[0]);
+  const state = new Map();
+  let globalMax = 0;
+  const lapsLed = {};
+  events.forEach(([tod, pos, lapNum]) => {
+    state.set(pos, [lapNum, tod]);
+    let leader = null, leaderLaps = -1, leaderTod = Infinity;
+    state.forEach(([laps, t], p) => {
+      if (laps > leaderLaps || (laps === leaderLaps && t < leaderTod)){ leader = p; leaderLaps = laps; leaderTod = t; }
+    });
+    const curMax = state.get(leader)[0];
+    if (curMax > globalMax){
+      lapsLed[leader] = (lapsLed[leader]||0) + (curMax - globalMax);
+      globalMax = curMax;
+    }
+  });
+  let topPos = null, topLaps = -1;
+  Object.entries(lapsLed).forEach(([pos,laps]) => { if (laps > topLaps){ topLaps = laps; topPos = parseInt(pos,10); } });
+  if (topPos == null) return null;
+  const row = classification.find(r=>r.position===topPos);
+  return row ? { num: row.startNumber, name: row.name, laps: topLaps } : null;
+}
+
+function mylapsFmtTime(sec){
+  const m = Math.floor(sec/60), s = sec - m*60;
+  return `${m}:${s.toFixed(3).padStart(6,"0")}`;
+}
+
+// Top-level: given a session id, fetch + parse + compute everything needed
+// for the archive panel. Excludes non-running "x" entries throughout.
+async function loadMylapsSession(sessionId, race){
+  const [classDoc, lapsDoc] = await Promise.all([
+    fetchMylapsXML(`https://api2.mylaps.com/sessions/${sessionId}/classification`),
+    fetchMylapsXML(`https://api2.mylaps.com/sessions/${sessionId}/alllaptimes`),
+  ]);
+  const classification = parseMylapsClassification(classDoc).filter(r => r.startNumber.toLowerCase() !== "53x");
+  const lapsByPos = parseMylapsLapTimes(lapsDoc);
+
+  const pitStopsByNumber = {};
+  classification.forEach(r => { pitStopsByNumber[r.startNumber] = countPitStops(lapsByPos.get(r.position) || []); });
+
+  const intervals = computeIntervals(classification);
+
+  // Scope Best Stint / Longest Stint to whichever class(es) this race's own
+  // cars raced in, so the metric is relevant rather than generic.
+  const raceClasses = new Set(
+    race.cars.map(c => classification.find(r=>r.startNumber===c.number)?.resultClass).filter(Boolean)
+  );
+
+  const running = classification.filter(r => r.status !== "DNS");
+  const entries = classification.length;
+  const finishers = classification.filter(r => r.status === "Normal").length;
+  const dnf = classification.filter(r => r.status === "DNF").length;
+  const dns = classification.filter(r => r.status === "DNS").length;
+  const totalLaps = Math.max(...classification.map(r=>r.numberOfLaps));
+  const totalPitStops = Object.values(pitStopsByNumber).reduce((a,b)=>a+b,0);
+  const carsOnLeadLap = running.filter(r => r.lapsBehind === 0).length;
+  const cautions = computeCautions(lapsByPos);
+  const stints = computeStints(classification, lapsByPos, raceClasses);
+  const lapsLed = computeLapsLed(classification, lapsByPos);
+
+  return {
+    sessionId, fetchedAt: new Date().toISOString(),
+    classification, pitStopsByNumber, intervals,
+    overview: { entries, finishers, dnf, dns, totalLaps, totalPitStops, carsOnLeadLap },
+    cautions, bestStint: stints.best, longestStint: stints.longest, lapsLed,
+    raceClasses: [...raceClasses],
+  };
+}
+
+// Matches this race's own cars (by car number) against imported MyLaps
+// classification rows, for the compact "By Car" summary.
+function matchMylapsToRaceCars(race, mylaps){
+  if (!mylaps) return [];
+  return race.cars.map(car => {
+    const row = mylaps.classification.find(r => r.startNumber === car.number);
+    if (!row) return { car, found: false };
+    return {
+      car, found: true,
+      position: row.position, positionInClass: row.positionInClass,
+      status: row.status, resultClass: row.resultClass,
+      bestTime: row.bestTime, bestLap: row.bestLap,
+      numberOfLaps: row.numberOfLaps,
+      pitStops: mylaps.pitStopsByNumber[car.number] ?? 0,
+    };
+  });
+}
+// =============== end MyLaps Speedhive import ===============
+
 function uid(prefix){ return prefix + "_" + Math.random().toString(36).slice(2,9); }
 function formatDate(iso){
   if(!iso) return "—";
@@ -1377,25 +1682,45 @@ function carCard(car){
     </div>`;
 }
 
+// Effective finish position for a car: MyLaps-derived (class position,
+// falling back to overall; DNF/DNS status takes priority over a numeric
+// position) once imported, since it's authoritative and requires no
+// manual entry. Falls back to the optionally-entered `car.finishPosition`
+// (still written to Supabase pre-archive, per the RLS note in
+// archiveRace()) when MyLaps hasn't been imported for this race yet.
+// Returns a number, "DNF", "DNS", or null.
+function getEffectiveFinishPosition(car, race){
+  if (race && race.mylaps){
+    const m = matchMylapsToRaceCars({ cars:[car] }, race.mylaps)[0];
+    if (m && m.found){
+      if (m.status === "DNF") return "DNF";
+      if (m.status === "DNS") return "DNS";
+      return m.positionInClass || m.position;
+    }
+  }
+  return (typeof car.finishPosition === "number" || car.finishPosition === "DNF") ? car.finishPosition : null;
+}
+
 function renderPlan(){
   const plan = state.plan;
   const archived = state.currentStatus === "archived";
   const readOnly = archived || !state.isEngineer;
-  // Archived results read best-to-worst by class finish position — DNFs
-  // (and anything unset) sort to the end rather than staying in whatever
-  // order the cars were originally entered in. Sort is stable, so ties
-  // (e.g. two DNFs) keep their original relative order.
+  const race = state.races.find(r=>r.id===state.currentRaceId);
+  // Archived results read best-to-worst by effective finish position — see
+  // getEffectiveFinishPosition() above. DNFs (and anything unset) sort to
+  // the end rather than staying in whatever order the cars were originally
+  // entered in. Sort is stable, so ties (e.g. two DNFs) keep their
+  // original relative order.
   const sortedCarPlans = archived
     ? [...plan.carPlans].sort((a,b)=>{
-        const av = typeof a.car.finishPosition === "number" ? a.car.finishPosition : Infinity;
-        const bv = typeof b.car.finishPosition === "number" ? b.car.finishPosition : Infinity;
+        const av = getEffectiveFinishPosition(a.car, race) ?? Infinity;
+        const bv = getEffectiveFinishPosition(b.car, race) ?? Infinity;
         return av - bv;
       })
     : plan.carPlans;
   const primaryCar = sortedCarPlans[0] && sortedCarPlans[0].car;
-  const podium = archived && primaryCar ? podiumColor(primaryCar.finishPosition) : null;
+  const podium = archived && primaryCar ? podiumColor(getEffectiveFinishPosition(primaryCar, race)) : null;
   const bannerColor = podium || T.textMuted;
-  const allFilled = plan.carPlans.every(cp => parseFinishPosition(state.finishDrafts[cp.car.id]) != null);
 
   return `
     <div class="page page-wide fade-in">
@@ -1416,6 +1741,8 @@ function renderPlan(){
         <span style="color:${bannerColor}">Archived — results below by car</span>
       </div>` : ""}
 
+      ${archived ? renderMylapsPanel(race) : ""}
+
       <div style="display:flex;flex-direction:column;gap:40px;margin-top:24px;">
         ${sortedCarPlans.map(cp=>carPlanSection(cp, plan, archived)).join("")}
       </div>
@@ -1432,15 +1759,8 @@ function renderPlan(){
       ${!readOnly ? `
       <div class="archive-box fade-in">
         <div class="head">${icon("archive",15)} Race Complete?</div>
-        <p>${plan.carPlans.length===1 ? "Enter the Class Finish Position to Archive this Race." : "Enter each car's class finish position to archive this race."}</p>
-        <div style="display:flex;flex-direction:column;gap:12px;">
-          ${plan.carPlans.map(cp=>`
-            <div>
-              <label class="fin-label"><span style="width:8px;height:8px;border-radius:999px;background:${cp.car.accent};display:inline-block;"></span>#${esc(cp.car.number)} ${esc(cp.car.team)} — Class Finish Position</label>
-              <input class="field" style="font-size:14px;background:var(--panelRaised);" placeholder="e.g. P3" value="${esc(state.finishDrafts[cp.car.id]||'')}" data-act="finish-draft" data-car="${cp.car.id}" />
-            </div>`).join("")}
-        </div>
-        <button class="btn-gold" id="archiveRace" data-act="archiveRace" ${allFilled?"":"disabled"}>${icon("trophy",14)} Archive Race</button>
+        <p>Archive this race, then import MyLaps results to pull in each car's finish position, fastest lap, pit stops, and more.</p>
+        <button class="btn-gold" id="archiveRace" data-act="archiveRace">${icon("trophy",14)} Archive Race</button>
       </div>` : ""}
     </div>`;
 }
@@ -1453,6 +1773,133 @@ function infoChip(iconName,label,value){
 // driver's total time behind the wheel (summed across their non-removed
 // stints only, so anything absorbed or dropped from a retirement doesn't
 // count toward drive time).
+// MyLaps Speedhive import panel — shown for archived races, engineers
+// only. Either an "Import" prompt (session id input) or, once
+// race.mylaps is populated, a compact by-car summary plus a collapsible
+// full-field standings table.
+function renderMylapsPanel(race){
+  if (!race || !state.isEngineer) return "";
+  const mylaps = race.mylaps;
+
+  if (!mylaps){
+    return `
+      <div class="mylaps-panel fade-in">
+        ${!state.mylapsImporting ? `
+          <div style="display:flex;justify-content:center;">
+            <button class="btn-gold" style="display:inline-flex;padding:10px 18px;" data-act="mylaps-open">${icon("timer",14)} Import MyLaps Results</button>
+          </div>
+        ` : `
+          <div class="mylaps-import-box">
+            <span class="eyebrow">MyLaps Speedhive Session ID</span>
+            <div style="display:flex;gap:8px;margin-top:8px;">
+              <input class="field font-mono" style="padding:8px 10px;font-size:13px;" placeholder="e.g. 12719160"
+                value="${esc(state.mylapsSessionDraft)}" data-act="mylaps-draft" ${state.mylapsLoading?"disabled":""} />
+              <button class="btn-primary" style="padding:8px 16px;font-size:13px;white-space:nowrap;" data-act="mylaps-run" ${state.mylapsLoading?"disabled":""}>
+                ${state.mylapsLoading ? "Fetching…" : "Fetch"}
+              </button>
+              <button class="link-muted" data-act="mylaps-cancel" ${state.mylapsLoading?"disabled":""}>${icon("x",14)}</button>
+            </div>
+            ${state.mylapsError ? `<p style="color:${T.red};font-size:12px;margin-top:8px;">${esc(state.mylapsError)}</p>` : ""}
+          </div>
+        `}
+      </div>`;
+  }
+
+  const fieldRows = state.mylapsShowFullField ? mylaps.classification.map((r,i) => {
+    const isOurs = race.cars.some(c=>c.number===r.startNumber);
+    const statusBadge = r.status === "DNF" ? `<span class="mylaps-badge dnf">DNF</span>`
+                       : r.status === "DNS" ? `<span class="mylaps-badge dns">DNS</span>` : "";
+    return `<tr style="${isOurs?`background:${T.gold}17;border-left:2px solid ${T.gold};`:""}">
+      <td class="num">P${i+1}</td>
+      <td><span class="num">#${esc(r.startNumber)}</span> - <span style="font-weight:600;">${esc(r.name)}</span></td>
+      <td class="num">${esc(mylaps.intervals[r.startNumber] ?? "—")}</td>
+      <td class="num">${r.numberOfLaps}</td>
+      <td class="stops">${mylaps.pitStopsByNumber[r.startNumber] ?? 0}</td>
+      <td class="mylaps-cls">${esc(r.resultClass)}</td>
+      <td>${statusBadge}</td>
+    </tr>`;
+  }).join("") : "";
+
+  const ov = mylaps.overview;
+  const classLabel = mylaps.raceClasses.length ? ` — ${mylaps.raceClasses.join("/")}` : "";
+  const overviewTile = (label, value, sub) => `
+    <div class="mylaps-stat-tile">
+      <div class="mylaps-stat-label">${label}</div>
+      <div class="mylaps-stat-value">${value}</div>
+      ${sub ? `<div class="mylaps-stat-sub">${sub}</div>` : ""}
+    </div>`;
+
+  return `
+    <div class="mylaps-panel fade-in">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <span class="eyebrow" style="color:${T.gold};">Race Overview</span>
+        <button class="link-muted" data-act="mylaps-reimport" style="font-size:11px;">${icon("rotate",12)} Re-import</button>
+      </div>
+
+      <div class="mylaps-overview-grid">
+        ${overviewTile("Total Laps", ov.totalLaps)}
+        ${overviewTile("Total Pit Stops", ov.totalPitStops)}
+        ${overviewTile("Entries", ov.entries)}
+        ${overviewTile("Finishers", ov.finishers, `${ov.dnf} DNF`)}
+        ${overviewTile("Total Cautions", mylaps.cautions.length)}
+        ${overviewTile("Cars on Lead Lap", ov.carsOnLeadLap)}
+        ${overviewTile("Most Laps Led", mylaps.lapsLed ? `${mylaps.lapsLed.laps} laps` : "—", mylaps.lapsLed ? `#${esc(mylaps.lapsLed.num)} ${esc(mylaps.lapsLed.name)}` : "")}
+        ${overviewTile(`Best Stint Pace${classLabel}`, mylaps.bestStint ? mylapsFmtTime(mylaps.bestStint.avg) : "—", mylaps.bestStint ? `#${esc(mylaps.bestStint.num)} ${esc(mylaps.bestStint.name)} · ${mylaps.bestStint.lapCount} laps` : "")}
+        ${overviewTile(`Longest Stint${classLabel}`, mylaps.longestStint ? `${mylaps.longestStint.lapCount} laps` : "—", mylaps.longestStint ? mylaps.longestStint.nums.map(n=>"#"+esc(n)).join(", ") : "")}
+      </div>
+
+      <button class="link-muted" data-act="mylaps-toggle-field" style="margin-top:16px;font-size:12px;">
+        ${state.mylapsShowFullField ? "Hide" : "Show"} full-field standings ${icon(state.mylapsShowFullField?"chevronUp":"chevronDown",12)}
+      </button>
+
+      ${state.mylapsShowFullField ? `
+      <div class="mylaps-table-wrap">
+      <table class="mylaps-table">
+        <thead><tr><th>Finish</th><th>Car</th><th>Gap</th><th>Laps</th><th>Stops</th><th>Class</th><th>Status</th></tr></thead>
+        <tbody>${fieldRows}</tbody>
+      </table>
+      </div>
+      <p style="font-family:'JetBrains Mono',monospace;font-size:11px;color:${T.textFaint};margin-top:8px;">
+        Gap is the true time gap to the car ahead, but only when both cars are on the same lap — otherwise the field shows the lap deficit.
+      </p>` : ""}
+    </div>`;
+}
+
+// Shown once a race is archived — starting/finish position plus each
+// driver's total time behind the wheel (summed across their non-removed
+// stints only, so anything absorbed or dropped from a retirement doesn't
+// count toward drive time).
+// MyLaps result summary for a single car, shown directly in that car's
+// always-visible tile header (not gated behind expand/collapse). Omits the
+// car number and "Normal" status badge since those are already shown in
+// the tile's own header — a DNF/DNS badge is still shown since that's
+// context not duplicated elsewhere. Each stat gets its own line.
+function mylapsCarHeaderBlock(car){
+  const race = state.races.find(r=>r.id===state.currentRaceId);
+  if (!race || !race.mylaps) return "";
+  const m = matchMylapsToRaceCars({ cars:[car] }, race.mylaps)[0];
+  if (!m || !m.found) return "";
+
+  const statusBadge = m.status === "DNF" ? `<span class="mylaps-badge dnf">DNF</span>`
+                     : m.status === "DNS" ? `<span class="mylaps-badge dns">DNS</span>` : "";
+  const tile = (label, value, sub) => `
+    <div class="mylaps-carstat-tile">
+      <div class="mylaps-stat-label">${label}</div>
+      <div class="mylaps-carstat-value">${value}</div>
+      ${sub ? `<div class="mylaps-stat-sub">${sub}</div>` : ""}
+    </div>`;
+
+  return `
+    <div class="mylaps-header-block">
+      <div class="mylaps-carstat-grid">
+        ${tile("Finish", `P${m.positionInClass || m.position}`, statusBadge || null)}
+        ${tile("Fastest Lap", m.bestTime && m.bestTime!=="00.000" ? esc(m.bestTime) : "—")}
+        ${tile("Pit Stops", m.pitStops)}
+        ${tile("Laps Completed", m.numberOfLaps)}
+      </div>
+    </div>`;
+}
+
 function raceSummaryBlock(cp){
   const totals = {};
   const order = [];
@@ -1482,9 +1929,11 @@ function carPlanSection(cp, plan, archived){
   const readOnly = archived || !state.isEngineer;
   const shortNames = buildShortNames(car.drivers.filter(d=>d.trim()));
   const timelineAbbrev = buildTimelineAbbrev(car.drivers.filter(d=>d.trim()));
-  const carPodium = archived ? podiumColor(car.finishPosition) : null;
-  const hasDelta = archived && car.startingPosition!=null && typeof car.finishPosition === "number";
-  const delta = hasDelta ? car.startingPosition - car.finishPosition : null;
+  const race = archived ? state.races.find(r=>r.id===state.currentRaceId) : null;
+  const effectivePos = archived ? getEffectiveFinishPosition(car, race) : null;
+  const carPodium = archived ? podiumColor(typeof effectivePos === "number" ? effectivePos : null) : null;
+  const hasDelta = archived && car.startingPosition!=null && typeof effectivePos === "number";
+  const delta = hasDelta ? car.startingPosition - effectivePos : null;
   const deltaLabel = delta!=null ? (delta>0?`+${delta}`:`${delta}`) : null;
   const deltaColor = delta>0?T.green:(delta<0?T.red:T.textMuted);
 
@@ -1515,10 +1964,10 @@ function carPlanSection(cp, plan, archived){
             <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);">${esc(car.manufacturer)} ${esc(car.model)}</div>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;white-space:nowrap;">
-            ${car.startingPosition!=null ? `<span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);">Start P${car.startingPosition}</span>`:""}
-            ${archived && car.finishPosition!=null ? `
+            ${!archived && car.startingPosition!=null ? `<span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);">Start P${car.startingPosition}</span>`:""}
+            ${archived && effectivePos!=null ? `
               ${carPodium?icon("trophy",13,"color:"+carPodium):""}
-              <span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:11px;color:${carPodium||T.text}">${car.finishPosition==='DNF' ? 'DNF' : 'Finish P'+car.finishPosition}</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:11px;color:${carPodium||T.text}">${effectivePos==='DNF' ? 'DNF' : effectivePos==='DNS' ? 'DNS' : 'Finish P'+effectivePos}</span>
               ${deltaLabel?`<span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:11px;color:${deltaColor}">${deltaLabel}</span>`:""}
             ` : ""}
             ${collapsible ? `<span class="ico" style="color:var(--textFaint);display:flex;">${icon(isCollapsed?"chevronDown":"chevronUp",16)}</span>` : ""}
@@ -1528,7 +1977,7 @@ function carPlanSection(cp, plan, archived){
 
       ${isCollapsed ? "" : `
       <div class="car-plan-body fade-in">
-      ${archived ? raceSummaryBlock(cp) : ""}
+      ${archived ? mylapsCarHeaderBlock(car) + raceSummaryBlock(cp) : ""}
 
       <div class="timeline">
         ${stints.map((s,i)=>{
@@ -1749,7 +2198,7 @@ function bindEvents(){
 
   app.querySelectorAll("[data-act]").forEach(el=>{
     const act = el.getAttribute("data-act");
-    if (["update-driver","update-start-pos","finish-draft","edit-stint-pos","edit-stint-driver","edit-stint-note","update-reserve-draft","stint-wheel"].includes(act)) return; // input/change events bound below
+    if (["update-driver","update-start-pos","edit-stint-pos","edit-stint-driver","edit-stint-note","update-reserve-draft","stint-wheel","mylaps-draft"].includes(act)) return; // input/change events bound below
     el.addEventListener("click", (e)=>{
       e.preventDefault();
       handleAction(act, el, e);
@@ -1856,14 +2305,8 @@ function bindEvents(){
       if (car) car.startingPosition = el.value;
     });
   });
-  app.querySelectorAll('[data-act="finish-draft"]').forEach(el=>{
-    el.addEventListener("input", ()=>{
-      const carId = el.getAttribute("data-car");
-      state.finishDrafts[carId] = el.value;
-      const allFilled = state.plan.carPlans.every(cp => parseFinishPosition(state.finishDrafts[cp.car.id]) != null);
-      const btn = document.getElementById("archiveRace");
-      if (btn) btn.disabled = !allFilled;
-    });
+  app.querySelectorAll('[data-act="mylaps-draft"]').forEach(el=>{
+    el.addEventListener("input", ()=>{ state.mylapsSessionDraft = el.value; });
   });
   app.querySelectorAll('[data-act="edit-stint-pos"]').forEach(el=>{
     el.addEventListener("change", ()=>{
@@ -2155,6 +2598,38 @@ async function handleAction(act, el){
     }
     case "archiveRace":
       await archiveRace(); break;
+    case "mylaps-open":
+      state.mylapsImporting = true; state.mylapsError = null; render(); break;
+    case "mylaps-cancel":
+      state.mylapsImporting = false; state.mylapsError = null; render(); break;
+    case "mylaps-reimport":
+      state.mylapsImporting = true; state.mylapsError = null;
+      state.mylapsSessionDraft = (state.races.find(r=>r.id===state.currentRaceId)?.mylaps?.sessionId) || "";
+      { const race = state.races.find(r=>r.id===state.currentRaceId); if (race) race.mylaps = null; }
+      render(); break;
+    case "mylaps-toggle-field":
+      state.mylapsShowFullField = !state.mylapsShowFullField; render(); break;
+    case "mylaps-run": {
+      const sessionId = state.mylapsSessionDraft.trim();
+      if (!sessionId){ state.mylapsError = "Enter a session ID."; render(); break; }
+      state.mylapsLoading = true; state.mylapsError = null; render();
+      try {
+        const race = state.races.find(r=>r.id===state.currentRaceId);
+        const mylaps = await loadMylapsSession(sessionId, race);
+        // NOTE: race.mylaps is in-memory only for now — there's no
+        // Supabase table for imported MyLaps results yet, so this data
+        // won't survive a page reload. Re-import will be needed each
+        // session until that table exists.
+        if (race){ race.mylaps = mylaps; }
+        state.mylapsImporting = false; state.mylapsLoading = false;
+      } catch (err) {
+        state.mylapsLoading = false;
+        state.mylapsError = err.message.includes("Failed to fetch")
+          ? "Couldn't reach MyLaps — check your connection or the session ID."
+          : err.message;
+      }
+      render(); break;
+    }
     case "clear-stint-log": {
       const cp = state.plan.carPlans.find(cp=>cp.car.id===el.getAttribute("data-car"));
       if (cp){
@@ -2852,19 +3327,17 @@ async function retireCarAction(carId, stintIdx){
 }
 
 async function archiveRace(){
-  const finishByCarId = {};
-  state.plan.carPlans.forEach(cp=>{ finishByCarId[cp.car.id] = parseFinishPosition(state.finishDrafts[cp.car.id]); });
-
-  // Finish positions must land BEFORE the race flips to archived — the
-  // RLS update policy on `cars` blocks any write once the parent race's
-  // status is archived, so writing these after would silently fail.
-  for (const cp of state.plan.carPlans){
-    const fp = finishByCarId[cp.car.id] ?? cp.car.finishPosition ?? null;
-    const { error } = await supabase.from("cars").update({ finish_position: fp }).eq("id", cp.car.id);
-    if (error) console.error("archiveRace: writing finish position failed:", error);
-    cp.car.finishPosition = fp;
-  }
-
+  // Finish position is no longer entered here — MyLaps import supplies it
+  // post-archive (see getEffectiveFinishPosition()). The `finish_position`
+  // column on `cars` is left untouched going forward; RLS blocks writing
+  // it once the race is archived anyway, so there's nothing to backfill.
+  //
+  // This RLS block is BY DESIGN, not a bug to route around: once a race
+  // is archived, its `cars` rows are meant to be frozen at the database
+  // level. Any correction to an already-archived race should be a rare,
+  // deliberate action done directly in Supabase (dashboard/SQL) — not
+  // something the app exposes an "edit archived race" path for. Do not
+  // add a client-side workaround (e.g. a service-role bypass) for this.
   const { error: statusErr } = await supabase.from("races").update({ status: "archived" }).eq("id", state.currentRaceId);
   if (statusErr) console.error("archiveRace: status update failed:", statusErr);
 
