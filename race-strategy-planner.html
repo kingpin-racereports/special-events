@@ -2270,8 +2270,8 @@ function mylapsPitTimesBlock(car){
   }).join("");
 
   const avgRow = m.avgPitSeconds != null
-    ? `<div class="summary-driver" style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">
-         <span style="color:var(--textFaint);">Average</span>
+    ? `<div class="summary-driver" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
+         <span class="fin-label" style="margin:0;">Average</span>
          <span class="font-mono">${fmt(m.avgPitSeconds)}</span>
        </div>`
     : "";
@@ -2287,9 +2287,9 @@ function mylapsPitTimesBlock(car){
         ${avgRow}
       </div>
       <p style="font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.5;color:var(--textFaint);margin:10px 0 0;">
-        Values compare in/out laps against the car's average lap, taking Code 35 into
-        consideration where applicable. ${icon("flag",9)} under caution &nbsp;\uD83D\uDD27 extended stop.
-        Red flag periods can't be measured and are shown as such.
+        Values compare in/out laps against a car's average lap, taking Code 35 into
+        consideration where applicable. Red flag periods can't be measured and are
+        shown as such.
       </p>
     </div>`;
 }
