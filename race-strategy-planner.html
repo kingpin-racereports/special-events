@@ -2045,6 +2045,16 @@ function renderMylapsPanel(race){
       ${sub ? `<div class="mylaps-stat-sub">${sub}</div>` : ""}
     </div>`;
 
+  // One outright winner gets the full "#num Team Name" treatment (matches
+  // Best Stint Pace); a tie between multiple teams just shows car numbers
+  // — spelling out every team name when several tied gets cluttered fast.
+  const longestStintSub = (ls) => {
+    if (!ls) return "";
+    const entries = ls.entries || (ls.nums||[]).map(n=>({num:n,name:""})); // old Supabase rows may lack entries
+    if (entries.length === 1) return `#${esc(entries[0].num)} ${esc(entries[0].name)}`;
+    return entries.map(e=>`#${esc(e.num)}`).join(", ");
+  };
+
   return `
     <div class="mylaps-panel fade-in">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
@@ -2062,7 +2072,7 @@ function renderMylapsPanel(race){
         ${overviewTile("Cars on Lead Lap", ov.carsOnLeadLap)}
         ${overviewTile("Most Laps Led", mylaps.lapsLed ? `${mylaps.lapsLed.laps} laps` : "—", mylaps.lapsLed ? `#${esc(mylaps.lapsLed.num)} ${esc(mylaps.lapsLed.name)}` : "")}
         ${overviewTile("Best Stint Pace - GTO", mylaps.bestStint ? mylapsFmtTime(mylaps.bestStint.avg) : "—", mylaps.bestStint ? `#${esc(mylaps.bestStint.num)} ${esc(mylaps.bestStint.name)} · ${mylaps.bestStint.lapCount} laps` : "")}
-        ${overviewTile("Longest Stint - GTO", mylaps.longestStint ? `${mylaps.longestStint.lapCount} laps` : "—", mylaps.longestStint ? (mylaps.longestStint.entries ? mylaps.longestStint.entries.map(e=>`#${esc(e.num)} ${esc(e.name)}`) : (mylaps.longestStint.nums||[]).map(n=>`#${esc(n)}`)).join(", ") : "")}
+        ${overviewTile("Longest Stint - GTO", mylaps.longestStint ? `${mylaps.longestStint.lapCount} laps` : "—", longestStintSub(mylaps.longestStint))}
       </div>
       ${mylaps.reconstructedFromDb ? `
       <p style="font-family:'JetBrains Mono',monospace;font-size:11px;color:${T.textFaint};margin-top:10px;">
