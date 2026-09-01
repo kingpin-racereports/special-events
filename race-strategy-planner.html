@@ -807,12 +807,21 @@ function parseMylapsLapTimes(doc){
     const laps = [];
     item.querySelectorAll(":scope > laps > laps").forEach(lap => {
       const lapTimeStr = lap.querySelector("lapTime")?.textContent ?? "";
+      // MyLaps documents lap status as an ARRAY (a lap can carry more than
+      // one flag color at once, e.g. during a yellow-to-red transition) —
+      // .querySelector only ever returns the first, silently dropping a
+      // RED that happens to be listed after a YELLOW. Check every status
+      // child and take the most severe one present.
+      const statusValues = Array.from(lap.querySelectorAll("status status")).map(s => s.textContent);
+      const status = statusValues.includes("RED") ? "RED"
+                    : statusValues.includes("YELLOW") ? "YELLOW"
+                    : "GREEN";
       laps.push({
         lap: parseInt(lap.querySelector("lap")?.textContent,10),
         timeOfDay: parseInt(lap.querySelector("timeOfDay")?.textContent,10),
         lapTime: mylapsTimeToSec(lapTimeStr),
         inPit: lap.querySelector("inPit")?.textContent === "true",
-        status: lap.querySelector("status status")?.textContent || "GREEN",
+        status,
       });
     });
     byPos.set(pos, laps);
@@ -876,8 +885,68 @@ function computeFlagPeriods(lapsByPos, statusValue){
 function computeCautions(lapsByPos){
   return computeFlagPeriods(lapsByPos, "YELLOW");
 }
+
+// A genuine red flag (full-course stoppage) does NOT show up in the
+// per-lap `status` field at all — confirmed against real session data
+// that unambiguously had multiple red flags (driver-confirmed lap
+// numbers), yet contained zero "RED" values anywhere. That makes sense:
+// during an actual stoppage no car is crossing the line, so there's no
+// lap being timed to attach a color to.
+//
+// The key discriminator (confirmed against driver-verified ground truth,
+// not just guessed): a long YELLOW — cars still circulating, just slow —
+// produces gaps of a few minutes (250-420s observed). A RED — cars fully
+// parked — produces a SINGLE lap's gap of many multiples of that
+// (1200-15000+s observed, i.e. 20+ minutes), because nothing crosses
+// the line at all until the stoppage ends. Checking gap MAGNITUDE (not
+// just "many cars affected," which a long yellow also triggers) is what
+// actually separates the two.
+//
+// Deliberately does NOT exclude inPit=true laps here (unlike other gap-
+// based logic in this file) — during a red flag the field is commonly
+// directed to stop IN PIT LANE, which MyLaps still tags inPit=true even
+// though it's not a real pit stop. Excluding those laps was confirmed
+// (against real data) to silently drop the leaders — and sometimes most
+// of the field — from red flag events entirely, since they're often the
+// cars closest to pit lane when the flag comes out.
+//
+// With that fixed, a genuine red flag reliably shows 17-26+ distinct
+// cars in the cluster, while coincidental unrelated single-car issues
+// (a mechanical repair, a long unflagged stop) topped out at 4 across
+// two different real sessions (one with 4 confirmed red flags, one with
+// zero) — confirmed with no ambiguous middle ground, so MIN_CARS=10 sits
+// with wide margin on both sides of that gap.
 function computeRedFlags(lapsByPos){
-  return computeFlagPeriods(lapsByPos, "RED");
+  const SINGLE_LAP_THRESHOLD_MS = 600000;   // 10 min — a slow yellow lap doesn't get anywhere near this
+  const CLUSTER_WINDOW_MS = 900000;          // 15 min — merges a stop+regroup+restart sequence into one period
+  const MIN_CARS = 10;                       // wide safety margin: real reds hit 17-26 cars, noise (unrelated single-car issues, including a coincidental 4-car cluster on a different session) topped out at 4
+
+  const events = []; // {timeOfDay, pos}
+  lapsByPos.forEach((laps, pos) => {
+    let prevTod = null;
+    laps.forEach(l => {
+      if (prevTod != null){
+        const gapMs = l.timeOfDay - prevTod;
+        if (gapMs > SINGLE_LAP_THRESHOLD_MS) events.push({ timeOfDay: l.timeOfDay, pos });
+      }
+      prevTod = l.timeOfDay;
+    });
+  });
+  events.sort((a,b)=>a.timeOfDay-b.timeOfDay);
+  if (!events.length) return [];
+
+  const clusters = [];
+  let cur = [events[0]];
+  for (let i=1;i<events.length;i++){
+    if (events[i].timeOfDay - cur[cur.length-1].timeOfDay > CLUSTER_WINDOW_MS){ clusters.push(cur); cur = [events[i]]; }
+    else cur.push(events[i]);
+  }
+  clusters.push(cur);
+
+  return clusters
+    .map(c => ({ carCount: new Set(c.map(e=>e.pos)).size, times: c.map(e=>e.timeOfDay) }))
+    .filter(c => c.carCount >= MIN_CARS)
+    .map(c => ({ count: c.carCount, start: c.times[0], end: c.times[c.times.length-1] }));
 }
 
 // Best-pace and longest green-flag stints (>=3 consecutive non-pit GREEN
