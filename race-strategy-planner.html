@@ -951,7 +951,11 @@ function computeRedFlags(lapsByPos){
 
 // Best-pace and longest green-flag stints (>=3 consecutive non-pit GREEN
 // laps), optionally scoped to a set of result classes.
-function computeStints(classification, lapsByPos, classFilter){
+// Best-pace (min minLapsForBest laps — short stints like a 5-lap opener
+// can post an unrepresentative fast average) and longest (min 3 laps,
+// no further floor) green-flag stints, scoped to classFilter.
+function computeStints(classification, lapsByPos, classFilter, minLapsForBest){
+  minLapsForBest = minLapsForBest || 3;
   const stints = [];
   classification.forEach(r => {
     if (classFilter && classFilter.size && !classFilter.has(r.resultClass)) return;
@@ -968,6 +972,7 @@ function computeStints(classification, lapsByPos, classFilter){
 
   let best = null;
   stints.forEach(s => {
+    if (s.laps.length < minLapsForBest) return;
     const avg = s.laps.reduce((a,l)=>a+l.lapTime,0) / s.laps.length;
     if (!best || avg < best.avg) best = { num: s.num, name: s.name, avg, lapCount: s.laps.length };
   });
@@ -1027,11 +1032,10 @@ async function loadMylapsSession(sessionId, race){
 
   const intervals = computeIntervals(classification);
 
-  // Scope Best Stint / Longest Stint to whichever class(es) this race's own
-  // cars raced in, so the metric is relevant rather than generic.
-  const raceClasses = new Set(
-    race.cars.map(c => classification.find(r=>r.startNumber===c.number)?.resultClass).filter(Boolean)
-  );
+  // Best Stint Pace / Longest Stint are hardcoded to GTO — Kingpin's own
+  // class — rather than derived from whatever class(es) happen to be in
+  // this race's car list, so the label is always accurate and stable.
+  const raceClasses = new Set(["GTO"]);
 
   const running = classification.filter(r => r.status !== "DNS");
   const entries = classification.length;
@@ -1043,7 +1047,7 @@ async function loadMylapsSession(sessionId, race){
   const carsOnLeadLap = running.filter(r => r.lapsBehind === 0).length;
   const cautions = computeCautions(lapsByPos);
   const redFlags = computeRedFlags(lapsByPos);
-  const stints = computeStints(classification, lapsByPos, raceClasses);
+  const stints = computeStints(classification, lapsByPos, raceClasses, 15);
   const lapsLed = computeLapsLed(classification, lapsByPos);
 
   return {
@@ -2030,7 +2034,6 @@ function renderMylapsPanel(race){
   }).join("") : "";
 
   const ov = mylaps.overview;
-  const classLabel = mylaps.raceClasses.length ? ` — ${mylaps.raceClasses.join("/")}` : "";
   const overviewTile = (label, value, sub) => `
     <div class="mylaps-stat-tile">
       <div class="mylaps-stat-label">${label}</div>
@@ -2054,8 +2057,8 @@ function renderMylapsPanel(race){
         ${mylaps.redFlags && mylaps.redFlags.length ? overviewTile("Red Flags", mylaps.redFlags.length) : ""}
         ${overviewTile("Cars on Lead Lap", ov.carsOnLeadLap)}
         ${overviewTile("Most Laps Led", mylaps.lapsLed ? `${mylaps.lapsLed.laps} laps` : "—", mylaps.lapsLed ? `#${esc(mylaps.lapsLed.num)} ${esc(mylaps.lapsLed.name)}` : "")}
-        ${overviewTile(`Best Stint Pace${classLabel}`, mylaps.bestStint ? mylapsFmtTime(mylaps.bestStint.avg) : "—", mylaps.bestStint ? `#${esc(mylaps.bestStint.num)} ${esc(mylaps.bestStint.name)} · ${mylaps.bestStint.lapCount} laps` : "")}
-        ${overviewTile(`Longest Stint${classLabel}`, mylaps.longestStint ? `${mylaps.longestStint.lapCount} laps` : "—", mylaps.longestStint ? mylaps.longestStint.nums.map(n=>"#"+esc(n)).join(", ") : "")}
+        ${overviewTile("Best Stint Pace - GTO", mylaps.bestStint ? mylapsFmtTime(mylaps.bestStint.avg) : "—", mylaps.bestStint ? `#${esc(mylaps.bestStint.num)} ${esc(mylaps.bestStint.name)} · ${mylaps.bestStint.lapCount} laps` : "")}
+        ${overviewTile("Longest Stint - GTO", mylaps.longestStint ? `${mylaps.longestStint.lapCount} laps` : "—", mylaps.longestStint ? mylaps.longestStint.nums.map(n=>"#"+esc(n)).join(", ") : "")}
       </div>
       ${mylaps.reconstructedFromDb ? `
       <p style="font-family:'JetBrains Mono',monospace;font-size:11px;color:${T.textFaint};margin-top:10px;">
