@@ -978,8 +978,12 @@ function computeStints(classification, lapsByPos, classFilter, minLapsForBest){
   });
 
   const maxLen = Math.max(...stints.map(s=>s.laps.length));
-  const longestNums = [...new Set(stints.filter(s=>s.laps.length===maxLen).map(s=>s.num))];
-  return { best, longest: { lapCount: maxLen, nums: longestNums } };
+  const longestEntries = [];
+  const seenNums = new Set();
+  stints.filter(s=>s.laps.length===maxLen).forEach(s => {
+    if (!seenNums.has(s.num)){ seenNums.add(s.num); longestEntries.push({ num: s.num, name: s.name }); }
+  });
+  return { best, longest: { lapCount: maxLen, entries: longestEntries } };
 }
 
 // Reconstructs "laps led" from lap-completion order: at each point in time,
@@ -2058,7 +2062,7 @@ function renderMylapsPanel(race){
         ${overviewTile("Cars on Lead Lap", ov.carsOnLeadLap)}
         ${overviewTile("Most Laps Led", mylaps.lapsLed ? `${mylaps.lapsLed.laps} laps` : "—", mylaps.lapsLed ? `#${esc(mylaps.lapsLed.num)} ${esc(mylaps.lapsLed.name)}` : "")}
         ${overviewTile("Best Stint Pace - GTO", mylaps.bestStint ? mylapsFmtTime(mylaps.bestStint.avg) : "—", mylaps.bestStint ? `#${esc(mylaps.bestStint.num)} ${esc(mylaps.bestStint.name)} · ${mylaps.bestStint.lapCount} laps` : "")}
-        ${overviewTile("Longest Stint - GTO", mylaps.longestStint ? `${mylaps.longestStint.lapCount} laps` : "—", mylaps.longestStint ? mylaps.longestStint.nums.map(n=>"#"+esc(n)).join(", ") : "")}
+        ${overviewTile("Longest Stint - GTO", mylaps.longestStint ? `${mylaps.longestStint.lapCount} laps` : "—", mylaps.longestStint ? (mylaps.longestStint.entries ? mylaps.longestStint.entries.map(e=>`#${esc(e.num)} ${esc(e.name)}`) : (mylaps.longestStint.nums||[]).map(n=>`#${esc(n)}`)).join(", ") : "")}
       </div>
       ${mylaps.reconstructedFromDb ? `
       <p style="font-family:'JetBrains Mono',monospace;font-size:11px;color:${T.textFaint};margin-top:10px;">
