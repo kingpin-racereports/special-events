@@ -869,14 +869,16 @@ const CAUTION_LAP_SECONDS = {
 //
 // This is an estimate, not exact timing; it stands in until real
 // pit-in/pit-out data (e.g. Flagtronics) is available.
-function estimatePitStopTimes(laps, trackName){
-  const RED_FLAG_CEILING_SEC = 600;  // a genuine stop never approaches this
+function estimatePitStopTimes(laps, trackName, redFlagWindows){
+  const STOPPED_SEC = 600;   // a lap this long means the car was parked, not circulating
+  const OFFPACE = 1.25;      // multiple of baseline that counts as "not racing normally"
   const cautionLap = CAUTION_LAP_SECONDS[trackName] || null;
+  const rfw = redFlagWindows || [];
 
   const timed = laps.filter(l => l.lapTime != null);
   if (!timed.length) return { stops: [], avgSeconds: null };
 
-  // Robust baseline: median-anchored so a red-flag lap mis-tagged GREEN
+  // Robust baseline: median-anchored so a stopped lap mis-tagged GREEN
   // (seen in real data) can't drag the reference pace off.
   const greens = timed.filter(l => !l.inPit && l.status === "GREEN").map(l=>l.lapTime).sort((a,b)=>a-b);
   if (!greens.length) return { stops: [], avgSeconds: null };
@@ -885,43 +887,62 @@ function estimatePitStopTimes(laps, trackName){
   const baseline = clean.reduce((a,t)=>a+t,0) / clean.length;
 
   const byLap = new Map(timed.map(l=>[l.lap, l]));
+  const consumed = new Set();
   const stops = [];
 
   timed.forEach((l, i) => {
     if (!l.inPit) return;
-    // Consecutive inPit laps are one stop — only start a new one on the
-    // first of a run (a red flag can flag two laps in a row).
-    const prev = timed[i-1];
-    if (prev && prev.inPit) return;
+    if (i > 0 && timed[i-1].inPit) return;   // consecutive in-pit laps are one visit
+    if (consumed.has(l.lap)) return;         // already folded into an earlier garage cluster
 
-    const underCaution = l.status === "YELLOW";
-    // "Full caution" = the whole in-lap ran at caution pace, which shows
-    // up as the lap approaching a full caution lap in length even before
-    // the stop's own time is removed.
-    const fullCaution = underCaution && cautionLap && l.lapTime >= cautionLap * 0.75;
+    // Walk forward while the car stays badly off-pace — this only detects
+    // garage trips / red-flag parking, it is NOT used to time normal stops.
+    let j = i; const cluster = [l];
+    while (j+1 < timed.length && (timed[j+1].lapTime > baseline*OFFPACE || timed[j+1].inPit)){
+      j++; cluster.push(timed[j]);
+    }
+    cluster.forEach(c => consumed.add(c.lap));
 
-    let estSeconds, unreliable = false;
+    const underCaution = cluster.some(c => c.status === "YELLOW");
+    const clusterStart = cluster[0].timeOfDay - cluster[0].lapTime*1000;
+    const clusterEnd = cluster[cluster.length-1].timeOfDay;
+    const inRedFlag = rfw.some(w => !(clusterEnd < w.start || clusterStart > w.end));
+
+    // Red flag: the car is parked by officials, not being serviced. There's
+    // nothing meaningful to measure, so report the flag rather than a number.
+    if (inRedFlag){
+      stops.push({ lap: l.lap, laps: cluster.map(c=>c.lap), estSeconds: null,
+                   underCaution, kind: "redflag" });
+      return;
+    }
+    // Garage trip: at least one lap long enough that the car was stopped.
+    // Here the whole cluster IS the event, so total time lost is the number.
+    if (cluster.some(c => c.lapTime > STOPPED_SEC)){
+      const loss = cluster.reduce((a,c)=>a+c.lapTime,0) - baseline*cluster.length;
+      stops.push({ lap: l.lap, laps: cluster.map(c=>c.lap), estSeconds: Math.max(0, loss),
+                   underCaution, kind: "garage" });
+      return;
+    }
+
+    // Normal stop. If the whole in-lap ran at caution pace, the out-lap is
+    // inflated too (pit transit before the line), so both are needed and one
+    // caution lap is removed. Otherwise the in-lap alone captures the stop —
+    // deliberately NOT pulling in neighbouring caution laps, which belong to
+    // the caution, not to this stop.
+    const fullCaution = l.status === "YELLOW" && cautionLap && l.lapTime >= cautionLap*0.75;
+    let est;
     if (fullCaution){
-      const outLap = byLap.get(l.lap + 1);
-      estSeconds = outLap
-        ? (l.lapTime + outLap.lapTime) - baseline - cautionLap
-        : l.lapTime - cautionLap;
+      const out = byLap.get(l.lap + 1);
+      est = out ? (l.lapTime + out.lapTime) - baseline - cautionLap : l.lapTime - cautionLap;
     } else {
-      estSeconds = l.lapTime - baseline;
+      est = l.lapTime - baseline;
     }
-    if (l.lapTime > RED_FLAG_CEILING_SEC || estSeconds > RED_FLAG_CEILING_SEC){
-      unreliable = true;
-    }
-    stops.push({
-      lap: l.lap,
-      estSeconds: unreliable ? null : Math.max(0, estSeconds),
-      underCaution,
-      unreliable,
-    });
+    stops.push({ lap: l.lap, laps: [l.lap], estSeconds: Math.max(0, est),
+                 underCaution: l.status === "YELLOW", kind: "pit" });
   });
 
-  const sane = stops.filter(s => !s.unreliable && s.estSeconds != null);
-  const avgSeconds = sane.length ? sane.reduce((a,s)=>a+s.estSeconds,0) / sane.length : null;
+  const sane = stops.filter(s => s.kind === "pit");
+  const avgSeconds = sane.length ? sane.reduce((a,s)=>a+s.estSeconds,0)/sane.length : null;
   return { stops, avgSeconds };
 }
 
@@ -1117,13 +1138,15 @@ async function loadMylapsSession(sessionId, race){
   const classification = parseMylapsClassification(classDoc).filter(r => r.startNumber.toLowerCase() !== "53x");
   const lapsByPos = parseMylapsLapTimes(lapsDoc);
 
+  const redFlagWindows = computeRedFlags(lapsByPos);
+
   const pitStopsByNumber = {};
   const avgPitSecondsByNumber = {};
   const pitStopDetailByNumber = {};
   classification.forEach(r => {
     const laps = lapsByPos.get(r.position) || [];
     pitStopsByNumber[r.startNumber] = countPitStops(laps);
-    const est = estimatePitStopTimes(laps, race && race.track);
+    const est = estimatePitStopTimes(laps, race && race.track, redFlagWindows);
     avgPitSecondsByNumber[r.startNumber] = est.avgSeconds;
     pitStopDetailByNumber[r.startNumber] = est.stops;
   });
@@ -1144,7 +1167,7 @@ async function loadMylapsSession(sessionId, race){
   const totalPitStops = Object.values(pitStopsByNumber).reduce((a,b)=>a+b,0);
   const carsOnLeadLap = running.filter(r => r.lapsBehind === 0).length;
   const cautions = computeCautions(lapsByPos);
-  const redFlags = computeRedFlags(lapsByPos);
+  const redFlags = redFlagWindows;   // computed above, reused here
   const stints = computeStints(classification, lapsByPos, raceClasses, 15);
   const lapsLed = computeLapsLed(classification, lapsByPos);
 
@@ -2223,18 +2246,25 @@ function mylapsPitTimesBlock(car){
   const stops = m.pitStopDetail;
   if (!stops || !stops.length) return "";
 
-  const fmt = sec => `${Math.floor(sec/60)}m ${String(Math.round(sec%60)).padStart(2,"0")}s`;
+  // round to whole seconds FIRST, so 59.7s renders "1m 0s" not "0m 60s"
+  const fmt = sec => {
+    const total = Math.round(sec);
+    return `${Math.floor(total/60)}m ${total%60}s`;
+  };
+
   const rows = stops.map((s,i) => {
-    const label = `Stop ${i+1}`;
-    const lapNote = `<span style="color:var(--textFaint);">lap ${s.lap}</span>`;
-    const flag = s.underCaution
-      ? `<span title="Under caution" style="color:${T.amber};margin-left:6px;">${icon("flag",11)}</span>`
-      : "";
-    const val = s.unreliable
-      ? `<span style="color:var(--textFaint);">red flag</span>`
+    const lapLabel = (s.laps && s.laps.length > 1)
+      ? `laps ${s.laps[0]}\u2013${s.laps[s.laps.length-1]}`
+      : `lap ${s.lap}`;
+    const caution = s.underCaution
+      ? `<span title="Under caution" style="color:${T.amber};margin-left:5px;">${icon("flag",11)}</span>` : "";
+    const wrench = s.kind === "garage"
+      ? `<span title="Extended stop \u2014 likely garage repairs" style="margin-left:4px;">\uD83D\uDD27</span>` : "";
+    const val = s.kind === "redflag"
+      ? `<span style="color:${T.red};">Red Flag</span>`
       : fmt(s.estSeconds);
     return `<div class="summary-driver">
-      <span>${label} ${lapNote}${flag}</span>
+      <span>Stop ${i+1} <span style="color:var(--textFaint);">${lapLabel}</span>${caution}${wrench}</span>
       <span class="font-mono">${val}</span>
     </div>`;
   }).join("");
@@ -2250,12 +2280,17 @@ function mylapsPitTimesBlock(car){
     <div class="summary-box">
       <div class="summary-driver" style="margin-bottom:6px;">
         <span></span>
-        <span class="fin-label" style="margin:0;">${icon("timer",12)} Estimated Pit Times</span>
+        <span class="fin-label" style="margin:0;">${icon("timer",12)} Estimated Pit Stop Time</span>
       </div>
       <div class="summary-drivers">
         ${rows}
         ${avgRow}
       </div>
+      <p style="font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.5;color:var(--textFaint);margin:10px 0 0;">
+        Values compare in/out laps against the car's average lap, taking Code 35 into
+        consideration where applicable. ${icon("flag",9)} under caution &nbsp;\uD83D\uDD27 extended stop.
+        Red flag periods can't be measured and are shown as such.
+      </p>
     </div>`;
 }
 
