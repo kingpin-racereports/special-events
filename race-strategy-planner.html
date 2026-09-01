@@ -980,7 +980,7 @@ function matchMylapsToRaceCars(race, mylaps){
       car, found: true,
       position: row.position, positionInClass: row.positionInClass,
       status: row.status, resultClass: row.resultClass,
-      bestTime: row.bestTime, bestLap: row.bestLap,
+      bestTime: row.bestTime, bestLap: row.bestLap, bestSpeed: row.bestSpeed,
       numberOfLaps: row.numberOfLaps,
       pitStops: mylaps.pitStopsByNumber[car.number] ?? 0,
     };
@@ -1901,7 +1901,9 @@ function mylapsCarHeaderBlock(car){
     <div class="mylaps-header-block">
       <div class="mylaps-carstat-grid">
         ${tile("Finish", `P${m.positionInClass || m.position}`, statusBadge || null)}
+        ${tile("Overall Position", `P${m.position}`)}
         ${tile("Fastest Lap", m.bestTime && m.bestTime!=="00.000" ? esc(m.bestTime) : "—")}
+        ${tile("Highest Speed Avg", m.bestSpeed ? `${m.bestSpeed.toFixed(1)} mph` : "—")}
         ${tile("Pit Stops", m.pitStops)}
         ${tile("Laps Completed", m.numberOfLaps)}
       </div>
