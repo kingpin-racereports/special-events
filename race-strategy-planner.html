@@ -856,19 +856,28 @@ function computeIntervals(classification){
 // Clusters YELLOW-flagged laps by time gap (>10min = separate caution
 // periods) across the whole field. Mirrors the caution-period reconstruction
 // validated in the standalone prototype.
-function computeCautions(lapsByPos){
-  const yellowTimes = [];
-  lapsByPos.forEach(laps => laps.forEach(l => { if (l.status === "YELLOW") yellowTimes.push(l.timeOfDay); }));
-  yellowTimes.sort((a,b)=>a-b);
-  if (!yellowTimes.length) return [];
+// Shared clustering logic for flag-status periods: groups laps carrying a
+// given status by time gap (>10min = a new distinct period). Used for
+// both cautions (YELLOW) and red flags (RED) below.
+function computeFlagPeriods(lapsByPos, statusValue){
+  const times = [];
+  lapsByPos.forEach(laps => laps.forEach(l => { if (l.status === statusValue) times.push(l.timeOfDay); }));
+  times.sort((a,b)=>a-b);
+  if (!times.length) return [];
   const clusters = [];
-  let cur = [yellowTimes[0]];
-  for (let i=1;i<yellowTimes.length;i++){
-    if (yellowTimes[i] - cur[cur.length-1] > 600000){ clusters.push(cur); cur = [yellowTimes[i]]; }
-    else cur.push(yellowTimes[i]);
+  let cur = [times[0]];
+  for (let i=1;i<times.length;i++){
+    if (times[i] - cur[cur.length-1] > 600000){ clusters.push(cur); cur = [times[i]]; }
+    else cur.push(times[i]);
   }
   clusters.push(cur);
   return clusters.map(c => ({ count: c.length, start: c[0], end: c[c.length-1] }));
+}
+function computeCautions(lapsByPos){
+  return computeFlagPeriods(lapsByPos, "YELLOW");
+}
+function computeRedFlags(lapsByPos){
+  return computeFlagPeriods(lapsByPos, "RED");
 }
 
 // Best-pace and longest green-flag stints (>=3 consecutive non-pit GREEN
@@ -964,6 +973,7 @@ async function loadMylapsSession(sessionId, race){
   const totalPitStops = Object.values(pitStopsByNumber).reduce((a,b)=>a+b,0);
   const carsOnLeadLap = running.filter(r => r.lapsBehind === 0).length;
   const cautions = computeCautions(lapsByPos);
+  const redFlags = computeRedFlags(lapsByPos);
   const stints = computeStints(classification, lapsByPos, raceClasses);
   const lapsLed = computeLapsLed(classification, lapsByPos);
 
@@ -971,7 +981,7 @@ async function loadMylapsSession(sessionId, race){
     sessionId, fetchedAt: new Date().toISOString(),
     classification, pitStopsByNumber, intervals,
     overview: { entries, finishers, dnf, dns, totalLaps, totalPitStops, carsOnLeadLap },
-    cautions, bestStint: stints.best, longestStint: stints.longest, lapsLed,
+    cautions, redFlags, bestStint: stints.best, longestStint: stints.longest, lapsLed,
     raceClasses: [...raceClasses],
   };
 }
@@ -998,6 +1008,7 @@ async function saveMylapsResultsToSupabase(raceId, mylaps){
   const { error: summaryErr } = await supabase.from("mylaps_race_summary").upsert({
     race_id: raceId, session_id: mylaps.sessionId,
     cautions: mylaps.cautions || [],
+    red_flags: mylaps.redFlags || [],
     laps_led: mylaps.lapsLed || null,
     best_stint: mylaps.bestStint || null,
     longest_stint: mylaps.longestStint || null,
@@ -1056,6 +1067,7 @@ async function loadMylapsResultsFromSupabase(raceId){
     classification, pitStopsByNumber, intervals,
     overview: { entries, finishers, dnf, dns, totalLaps, totalPitStops, carsOnLeadLap },
     cautions: summaryData ? (summaryData.cautions || []) : [],
+    redFlags: summaryData ? (summaryData.red_flags || []) : [],
     lapsLed: summaryData ? summaryData.laps_led : null,
     bestStint: summaryData ? summaryData.best_stint : null,
     longestStint: summaryData ? summaryData.longest_stint : null,
@@ -1970,6 +1982,7 @@ function renderMylapsPanel(race){
         ${overviewTile("Entries", ov.entries)}
         ${overviewTile("Finishers", ov.finishers, `${ov.dnf} DNF`)}
         ${overviewTile("Total Cautions", mylaps.cautions.length)}
+        ${mylaps.redFlags && mylaps.redFlags.length ? overviewTile("Red Flags", mylaps.redFlags.length) : ""}
         ${overviewTile("Cars on Lead Lap", ov.carsOnLeadLap)}
         ${overviewTile("Most Laps Led", mylaps.lapsLed ? `${mylaps.lapsLed.laps} laps` : "—", mylaps.lapsLed ? `#${esc(mylaps.lapsLed.num)} ${esc(mylaps.lapsLed.name)}` : "")}
         ${overviewTile(`Best Stint Pace${classLabel}`, mylaps.bestStint ? mylapsFmtTime(mylaps.bestStint.avg) : "—", mylaps.bestStint ? `#${esc(mylaps.bestStint.num)} ${esc(mylaps.bestStint.name)} · ${mylaps.bestStint.lapCount} laps` : "")}
