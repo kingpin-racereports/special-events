@@ -732,28 +732,36 @@ function mylapsTimeToSec(s){
   return parseInt(parts[0],10)*3600 + parseInt(parts[1],10)*60 + parseFloat(parts[2]);
 }
 
-async function fetchMylapsXML(url){
-  const res = await fetch(url, { headers: { "Accept": "application/xml, text/xml" } });
-  if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
-  const text = await res.text();
-  const contentType = res.headers.get("content-type") || "";
-
-  // If MyLaps ignored our Accept header and sent JSON instead, surface that
-  // clearly rather than feeding JSON into an XML parser.
-  const looksLikeJson = contentType.includes("json") || /^\s*[\[{]/.test(text);
-  if (looksLikeJson){
-    throw new Error(`MyLaps returned JSON instead of XML for ${url} (content-type: ${contentType || "unknown"}). First 200 chars: ${text.slice(0,200)}`);
+// Fetches session XML (classification or alllaptimes) via our Supabase
+// Edge Function proxy (supabase/functions/mylaps-proxy) rather than
+// fetching api2.mylaps.com directly from the browser. Confirmed via
+// browser console that MyLaps rejects cross-origin requests from this
+// app's domain with a 403 (no Access-Control-Allow-Origin header) —
+// almost certainly an origin allowlist, which no client-side fix can get
+// around. The Edge Function fetches server-side instead, where no browser
+// Origin restriction applies, and hands back { xml: "<...>" }.
+async function fetchMylapsXML(sessionId, type){
+  const { data, error } = await supabase.functions.invoke("mylaps-proxy", {
+    body: { sessionId, type },
+  });
+  if (error){
+    throw new Error(`MyLaps proxy request failed for session ${sessionId} (${type}): ${error.message || error}`);
+  }
+  if (!data || typeof data.xml !== "string"){
+    const detail = data && data.error ? data.error : "no xml field in response";
+    throw new Error(`MyLaps proxy returned an unexpected response for session ${sessionId} (${type}): ${detail}`);
   }
 
+  const text = data.xml;
   const xmlStart = text.indexOf("<");
   if (xmlStart === -1){
-    throw new Error(`Response for ${url} doesn't look like XML or JSON. First 200 chars: ${text.slice(0,200)}`);
+    throw new Error(`MyLaps returned no XML for session ${sessionId} (${type}). First 200 chars: ${text.slice(0,200)}`);
   }
   const parser = new DOMParser();
   const doc = parser.parseFromString(text.slice(xmlStart), "text/xml");
   const errNode = doc.querySelector("parsererror");
   if (errNode){
-    throw new Error(`Could not parse MyLaps XML response for ${url}. Content-type: ${contentType || "unknown"}. First 300 chars: ${text.slice(0,300)}`);
+    throw new Error(`Could not parse MyLaps XML response for session ${sessionId} (${type}). First 300 chars: ${text.slice(0,300)}`);
   }
   return doc;
 }
@@ -923,8 +931,8 @@ function mylapsFmtTime(sec){
 // for the archive panel. Excludes non-running "x" entries throughout.
 async function loadMylapsSession(sessionId, race){
   const [classDoc, lapsDoc] = await Promise.all([
-    fetchMylapsXML(`https://api2.mylaps.com/sessions/${sessionId}/classification`),
-    fetchMylapsXML(`https://api2.mylaps.com/sessions/${sessionId}/alllaptimes`),
+    fetchMylapsXML(sessionId, "classification"),
+    fetchMylapsXML(sessionId, "alllaptimes"),
   ]);
   const classification = parseMylapsClassification(classDoc).filter(r => r.startNumber.toLowerCase() !== "53x");
   const lapsByPos = parseMylapsLapTimes(lapsDoc);
