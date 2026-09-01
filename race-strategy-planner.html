@@ -330,6 +330,12 @@
   .mylaps-badge{font-family:'JetBrains Mono',monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:0.07em;padding:2px 6px;border-radius:5px;}
   .mylaps-badge.dnf{background:rgba(226,68,92,0.15);color:var(--red);}
   .mylaps-badge.dns{background:#000;color:#7A7F8C;}
+  .mylaps-spinner{
+    width:28px;height:28px;border-radius:50%;
+    border:3px solid rgba(224,184,75,0.18);border-top-color:var(--gold);
+    animation:mylaps-spin 0.8s linear infinite;
+  }
+  @keyframes mylaps-spin{ to{ transform:rotate(360deg); } }
   .btn-gold:disabled{background:var(--panelRaised);color:var(--textFaint);cursor:not-allowed;}
 
   .top-actions{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;}
@@ -611,6 +617,7 @@ let state = {
   mylapsLoading: false,     // UI-only: fetch in progress
   mylapsError: null,        // UI-only: last fetch/parse error message
   mylapsShowFullField: false, // UI-only: full standings table expanded
+  mylapsAutoLoading: false, // UI-only: fetching saved results from Supabase after opening an archived race
 };
 
 // ---- persistence (Supabase — see supabase-client.js for setup) ----
@@ -1807,12 +1814,16 @@ function renderPlan(){
   // the end rather than staying in whatever order the cars were originally
   // entered in. Sort is stable, so ties (e.g. two DNFs) keep their
   // original relative order.
+  // getEffectiveFinishPosition() can return a number, "DNF", "DNS", or
+  // null — only the number case sorts meaningfully, so DNF/DNS/unset all
+  // collapse to Infinity here and sink to the bottom together (stable
+  // sort keeps their original relative order among themselves).
+  const finishSortKey = (car) => {
+    const pos = getEffectiveFinishPosition(car, race);
+    return typeof pos === "number" ? pos : Infinity;
+  };
   const sortedCarPlans = archived
-    ? [...plan.carPlans].sort((a,b)=>{
-        const av = getEffectiveFinishPosition(a.car, race) ?? Infinity;
-        const bv = getEffectiveFinishPosition(b.car, race) ?? Infinity;
-        return av - bv;
-      })
+    ? [...plan.carPlans].sort((a,b)=> finishSortKey(a.car) - finishSortKey(b.car))
     : plan.carPlans;
   const primaryCar = sortedCarPlans[0] && sortedCarPlans[0].car;
   const podium = archived && primaryCar ? podiumColor(getEffectiveFinishPosition(primaryCar, race)) : null;
@@ -1873,14 +1884,35 @@ function infoChip(iconName,label,value){
 // only. Either an "Import" prompt (session id input) or, once
 // race.mylaps is populated, a compact by-car summary plus a collapsible
 // full-field standings table.
+// MyLaps Speedhive import panel — visible to EVERYONE for archived races
+// (engineers and read-only viewers alike), since it's just showing race
+// results once they exist. Only the actual import controls (the "Import"
+// button, the session-id form, "Re-import") are engineer-gated — those
+// are the only things that write data. Three states: a centered loading
+// spinner while state.mylapsAutoLoading is true (the brief window while
+// loadMylapsResultsFromSupabase() runs after opening the race), a
+// "results not available" message for non-engineers (or the Import
+// prompt for engineers) once that resolves with nothing, or the full
+// results view once race.mylaps is populated.
 function renderMylapsPanel(race){
-  if (!race || !state.isEngineer) return "";
+  if (!race) return "";
   const mylaps = race.mylaps;
+
+  if (state.mylapsAutoLoading){
+    return `
+      <div class="mylaps-panel fade-in" style="display:flex;justify-content:center;padding:32px 20px;">
+        <div class="mylaps-spinner"></div>
+      </div>`;
+  }
 
   if (!mylaps){
     return `
       <div class="mylaps-panel fade-in">
-        ${!state.mylapsImporting ? `
+        ${!state.isEngineer ? `
+          <p style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--textFaint);margin:8px 0;">
+            Race results are not official.
+          </p>
+        ` : !state.mylapsImporting ? `
           <div style="display:flex;justify-content:center;">
             <button class="btn-gold" style="display:inline-flex;padding:10px 18px;" data-act="mylaps-open">${icon("timer",14)} Import MyLaps Results</button>
           </div>
@@ -1929,7 +1961,7 @@ function renderMylapsPanel(race){
     <div class="mylaps-panel fade-in">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
         <span class="eyebrow" style="color:${T.gold};">Race Overview</span>
-        <button class="link-muted" data-act="mylaps-reimport" style="font-size:11px;">${icon("rotate",12)} Re-import</button>
+        ${state.isEngineer ? `<button class="link-muted" data-act="mylaps-reimport" style="font-size:11px;">${icon("rotate",12)} Re-import</button>` : ""}
       </div>
 
       <div class="mylaps-overview-grid">
@@ -2552,14 +2584,14 @@ async function handleAction(act, el){
       // Record where we came from (Home or Archive) so Back returns there
       // rather than always dumping the user on Home.
       if (full){
+        if (full.status === "archived") state.mylapsAutoLoading = true;
         navPush(); openRace(full);
         if (full.status === "archived"){
           loadMylapsResultsFromSupabase(raceId).then(mylaps=>{
-            if (mylaps){
-              const r = state.races.find(r=>r.id===raceId);
-              if (r) r.mylaps = mylaps;
-              render();
-            }
+            const r = state.races.find(r=>r.id===raceId);
+            if (r && mylaps) r.mylaps = mylaps;
+            state.mylapsAutoLoading = false;
+            render();
           });
         }
       }
