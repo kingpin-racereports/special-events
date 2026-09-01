@@ -969,6 +969,94 @@ async function loadMylapsSession(sessionId, race){
   };
 }
 
+// Persists the classification-level summary (NOT lap-by-lap data — that's
+// intentionally not stored, see mylaps_results_migration.sql) so the
+// import is visible to every engineer/driver, on any device, without
+// needing to re-fetch from MyLaps. Upserts one row per car, keyed on
+// (race_id, start_number), so re-importing updates in place.
+async function saveMylapsResultsToSupabase(raceId, mylaps){
+  const rows = mylaps.classification.map(r => ({
+    race_id: raceId, session_id: mylaps.sessionId,
+    start_number: r.startNumber, team_name: r.name, result_class: r.resultClass, status: r.status,
+    position: r.position, position_in_class: r.positionInClass, laps_behind: r.lapsBehind,
+    total_time: r.totalTime, best_time: r.bestTime, best_lap: r.bestLap, best_speed: r.bestSpeed,
+    number_of_laps: r.numberOfLaps, pit_stops: mylaps.pitStopsByNumber[r.startNumber] ?? 0,
+    fetched_at: mylaps.fetchedAt,
+  }));
+  const { error: resultsErr } = await supabase.from("mylaps_results").upsert(rows, { onConflict: "race_id,start_number" });
+  if (resultsErr) console.error("saveMylapsResultsToSupabase (mylaps_results) failed:", resultsErr);
+
+  // Cautions/laps-led/best-stint/longest-stint are already-computed plain
+  // objects (see loadMylapsSession) — saved as-is, not recomputed here.
+  const { error: summaryErr } = await supabase.from("mylaps_race_summary").upsert({
+    race_id: raceId, session_id: mylaps.sessionId,
+    cautions: mylaps.cautions || [],
+    laps_led: mylaps.lapsLed || null,
+    best_stint: mylaps.bestStint || null,
+    longest_stint: mylaps.longestStint || null,
+    fetched_at: mylaps.fetchedAt,
+  }, { onConflict: "race_id" });
+  if (summaryErr) console.error("saveMylapsResultsToSupabase (mylaps_race_summary) failed:", summaryErr);
+
+  return !resultsErr && !summaryErr;
+}
+
+// Reconstructs a mylaps-shaped object from mylaps_results +
+// mylaps_race_summary, for reopening an archived race without re-fetching
+// from MyLaps. Everything the fresh-import view shows comes back fully,
+// including Total Cautions/Most Laps Led/Best Stint Pace/Longest Stint —
+// those are read back from mylaps_race_summary rather than recomputed,
+// since the raw lap-by-lap data itself isn't stored.
+//
+// `reconstructedFromDb: true` only when mylaps_race_summary has no row
+// for this race — meaning it was imported before this table existed.
+// That's the one case those four tiles still need a fresh Re-import.
+async function loadMylapsResultsFromSupabase(raceId){
+  const [{ data, error }, { data: summaryData, error: summaryErr }] = await Promise.all([
+    supabase.from("mylaps_results").select("*").eq("race_id", raceId),
+    supabase.from("mylaps_race_summary").select("*").eq("race_id", raceId).maybeSingle(),
+  ]);
+  if (error){ console.error("loadMylapsResultsFromSupabase (mylaps_results) failed:", error); return null; }
+  if (summaryErr) console.error("loadMylapsResultsFromSupabase (mylaps_race_summary) failed:", summaryErr);
+  if (!data || !data.length) return null;
+
+  const classification = data.map(row => ({
+    position: row.position, positionInClass: row.position_in_class,
+    startNumber: row.start_number, resultClass: row.result_class,
+    name: row.team_name, status: row.status,
+    numberOfLaps: row.number_of_laps, bestLap: row.best_lap,
+    bestTime: row.best_time, bestSpeed: row.best_speed != null ? Number(row.best_speed) : 0,
+    totalTime: row.total_time, totalTimeSec: mylapsTimeToSec(row.total_time),
+    lapsBehind: row.laps_behind ?? 0, timeDiffSec: 0,
+  })).sort((a,b)=>a.position-b.position);
+
+  const pitStopsByNumber = {};
+  data.forEach(row => { pitStopsByNumber[row.start_number] = row.pit_stops ?? 0; });
+
+  const intervals = computeIntervals(classification);
+
+  const running = classification.filter(r => r.status !== "DNS");
+  const entries = classification.length;
+  const finishers = classification.filter(r => r.status === "Normal").length;
+  const dnf = classification.filter(r => r.status === "DNF").length;
+  const dns = classification.filter(r => r.status === "DNS").length;
+  const totalLaps = classification.length ? Math.max(...classification.map(r=>r.numberOfLaps)) : 0;
+  const totalPitStops = Object.values(pitStopsByNumber).reduce((a,b)=>a+b,0);
+  const carsOnLeadLap = running.filter(r => r.lapsBehind === 0).length;
+
+  return {
+    sessionId: data[0].session_id, fetchedAt: data[0].fetched_at,
+    classification, pitStopsByNumber, intervals,
+    overview: { entries, finishers, dnf, dns, totalLaps, totalPitStops, carsOnLeadLap },
+    cautions: summaryData ? (summaryData.cautions || []) : [],
+    lapsLed: summaryData ? summaryData.laps_led : null,
+    bestStint: summaryData ? summaryData.best_stint : null,
+    longestStint: summaryData ? summaryData.longest_stint : null,
+    raceClasses: [...new Set(classification.map(r=>r.resultClass).filter(Boolean))],
+    reconstructedFromDb: !summaryData,
+  };
+}
+
 // Matches this race's own cars (by car number) against imported MyLaps
 // classification rows, for the compact "By Car" summary.
 function matchMylapsToRaceCars(race, mylaps){
@@ -1855,6 +1943,10 @@ function renderMylapsPanel(race){
         ${overviewTile(`Best Stint Pace${classLabel}`, mylaps.bestStint ? mylapsFmtTime(mylaps.bestStint.avg) : "—", mylaps.bestStint ? `#${esc(mylaps.bestStint.num)} ${esc(mylaps.bestStint.name)} · ${mylaps.bestStint.lapCount} laps` : "")}
         ${overviewTile(`Longest Stint${classLabel}`, mylaps.longestStint ? `${mylaps.longestStint.lapCount} laps` : "—", mylaps.longestStint ? mylaps.longestStint.nums.map(n=>"#"+esc(n)).join(", ") : "")}
       </div>
+      ${mylaps.reconstructedFromDb ? `
+      <p style="font-family:'JetBrains Mono',monospace;font-size:11px;color:${T.textFaint};margin-top:10px;">
+        This race was imported before caution/stint/laps-led tracking was added — Re-import to fill those four in.
+      </p>` : ""}
 
       <button class="link-muted" data-act="mylaps-toggle-field" style="margin-top:16px;font-size:12px;">
         ${state.mylapsShowFullField ? "Hide" : "Show"} full-field standings ${icon(state.mylapsShowFullField?"chevronUp":"chevronDown",12)}
@@ -2459,7 +2551,18 @@ async function handleAction(act, el){
       const full = await fetchFullRace(raceId);
       // Record where we came from (Home or Archive) so Back returns there
       // rather than always dumping the user on Home.
-      if (full){ navPush(); openRace(full); }
+      if (full){
+        navPush(); openRace(full);
+        if (full.status === "archived"){
+          loadMylapsResultsFromSupabase(raceId).then(mylaps=>{
+            if (mylaps){
+              const r = state.races.find(r=>r.id===raceId);
+              if (r) r.mylaps = mylaps;
+              render();
+            }
+          });
+        }
+      }
       break;
     }
     case "del-race":
@@ -2626,11 +2729,16 @@ async function handleAction(act, el){
       try {
         const race = state.races.find(r=>r.id===state.currentRaceId);
         const mylaps = await loadMylapsSession(sessionId, race);
-        // NOTE: race.mylaps is in-memory only for now — there's no
-        // Supabase table for imported MyLaps results yet, so this data
-        // won't survive a page reload. Re-import will be needed each
-        // session until that table exists.
-        if (race){ race.mylaps = mylaps; }
+        if (race){
+          race.mylaps = mylaps;
+          const saved = await saveMylapsResultsToSupabase(race.id, mylaps);
+          // Data is visible for the rest of this session either way — the
+          // failure mode here is just "didn't make it to Supabase", not
+          // "nothing loaded". Logged to console by saveMylapsResultsToSupabase;
+          // left as a residual state.mylapsError too in case Re-import is
+          // opened again this session.
+          if (!saved) state.mylapsError = "Results loaded, but saving to the archive failed — check the console, then try Re-import.";
+        }
         state.mylapsImporting = false; state.mylapsLoading = false;
       } catch (err) {
         state.mylapsLoading = false;
