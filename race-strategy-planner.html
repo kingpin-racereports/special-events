@@ -191,6 +191,19 @@
   .summary-driver{display:flex;align-items:center;justify-content:space-between;font-size:13.5px;}
   .summary-driver span:first-child{color:var(--textMuted);}
   .summary-driver span:last-child{color:var(--text);font-weight:500;}
+
+  /* Pit Stop Times table (inside a car's collapsible tile) - own columns
+     for Stop / Time / Driver / Flag rather than cramming icons after the
+     stop number, so caution/driver-change/red-flag markers read as their
+     own scannable column instead of inline clutter. */
+  .pit-table{width:100%;border-collapse:collapse;}
+  .pit-table thead th{text-align:left;font-family:'JetBrains Mono',monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:0.06em;color:var(--textFaint);padding:0 6px 6px;border-bottom:1px solid var(--border);font-weight:500;white-space:nowrap;}
+  .pit-table tbody td{padding:6px;font-size:12.5px;border-bottom:1px solid rgba(42,52,104,0.5);white-space:nowrap;}
+  .pit-table tbody tr:last-child td{border-bottom:none;}
+  .pit-table td.pit-time{font-family:'JetBrains Mono',monospace;font-weight:600;text-align:right;}
+  .pit-table td.pit-driver{color:var(--textMuted);}
+  .pit-table td.pit-flag{text-align:center;}
+  .pit-flag-dot{display:inline-block;width:8px;height:8px;border-radius:50%;}
   .chip{border-radius:12px;background:var(--panel);border:1px solid var(--border);padding:10px 12px;display:flex;align-items:center;gap:8px;}
   .chip .ico{color:var(--textFaint);}
   .chip .lbl{font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--textFaint);}
@@ -1212,7 +1225,7 @@ async function loadMylapsResultsFromSupabase(raceId){
 async function loadRedmistPitCyclesFromSupabase(raceId){
   const { data, error } = await supabase
     .from("redmist_pit_cycles")
-    .select("car_number, stop_num, duration_pdm_seconds, duration_clockgap_seconds, red_flag_overlap, under_caution, needs_review, notes, driver_change_reported")
+    .select("car_number, stop_num, duration_pdm_seconds, duration_clockgap_seconds, red_flag_overlap, under_caution, needs_review, notes, driver_change_reported, driver_in_reported, driver_in_confirmed")
     .eq("race_id", raceId)
     .order("car_number", { ascending: true })
     .order("stop_num", { ascending: true });
@@ -1232,6 +1245,11 @@ async function loadRedmistPitCyclesFromSupabase(raceId){
       needsReview: row.needs_review,
       notes: row.notes,
       driverChanged: row.driver_change_reported,
+      // Prefer a manually confirmed driver name over Red Mist's raw report,
+      // matching the correction-layer pattern the schema was designed for
+      // (see redmist_pit_cycles migration - driver identity from Red Mist
+      // alone is known unreliable, confirmed during earlier validation).
+      driverIn: row.driver_in_confirmed || row.driver_in_reported,
     });
   }
 
@@ -2278,17 +2296,24 @@ function pitCycleBlock(car){
 
     const wrench = s.needsReview
       ? `<span title="${esc(s.notes) || "Needs review \u2014 numbers don't fit a normal stop"}" style="margin-left:4px;">\uD83D\uDD27</span>` : "";
+
+    // Driver column: incoming driver's name (as reported by Red Mist, or a
+    // manual correction if one exists - see loadRedmistPitCyclesFromSupabase),
+    // with the swap icon alongside when this stop was a driver change.
     const helmet = s.driverChanged
       ? `<span title="Driver change" style="margin-left:4px;">\uD83D\uDD04</span>` : "";
-    // Small colored dot rather than an emoji flag glyph, so the color is
-    // exact and consistent with the amber/red theme used elsewhere in this
-    // block (emoji render in their own fixed colors, not CSS-controllable -
-    // see the driver-change icon above, which stays whatever color its
-    // font renders it in). Independent of driverChanged - a stop can be
-    // both a caution stop AND a driver change, and both markers show
-    // together when that happens.
-    const caution = s.underCaution
-      ? `<span title="Under caution" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${T.amber};margin-left:5px;"></span>` : "";
+    const driverCell = `${esc(s.driverIn || "\u2014")}${helmet}`;
+
+    // Flag column: mutually exclusive, matching how duration coloring
+    // already treats them - a stop overlapping a red flag shows the red
+    // dot and nothing else; caution (yellow) shows the amber dot; neither
+    // shows a blank cell.
+    let flagCell = "";
+    if (s.redFlagOverlap){
+      flagCell = `<span class="pit-flag-dot" style="background:${T.red};" title="Red flag"></span>`;
+    } else if (s.underCaution){
+      flagCell = `<span class="pit-flag-dot" style="background:${T.amber};" title="Under caution"></span>`;
+    }
 
     // Outlier coloring: how far this stop's real duration sits from this
     // car's own average for the race - a long fuel-only stop, a slow
@@ -2300,9 +2325,9 @@ function pitCycleBlock(car){
     // severe outlier is never capped at the same amber as a merely-long
     // stop - only red-flag stops skip this, since there's no real duration
     // to grade there at all.
-    let val;
+    let timeCell;
     if (s.redFlagOverlap){
-      val = `<span style="color:${T.red};">Red Flag</span>`;
+      timeCell = `<span style="color:${T.red};">Red Flag</span>`;
     } else {
       const displaySeconds = isGarageTrip ? s.clockGapSeconds : s.pdmSeconds;
       const ratio = avgSeconds && displaySeconds != null ? displaySeconds / avgSeconds : null;
@@ -2310,17 +2335,19 @@ function pitCycleBlock(car){
                   : ratio != null && ratio >= 1.5 ? T.amber
                   : null;
       const text = fmt(displaySeconds);
-      val = color ? `<span style="color:${color};">${text}</span>` : text;
+      timeCell = color ? `<span style="color:${color};">${text}</span>` : text;
     }
 
-    return `<div class="summary-driver">
-      <span>Stop ${s.stopNum}${wrench}${helmet}${caution}</span>
-      <span class="font-mono">${val}</span>
-    </div>`;
+    return `<tr>
+      <td>${s.stopNum}${wrench}</td>
+      <td class="pit-time">${timeCell}</td>
+      <td class="pit-driver">${driverCell}</td>
+      <td class="pit-flag">${flagCell}</td>
+    </tr>`;
   }).join("");
 
   const avgRow = avgSeconds != null
-    ? `<div class="summary-driver" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
+    ? `<div class="summary-driver" style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border);">
          <span class="fin-label" style="margin:0;">Average</span>
          <span class="font-mono">${fmt(avgSeconds)}</span>
        </div>`
@@ -2332,10 +2359,11 @@ function pitCycleBlock(car){
         <span></span>
         <span class="fin-label" style="margin:0;">${icon("timer",12)} Pit Stop Times</span>
       </div>
-      <div class="summary-drivers">
-        ${rows}
-        ${avgRow}
-      </div>
+      <table class="pit-table">
+        <thead><tr><th>Stop</th><th style="text-align:right;">Time</th><th>Driver</th><th style="text-align:center;">Flag</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      ${avgRow}
       <p style="font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.5;color:var(--textFaint);margin:10px 0 0;">
         Real pit-in/pit-out timing from Red Mist Timing data.
       </p>
