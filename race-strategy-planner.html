@@ -1278,6 +1278,71 @@ async function loadMylapsResultsFromSupabase(raceId){
   };
 }
 
+// Loads real pit-in/pit-out cycles from Red Mist Timing, when available for
+// this race (see redmist-backfill project: pulls Red Mist's LoadCarLaps data,
+// derives pit-in/pit-out timestamps and durations, and upserts into
+// redmist_pit_cycles keyed on race_id/car_number/stop_num).
+//
+// Grouped by car_number into the same shape mylapsPitTimesBlock() already
+// expects from mylaps.pitStopDetailByNumber (stops[], each with lap label(s),
+// underCaution, kind, estSeconds) so the existing render function can be
+// reused with minimal changes — see renderPitTimesBlock() below, which reads
+// from EITHER this or the MyLaps estimate, preferring this when both exist.
+//
+// duration_pdm_seconds is the trusted real duration (validated against a
+// crew stopwatch — see project notes). red_flag_overlap marks stops where
+// the reported pdm can't be trusted because a session-wide stoppage
+// happened during the stop; those render as "Red Flag" same as MyLaps'
+// existing redflag kind, for a consistent look regardless of data source.
+// needs_review marks stops (like a real garage repair) where the numbers
+// don't match a normal pit stop pattern at all and a human should confirm
+// what actually happened via the notes field.
+async function loadRedmistPitCyclesFromSupabase(raceId){
+  const { data, error } = await supabase
+    .from("redmist_pit_cycles")
+    .select("*")
+    .eq("race_id", raceId)
+    .order("car_number", { ascending: true })
+    .order("stop_num", { ascending: true });
+
+  if (error){ console.error("loadRedmistPitCyclesFromSupabase failed:", error); return null; }
+  if (!data || !data.length) return null;
+
+  const byCarNumber = {};
+  for (const row of data){
+    if (!byCarNumber[row.car_number]) byCarNumber[row.car_number] = [];
+
+    const driverOut = row.driver_out_confirmed || row.driver_out_reported;
+    const driverIn = row.driver_in_confirmed || row.driver_in_reported;
+
+    let kind = "pit";
+    if (row.red_flag_overlap) kind = "redflag";
+    else if (row.needs_review) kind = "garage";
+
+    byCarNumber[row.car_number].push({
+      lap: row.pit_in_lap_estimated,
+      laps: (row.pit_in_lap_estimated != null && row.pit_out_lap_estimated != null
+             && row.pit_in_lap_estimated !== row.pit_out_lap_estimated)
+        ? [row.pit_in_lap_estimated, row.pit_out_lap_estimated]
+        : (row.pit_in_lap_estimated != null ? [row.pit_in_lap_estimated] : []),
+      estSeconds: row.red_flag_overlap ? null : row.duration_pdm_seconds,
+      underCaution: false, // Red Mist's flg field per-stop isn't surfaced here yet; left false rather than guessed
+      kind,
+      driverOut, driverIn,
+      needsReview: row.needs_review,
+      notes: row.notes,
+    });
+  }
+
+  const avgByCarNumber = {};
+  for (const num in byCarNumber){
+    const sane = byCarNumber[num].filter(s => s.kind === "pit" && s.estSeconds != null);
+    avgByCarNumber[num] = sane.length ? sane.reduce((a,s)=>a+s.estSeconds,0)/sane.length : null;
+  }
+
+  return { pitStopDetailByNumber: byCarNumber, avgPitSecondsByNumber: avgByCarNumber, fetchedAt: data[0].fetched_at };
+}
+
 // Matches this race's own cars (by car number) against imported MyLaps
 // classification rows, for the compact "By Car" summary.
 function matchMylapsToRaceCars(race, mylaps){
@@ -2232,19 +2297,43 @@ function renderMylapsPanel(race){
 // car number and "Normal" status badge since those are already shown in
 // the tile's own header — a DNF/DNS badge is still shown since that's
 // context not duplicated elsewhere. Each stat gets its own line.
-// Per-stop estimated pit times for one car, shown in that car's archived
-// tile alongside Seat Time. Stops taken under caution are marked with a
-// yellow flag — worth seeing at a glance, since a caution stop costs the
-// team far less track position than a green-flag one. Stops that
-// overlapped a red flag can't be measured and are shown as such rather
-// than reported with a misleading number.
+// Per-stop pit times for one car, shown in that car's archived tile
+// alongside Seat Time. Prefers REAL pit-in/pit-out data from Red Mist
+// Timing (race.redmistPitCycles, populated via loadRedmistPitCyclesFromSupabase)
+// when available for this car, falling back to the MyLaps-derived estimate
+// (race.mylaps, via matchMylapsToRaceCars) otherwise. The two sources are
+// normalized to the same shape (see loadRedmistPitCyclesFromSupabase's
+// comment) specifically so this render logic doesn't need to branch beyond
+// picking which source to read from.
+//
+// Stops taken under caution are marked with a yellow flag — worth seeing at
+// a glance, since a caution stop costs the team far less track position
+// than a green-flag one. Stops that overlapped a red flag can't be
+// meaningfully measured and are shown as such rather than reported with a
+// misleading number. Stops flagged needsReview (Red Mist source only) get
+// a distinct marker since the underlying numbers don't fit a normal pit
+// stop pattern and may need a manual note explaining what happened.
 function mylapsPitTimesBlock(car){
   const race = state.races.find(r=>r.id===state.currentRaceId);
-  if (!race || !race.mylaps) return "";
-  const m = matchMylapsToRaceCars({ cars:[car] }, race.mylaps)[0];
-  if (!m || !m.found) return "";
-  const stops = m.pitStopDetail;
-  if (!stops || !stops.length) return "";
+  if (!race) return "";
+
+  const redmist = race.redmistPitCycles;
+  const redmistStops = redmist ? redmist.pitStopDetailByNumber[car.number] : null;
+
+  let stops, avgSeconds, sourceLabel;
+  if (redmistStops && redmistStops.length){
+    stops = redmistStops;
+    avgSeconds = redmist.avgPitSecondsByNumber[car.number];
+    sourceLabel = "Pit Stop Time";
+  } else {
+    if (!race.mylaps) return "";
+    const m = matchMylapsToRaceCars({ cars:[car] }, race.mylaps)[0];
+    if (!m || !m.found) return "";
+    stops = m.pitStopDetail;
+    if (!stops || !stops.length) return "";
+    avgSeconds = m.avgPitSeconds;
+    sourceLabel = "Estimated Pit Stop Time";
+  }
 
   // round to whole seconds FIRST, so 59.7s renders "1m 0s" not "0m 60s"
   const fmt = sec => {
@@ -2255,41 +2344,47 @@ function mylapsPitTimesBlock(car){
   const rows = stops.map((s,i) => {
     const lapLabel = (s.laps && s.laps.length > 1)
       ? `laps ${s.laps[0]}\u2013${s.laps[s.laps.length-1]}`
-      : `lap ${s.lap}`;
+      : (s.lap != null ? `lap ${s.lap}` : "");
     const caution = s.underCaution
       ? `<span title="Under caution" style="color:${T.amber};margin-left:5px;">${icon("flag",11)}</span>` : "";
     const wrench = s.kind === "garage"
-      ? `<span title="Extended stop \u2014 likely garage repairs" style="margin-left:4px;">\uD83D\uDD27</span>` : "";
+      ? `<span title="${esc(s.notes) || 'Extended stop \u2014 needs review'}" style="margin-left:4px;">\uD83D\uDD27</span>` : "";
     const val = s.kind === "redflag"
       ? `<span style="color:${T.red};">Red Flag</span>`
-      : fmt(s.estSeconds);
-    return `<div class="summary-driver">
-      <span>Stop ${i+1} <span style="color:var(--textFaint);">${lapLabel}</span>${caution}${wrench}</span>
+      : (s.estSeconds != null ? fmt(s.estSeconds) : "—");
+    const driverChange = (s.driverOut && s.driverIn && s.driverOut !== s.driverIn)
+      ? `<div style="font-size:10px;color:var(--textFaint);margin-top:2px;">${esc(s.driverOut)} \u2192 ${esc(s.driverIn)}</div>` : "";
+    return `<div class="summary-driver" style="align-items:flex-start;">
+      <span>Stop ${i+1} <span style="color:var(--textFaint);">${lapLabel}</span>${caution}${wrench}${driverChange}</span>
       <span class="font-mono">${val}</span>
     </div>`;
   }).join("");
 
-  const avgRow = m.avgPitSeconds != null
+  const avgRow = avgSeconds != null
     ? `<div class="summary-driver" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
          <span class="fin-label" style="margin:0;">Average</span>
-         <span class="font-mono">${fmt(m.avgPitSeconds)}</span>
+         <span class="font-mono">${fmt(avgSeconds)}</span>
        </div>`
     : "";
+
+  const footnote = sourceLabel === "Pit Stop Time"
+    ? `Real pit-in/pit-out timing from Red Mist. Red flag periods can't be measured and are shown as such.`
+    : `Values compare in/out laps against a car's average lap, taking Code 35 into
+        consideration where applicable. Red flag periods can't be measured and are
+        shown as such.`;
 
   return `
     <div class="summary-box">
       <div class="summary-driver" style="margin-bottom:6px;">
         <span></span>
-        <span class="fin-label" style="margin:0;">${icon("timer",12)} Estimated Pit Stop Time</span>
+        <span class="fin-label" style="margin:0;">${icon("timer",12)} ${sourceLabel}</span>
       </div>
       <div class="summary-drivers">
         ${rows}
         ${avgRow}
       </div>
       <p style="font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.5;color:var(--textFaint);margin:10px 0 0;">
-        Values compare in/out laps against a car's average lap, taking Code 35 into
-        consideration where applicable. Red flag periods can't be measured and are
-        shown as such.
+        ${footnote}
       </p>
     </div>`;
 }
@@ -2879,6 +2974,11 @@ async function handleAction(act, el){
             const r = state.races.find(r=>r.id===raceId);
             if (r && mylaps) r.mylaps = mylaps;
             state.mylapsAutoLoading = false;
+            render();
+          });
+          loadRedmistPitCyclesFromSupabase(raceId).then(redmist=>{
+            const r = state.races.find(r=>r.id===raceId);
+            if (r && redmist) r.redmistPitCycles = redmist;
             render();
           });
         }
