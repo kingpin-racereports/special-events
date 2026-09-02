@@ -2259,6 +2259,14 @@ function pitCycleBlock(car){
     return `${Math.floor(total/60)}m ${total%60}s`;
   };
 
+  // Garage trips (needsReview, no red flag) and red-flag stops are
+  // excluded from the average - they're not representative pit-lane pace
+  // and would badly skew it (a single 95-min outlier would dominate an
+  // average of otherwise ~1-3 min stops). Computed before the row loop
+  // since outlier coloring below compares each normal stop against it.
+  const clean = stops.filter(s => !s.redFlagOverlap && !s.needsReview && s.pdmSeconds != null);
+  const avgSeconds = clean.length ? clean.reduce((a,s)=>a+s.pdmSeconds,0)/clean.length : null;
+
   const rows = stops.map(s => {
     // Genuine extended stop (garage trip, etc.) with no red flag to explain
     // it: pdm badly understates the real time lost, so show clock-gap
@@ -2275,7 +2283,18 @@ function pitCycleBlock(car){
     } else if (isGarageTrip){
       val = `<span style="color:${T.amber};">${fmt(s.clockGapSeconds)}</span>`;
     } else {
-      val = fmt(s.pdmSeconds);
+      // Outlier coloring: a normal stop running notably long against this
+      // car's own average for the race - a long fuel-only stop, a slow
+      // driver change, tires taking extra time, etc. Not flagged
+      // needsReview (that's reserved for pdm/clock-gap disagreement, a
+      // different signal), just a visual heads-up relative to the car's
+      // own pace. Ratio-based rather than a fixed threshold since pit
+      // strategy and stop length vary car to car.
+      const ratio = avgSeconds ? s.pdmSeconds / avgSeconds : null;
+      const color = ratio != null && ratio >= 3 ? T.red
+                  : ratio != null && ratio >= 1.5 ? T.amber
+                  : null;
+      val = color ? `<span style="color:${color};">${fmt(s.pdmSeconds)}</span>` : fmt(s.pdmSeconds);
     }
     const subLabel = isGarageTrip
       ? `<div style="font-size:10px;color:var(--textFaint);margin-top:1px;">total time lost</div>` : "";
@@ -2286,11 +2305,6 @@ function pitCycleBlock(car){
     </div>`;
   }).join("");
 
-  // Garage trips are deliberately excluded from the average - they're not
-  // representative pit-lane pace and would badly skew it (a single 95-min
-  // outlier would dominate an average of otherwise ~1-3 min stops).
-  const clean = stops.filter(s => !s.redFlagOverlap && !s.needsReview && s.pdmSeconds != null);
-  const avgSeconds = clean.length ? clean.reduce((a,s)=>a+s.pdmSeconds,0)/clean.length : null;
   const avgRow = avgSeconds != null
     ? `<div class="summary-driver" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
          <span class="fin-label" style="margin:0;">Average</span>
@@ -2311,6 +2325,7 @@ function pitCycleBlock(car){
       <p style="font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.5;color:var(--textFaint);margin:10px 0 0;">
         Real pit-in/pit-out timing from Red Mist. Red flag periods can't be measured and are shown as such.
         Extended stops (garage trips) show total time lost rather than pit-lane duration, and are excluded from the average.
+        Stops running 1.5x+ the car's average are highlighted orange, 3x+ red.
       </p>
     </div>`;
 }
