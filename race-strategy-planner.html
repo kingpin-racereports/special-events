@@ -1180,10 +1180,39 @@ async function loadMylapsResultsFromSupabase(raceId){
 //
 // Grouped by car_number, ordered by stop_num, so each car's tile can just
 // read race.redmistPitCycles.byCarNumber[car.number] directly.
+// Loads real pit-in/pit-out cycle data from Red Mist Timing for this race,
+// when available (see the redmist-backfill project: pulls Red Mist's
+// LoadCarLaps data, derives pit cycles, and upserts into redmist_pit_cycles
+// keyed on race_id/car_number/stop_num).
+//
+// Two duration fields are used, for two different situations - confirmed
+// against real race-day ground truth, not just guessed:
+//
+//   duration_pdm_seconds (the default) - Red Mist's own reported duration.
+//     Validated against a crew stopwatch on two independent stops (within a
+//     few seconds both times). Used for ordinary stops.
+//
+//   duration_clockgap_seconds (only when needsReview && !redFlagOverlap) -
+//     literal elapsed time between the car entering and leaving pit-lane
+//     (the `ip` flag transition). Normally ~60-300s LONGER than pdm for an
+//     ordinary stop (some lag in how the flag trips), which is why it's not
+//     used generally. But for a genuine extended stop - e.g. a garage
+//     repair - pdm badly understates the real time lost (confirmed real
+//     case: pdm=114s, but the car was actually off track for ~95 minutes)
+//     while clock-gap correctly captures the whole thing. That's exactly
+//     what needsReview flags: a stop whose pdm/clock-gap disagree by more
+//     than a rough threshold with no red flag to explain it.
+//
+// redFlagOverlap stops are the other case where a large clock-gap shows up,
+// but there it does NOT mean a real time loss - the whole field was
+// stopped by the session, not just this car - so those intentionally keep
+// showing "Red Flag" rather than either duration number (confirmed real
+// case: clock-gap ~26 minutes on a stop that wasn't actually a long repair,
+// just badly timed against a red flag).
 async function loadRedmistPitCyclesFromSupabase(raceId){
   const { data, error } = await supabase
     .from("redmist_pit_cycles")
-    .select("car_number, stop_num, duration_pdm_seconds, red_flag_overlap, needs_review, notes")
+    .select("car_number, stop_num, duration_pdm_seconds, duration_clockgap_seconds, red_flag_overlap, needs_review, notes")
     .eq("race_id", raceId)
     .order("car_number", { ascending: true })
     .order("stop_num", { ascending: true });
@@ -1197,6 +1226,7 @@ async function loadRedmistPitCyclesFromSupabase(raceId){
     byCarNumber[row.car_number].push({
       stopNum: row.stop_num,
       pdmSeconds: row.duration_pdm_seconds != null ? Number(row.duration_pdm_seconds) : null,
+      clockGapSeconds: row.duration_clockgap_seconds != null ? Number(row.duration_clockgap_seconds) : null,
       redFlagOverlap: row.red_flag_overlap,
       needsReview: row.needs_review,
       notes: row.notes,
@@ -2230,18 +2260,36 @@ function pitCycleBlock(car){
   };
 
   const rows = stops.map(s => {
+    // Genuine extended stop (garage trip, etc.) with no red flag to explain
+    // it: pdm badly understates the real time lost, so show clock-gap
+    // instead, labeled distinctly so it's clear this is total time off
+    // track, not a normal pit-lane duration.
+    const isGarageTrip = s.needsReview && !s.redFlagOverlap;
+
     const wrench = s.needsReview
       ? `<span title="${esc(s.notes) || "Needs review \u2014 numbers don't fit a normal stop"}" style="margin-left:4px;">\uD83D\uDD27</span>` : "";
-    const val = s.redFlagOverlap
-      ? `<span style="color:${T.red};">Red Flag</span>`
-      : fmt(s.pdmSeconds);
-    return `<div class="summary-driver">
+
+    let val;
+    if (s.redFlagOverlap){
+      val = `<span style="color:${T.red};">Red Flag</span>`;
+    } else if (isGarageTrip){
+      val = `<span style="color:${T.amber};">${fmt(s.clockGapSeconds)}</span>`;
+    } else {
+      val = fmt(s.pdmSeconds);
+    }
+    const subLabel = isGarageTrip
+      ? `<div style="font-size:10px;color:var(--textFaint);margin-top:1px;">total time lost</div>` : "";
+
+    return `<div class="summary-driver" style="align-items:flex-start;">
       <span>Stop ${s.stopNum}${wrench}</span>
-      <span class="font-mono">${val}</span>
+      <span style="text-align:right;"><span class="font-mono">${val}</span>${subLabel}</span>
     </div>`;
   }).join("");
 
-  const clean = stops.filter(s => !s.redFlagOverlap && s.pdmSeconds != null);
+  // Garage trips are deliberately excluded from the average - they're not
+  // representative pit-lane pace and would badly skew it (a single 95-min
+  // outlier would dominate an average of otherwise ~1-3 min stops).
+  const clean = stops.filter(s => !s.redFlagOverlap && !s.needsReview && s.pdmSeconds != null);
   const avgSeconds = clean.length ? clean.reduce((a,s)=>a+s.pdmSeconds,0)/clean.length : null;
   const avgRow = avgSeconds != null
     ? `<div class="summary-driver" style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
@@ -2262,6 +2310,7 @@ function pitCycleBlock(car){
       </div>
       <p style="font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.5;color:var(--textFaint);margin:10px 0 0;">
         Real pit-in/pit-out timing from Red Mist. Red flag periods can't be measured and are shown as such.
+        Extended stops (garage trips) show total time lost rather than pit-lane duration, and are excluded from the average.
       </p>
     </div>`;
 }
