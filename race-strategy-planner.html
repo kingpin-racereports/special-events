@@ -1212,7 +1212,7 @@ async function loadMylapsResultsFromSupabase(raceId){
 async function loadRedmistPitCyclesFromSupabase(raceId){
   const { data, error } = await supabase
     .from("redmist_pit_cycles")
-    .select("car_number, stop_num, duration_pdm_seconds, duration_clockgap_seconds, red_flag_overlap, needs_review, notes")
+    .select("car_number, stop_num, duration_pdm_seconds, duration_clockgap_seconds, red_flag_overlap, needs_review, notes, driver_change_reported")
     .eq("race_id", raceId)
     .order("car_number", { ascending: true })
     .order("stop_num", { ascending: true });
@@ -1230,6 +1230,7 @@ async function loadRedmistPitCyclesFromSupabase(raceId){
       redFlagOverlap: row.red_flag_overlap,
       needsReview: row.needs_review,
       notes: row.notes,
+      driverChanged: row.driver_change_reported,
     });
   }
 
@@ -2276,6 +2277,8 @@ function pitCycleBlock(car){
 
     const wrench = s.needsReview
       ? `<span title="${esc(s.notes) || "Needs review \u2014 numbers don't fit a normal stop"}" style="margin-left:4px;">\uD83D\uDD27</span>` : "";
+    const helmet = s.driverChanged
+      ? `<span title="Driver change" style="margin-left:4px;">\uD83D\uDD04</span>` : "";
 
     // Outlier coloring: how far this stop's real duration sits from this
     // car's own average for the race - a long fuel-only stop, a slow
@@ -2301,7 +2304,7 @@ function pitCycleBlock(car){
     }
 
     return `<div class="summary-driver">
-      <span>Stop ${s.stopNum}${wrench}</span>
+      <span>Stop ${s.stopNum}${wrench}${helmet}</span>
       <span class="font-mono">${val}</span>
     </div>`;
   }).join("");
