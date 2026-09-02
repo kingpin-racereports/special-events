@@ -1212,7 +1212,7 @@ async function loadMylapsResultsFromSupabase(raceId){
 async function loadRedmistPitCyclesFromSupabase(raceId){
   const { data, error } = await supabase
     .from("redmist_pit_cycles")
-    .select("car_number, stop_num, duration_pdm_seconds, duration_clockgap_seconds, red_flag_overlap, needs_review, notes, driver_change_reported")
+    .select("car_number, stop_num, duration_pdm_seconds, duration_clockgap_seconds, red_flag_overlap, under_caution, needs_review, notes, driver_change_reported")
     .eq("race_id", raceId)
     .order("car_number", { ascending: true })
     .order("stop_num", { ascending: true });
@@ -1228,6 +1228,7 @@ async function loadRedmistPitCyclesFromSupabase(raceId){
       pdmSeconds: row.duration_pdm_seconds != null ? Number(row.duration_pdm_seconds) : null,
       clockGapSeconds: row.duration_clockgap_seconds != null ? Number(row.duration_clockgap_seconds) : null,
       redFlagOverlap: row.red_flag_overlap,
+      underCaution: row.under_caution,
       needsReview: row.needs_review,
       notes: row.notes,
       driverChanged: row.driver_change_reported,
@@ -2279,6 +2280,15 @@ function pitCycleBlock(car){
       ? `<span title="${esc(s.notes) || "Needs review \u2014 numbers don't fit a normal stop"}" style="margin-left:4px;">\uD83D\uDD27</span>` : "";
     const helmet = s.driverChanged
       ? `<span title="Driver change" style="margin-left:4px;">\uD83D\uDD04</span>` : "";
+    // Small colored dot rather than an emoji flag glyph, so the color is
+    // exact and consistent with the amber/red theme used elsewhere in this
+    // block (emoji render in their own fixed colors, not CSS-controllable -
+    // see the driver-change icon above, which stays whatever color its
+    // font renders it in). Independent of driverChanged - a stop can be
+    // both a caution stop AND a driver change, and both markers show
+    // together when that happens.
+    const caution = s.underCaution
+      ? `<span title="Under caution" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${T.amber};margin-left:5px;"></span>` : "";
 
     // Outlier coloring: how far this stop's real duration sits from this
     // car's own average for the race - a long fuel-only stop, a slow
@@ -2304,7 +2314,7 @@ function pitCycleBlock(car){
     }
 
     return `<div class="summary-driver">
-      <span>Stop ${s.stopNum}${wrench}${helmet}</span>
+      <span>Stop ${s.stopNum}${wrench}${helmet}${caution}</span>
       <span class="font-mono">${val}</span>
     </div>`;
   }).join("");
@@ -2320,7 +2330,7 @@ function pitCycleBlock(car){
     <div class="summary-box">
       <div class="summary-driver" style="margin-bottom:6px;">
         <span></span>
-        <span class="fin-label" style="margin:0;">${icon("timer",12)} Pit Cycle</span>
+        <span class="fin-label" style="margin:0;">${icon("timer",12)} Pit Stop Times</span>
       </div>
       <div class="summary-drivers">
         ${rows}
