@@ -3746,9 +3746,28 @@ document.addEventListener("keydown", function(e){
   requestBack();
 });
 
+// Re-fetches races fresh from Supabase, but preserves any fields that only
+// live in memory and aren't part of the races/cars row shape itself -
+// currently just `mylaps` (imported MyLaps results, attached separately by
+// the open-race handler, not part of loadRaces()'s own query).
+//
+// Needed because Supabase's auth client can fire a SIGNED_IN-equivalent
+// event on its own when a tab regains focus/visibility (routine token
+// refresh behavior, not something this app triggers) - see
+// onAuthStateChange below. That re-runs startApp(), which used to blindly
+// replace state.races wholesale, silently wiping any currently-open race's
+// loaded mylaps data even though nothing the person did should have
+// discarded it. A full page reload masked this (it re-opens the race
+// properly and re-fetches mylaps), which is why the bug only showed up on
+// tab-switch, not on refresh.
 async function startApp(isEngineer){
   state.isEngineer = isEngineer;
-  state.races = await loadRaces();
+  const fresh = await loadRaces();
+  const prevById = new Map(state.races.map(r => [r.id, r]));
+  state.races = fresh.map(r => {
+    const prev = prevById.get(r.id);
+    return prev && prev.mylaps ? { ...r, mylaps: prev.mylaps } : r;
+  });
   state.catalog = await loadCatalog();
   render();
 }
