@@ -2270,38 +2270,39 @@ function pitCycleBlock(car){
   const rows = stops.map(s => {
     // Genuine extended stop (garage trip, etc.) with no red flag to explain
     // it: pdm badly understates the real time lost, so show clock-gap
-    // instead, labeled distinctly so it's clear this is total time off
-    // track, not a normal pit-lane duration.
+    // instead - that's the number actually being displayed, so severity
+    // coloring below compares clockGapSeconds against average, not pdm.
     const isGarageTrip = s.needsReview && !s.redFlagOverlap;
 
     const wrench = s.needsReview
       ? `<span title="${esc(s.notes) || "Needs review \u2014 numbers don't fit a normal stop"}" style="margin-left:4px;">\uD83D\uDD27</span>` : "";
 
+    // Outlier coloring: how far this stop's real duration sits from this
+    // car's own average for the race - a long fuel-only stop, a slow
+    // driver change, tires taking extra time, or (at the extreme end) a
+    // genuine garage trip like a confirmed real ~95-minute repair.
+    // Ratio-based rather than a fixed threshold since pit strategy and
+    // stop length vary car to car. Applies to garage trips too (compared
+    // against clockGapSeconds, the number actually shown for those) so a
+    // severe outlier is never capped at the same amber as a merely-long
+    // stop - only red-flag stops skip this, since there's no real duration
+    // to grade there at all.
     let val;
     if (s.redFlagOverlap){
       val = `<span style="color:${T.red};">Red Flag</span>`;
-    } else if (isGarageTrip){
-      val = `<span style="color:${T.amber};">${fmt(s.clockGapSeconds)}</span>`;
     } else {
-      // Outlier coloring: a normal stop running notably long against this
-      // car's own average for the race - a long fuel-only stop, a slow
-      // driver change, tires taking extra time, etc. Not flagged
-      // needsReview (that's reserved for pdm/clock-gap disagreement, a
-      // different signal), just a visual heads-up relative to the car's
-      // own pace. Ratio-based rather than a fixed threshold since pit
-      // strategy and stop length vary car to car.
-      const ratio = avgSeconds ? s.pdmSeconds / avgSeconds : null;
+      const displaySeconds = isGarageTrip ? s.clockGapSeconds : s.pdmSeconds;
+      const ratio = avgSeconds && displaySeconds != null ? displaySeconds / avgSeconds : null;
       const color = ratio != null && ratio >= 3 ? T.red
                   : ratio != null && ratio >= 1.5 ? T.amber
                   : null;
-      val = color ? `<span style="color:${color};">${fmt(s.pdmSeconds)}</span>` : fmt(s.pdmSeconds);
+      const text = fmt(displaySeconds);
+      val = color ? `<span style="color:${color};">${text}</span>` : text;
     }
-    const subLabel = isGarageTrip
-      ? `<div style="font-size:10px;color:var(--textFaint);margin-top:1px;">total time lost</div>` : "";
 
-    return `<div class="summary-driver" style="align-items:flex-start;">
+    return `<div class="summary-driver">
       <span>Stop ${s.stopNum}${wrench}</span>
-      <span style="text-align:right;"><span class="font-mono">${val}</span>${subLabel}</span>
+      <span class="font-mono">${val}</span>
     </div>`;
   }).join("");
 
@@ -2323,9 +2324,7 @@ function pitCycleBlock(car){
         ${avgRow}
       </div>
       <p style="font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.5;color:var(--textFaint);margin:10px 0 0;">
-        Real pit-in/pit-out timing from Red Mist. Red flag periods can't be measured and are shown as such.
-        Extended stops (garage trips) show total time lost rather than pit-lane duration, and are excluded from the average.
-        Stops running 1.5x+ the car's average are highlighted orange, 3x+ red.
+        Real pit-in/pit-out timing from Red Mist Timing data.
       </p>
     </div>`;
 }
