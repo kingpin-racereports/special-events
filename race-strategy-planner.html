@@ -203,7 +203,6 @@
   .pit-table td.pit-time{font-family:'JetBrains Mono',monospace;font-weight:600;text-align:right;}
   .pit-table td.pit-driver{color:var(--textMuted);}
   .pit-table td.pit-flag{text-align:center;}
-  .pit-flag-dot{display:inline-block;width:8px;height:8px;border-radius:50%;}
   .chip{border-radius:12px;background:var(--panel);border:1px solid var(--border);padding:10px 12px;display:flex;align-items:center;gap:8px;}
   .chip .ico{color:var(--textFaint);}
   .chip .lbl{font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--textFaint);}
@@ -2298,51 +2297,53 @@ function pitCycleBlock(car){
       ? `<span title="${esc(s.notes) || "Needs review \u2014 numbers don't fit a normal stop"}" style="margin-left:4px;">\uD83D\uDD27</span>` : "";
 
     // Driver column: incoming driver's name (as reported by Red Mist, or a
-    // manual correction if one exists - see loadRedmistPitCyclesFromSupabase),
-    // with the swap icon alongside when this stop was a driver change.
-    const helmet = s.driverChanged
-      ? `<span title="Driver change" style="margin-left:4px;">\uD83D\uDD04</span>` : "";
-    const driverCell = `${esc(s.driverIn || "\u2014")}${helmet}`;
+    // manual correction if one exists - see loadRedmistPitCyclesFromSupabase).
+    // No swap indicator here anymore - the "Incoming Driver" header itself
+    // makes clear this is who got in the car, whether or not it changed
+    // from the previous stop.
+    const driverCell = esc(s.driverIn || "\u2014");
 
-    // Flag column: mutually exclusive, matching how duration coloring
-    // already treats them - a stop overlapping a red flag shows the red
-    // dot and nothing else; caution (yellow) shows the amber dot; neither
-    // shows a blank cell.
+    // Flag column: mutually exclusive text label - a stop overlapping a red
+    // flag shows "Red Flag" and nothing else; caution (yellow) shows
+    // "Caution"; neither shows a blank cell. This is now the single place
+    // that labels red-flag/caution status - the Time column always shows
+    // the real duration number (still colored red for a red-flag overlap,
+    // since the number can genuinely be right or wrong there and it's
+    // worth judging case by case rather than hiding it - see project notes
+    // on pdm's reliability during a red flag).
     let flagCell = "";
     if (s.redFlagOverlap){
-      flagCell = `<span class="pit-flag-dot" style="background:${T.red};" title="Red flag"></span>`;
+      flagCell = `<span style="color:${T.red};">Red Flag</span>`;
     } else if (s.underCaution){
-      flagCell = `<span class="pit-flag-dot" style="background:${T.amber};" title="Under caution"></span>`;
+      flagCell = `<span style="color:${T.amber};">Caution</span>`;
     }
 
     // Outlier coloring: how far this stop's real duration sits from this
     // car's own average for the race - a long fuel-only stop, a slow
     // driver change, tires taking extra time, or (at the extreme end) a
-    // genuine garage trip like a confirmed real ~95-minute repair.
-    // Ratio-based rather than a fixed threshold since pit strategy and
-    // stop length vary car to car. Applies to garage trips too (compared
-    // against clockGapSeconds, the number actually shown for those) so a
-    // severe outlier is never capped at the same amber as a merely-long
-    // stop - only red-flag stops skip this, since there's no real duration
-    // to grade there at all.
-    let timeCell;
-    if (s.redFlagOverlap){
-      timeCell = `<span style="color:${T.red};">Red Flag</span>`;
-    } else {
-      const displaySeconds = isGarageTrip ? s.clockGapSeconds : s.pdmSeconds;
-      const ratio = avgSeconds && displaySeconds != null ? displaySeconds / avgSeconds : null;
-      const color = ratio != null && ratio >= 3 ? T.red
-                  : ratio != null && ratio >= 1.5 ? T.amber
-                  : null;
-      const text = fmt(displaySeconds);
-      timeCell = color ? `<span style="color:${color};">${text}</span>` : text;
-    }
+    // genuine garage trip like a confirmed real ~95-minute repair. Also
+    // applied to red-flag stops - pdm during a red flag can be right or
+    // wrong depending on the specific stop (confirmed both ways in this
+    // project), so it's shown and colored like any other number rather
+    // than hidden, with "Red Flag" in the Flag column as the context that
+    // it needs a second look. Ratio-based rather than a fixed threshold
+    // since pit strategy and stop length vary car to car. Applies to
+    // garage trips too (compared against clockGapSeconds, the number
+    // actually shown for those) so a severe outlier is never capped at the
+    // same amber as a merely-long stop.
+    const displaySeconds = isGarageTrip ? s.clockGapSeconds : s.pdmSeconds;
+    const ratio = avgSeconds && displaySeconds != null ? displaySeconds / avgSeconds : null;
+    const color = ratio != null && ratio >= 3 ? T.red
+                : ratio != null && ratio >= 1.5 ? T.amber
+                : null;
+    const timeText = fmt(displaySeconds);
+    const timeCell = color ? `<span style="color:${color};">${timeText}</span>` : timeText;
 
     return `<tr>
       <td>${s.stopNum}${wrench}</td>
-      <td class="pit-time">${timeCell}</td>
       <td class="pit-driver">${driverCell}</td>
       <td class="pit-flag">${flagCell}</td>
+      <td class="pit-time">${timeCell}</td>
     </tr>`;
   }).join("");
 
@@ -2360,7 +2361,7 @@ function pitCycleBlock(car){
         <span class="fin-label" style="margin:0;">${icon("timer",12)} Pit Stop Times</span>
       </div>
       <table class="pit-table">
-        <thead><tr><th>Stop</th><th style="text-align:right;">Time</th><th>Driver</th><th style="text-align:center;">Flag</th></tr></thead>
+        <thead><tr><th>Stop</th><th>Incoming Driver</th><th>Flag</th><th style="text-align:right;">Time</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
       ${avgRow}
