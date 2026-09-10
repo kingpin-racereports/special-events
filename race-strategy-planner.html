@@ -1272,8 +1272,9 @@ async function refreshRedmistCar(race, carNumber){
     supabase.from("redmist_live_positions").select("*").eq("event_id", eventId).eq("car_number", carNumber).maybeSingle(),
     supabase.from("redmist_current_stint_stats").select("*").eq("event_id", eventId).eq("car_number", carNumber).maybeSingle(),
   ]);
-  if (posErr) console.error("refreshRedmistCar positions failed:", posErr);
-  if (statsErr) console.error("refreshRedmistCar stats failed:", statsErr);
+  if (posErr) console.error("[redmist-live] refreshRedmistCar positions failed for car", carNumber, ":", posErr);
+  if (statsErr) console.error("[redmist-live] refreshRedmistCar stats failed for car", carNumber, ":", statsErr);
+  console.log(`[redmist-live] car ${carNumber}: position row ${pos ? "found" : "NOT FOUND"}, stint stats ${stats ? "found" : "not found"}`);
   if (!race.redmistLive) race.redmistLive = { byCarNumber:{}, statsByCarNumber:{} };
   if (pos) race.redmistLive.byCarNumber[carNumber] = pos;
   if (stats) race.redmistLive.statsByCarNumber[carNumber] = stats;
@@ -1282,22 +1283,34 @@ async function refreshRedmistCar(race, carNumber){
 
 // Called from the open-race handler for a non-archived race. Silently
 // no-ops (no error state, nothing rendered) if nothing's live right now —
-// that's the expected, common case, not a failure.
+// that's the expected, common case, not a failure. All decision points
+// log to console under the [redmist-live] prefix so a "nothing showed up"
+// report can be diagnosed from the browser console alone.
 async function subscribeRedmistLive(raceId){
   unsubscribeRedmistLive();
 
   const race = state.races.find(r=>r.id===raceId);
   const carNumbers = (race?.cars||[]).map(c=>c.number).filter(Boolean);
-  if (!race || !carNumbers.length) return;
+  if (!race){ console.log("[redmist-live] no race found for id", raceId); return; }
+  if (!carNumbers.length){ console.log("[redmist-live] race has no cars with a number set — nothing to match against"); return; }
+  console.log("[redmist-live] watching for car numbers:", carNumbers);
 
   const { data: watch, error: watchErr } = await supabase
-    .from("redmist_event_watch").select("event_id, is_live").eq("id", 1).maybeSingle();
-  if (watchErr){ console.error("subscribeRedmistLive watch lookup failed:", watchErr); return; }
+    .from("redmist_event_watch").select("event_id, is_live, event_name").eq("id", 1).maybeSingle();
+  if (watchErr){ console.error("[redmist-live] watch lookup failed:", watchErr); return; }
+  console.log("[redmist-live] redmist_event_watch row:", watch);
 
   state.redmistEventId = watch?.is_live ? watch.event_id : null;
-  if (!state.redmistEventId) return;
+  if (!state.redmistEventId){ console.log("[redmist-live] no live event (is_live is false or row missing) — stopping here, this is expected when nothing's live"); return; }
+  console.log("[redmist-live] using event_id", state.redmistEventId, "— fetching initial data for each car");
 
   await Promise.all(carNumbers.map(num => refreshRedmistCar(race, num)));
+
+  const matched = Object.keys(race.redmistLive?.byCarNumber || {});
+  console.log(`[redmist-live] done — ${matched.length}/${carNumbers.length} cars matched:`, matched);
+  if (!matched.length){
+    console.log("[redmist-live] zero matches — check that redmist_live_positions actually has rows for event_id", state.redmistEventId, "and for these car numbers specifically:", carNumbers);
+  }
 
   redmistChannel = supabase
     .channel(`redmist-live-${raceId}`)
@@ -2552,6 +2565,12 @@ function carPlanSection(cp, plan, archived){
             <div style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);">${esc(car.manufacturer)} ${esc(car.model)}</div>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;white-space:nowrap;">
+            ${hasLiveTiming ? `
+              <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;background:rgba(226,68,92,0.12);">
+                <span style="width:6px;height:6px;border-radius:999px;background:var(--red);animation:livePulse 1.2s ease-in-out infinite;"></span>
+                <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:0.05em;color:var(--red);">LIVE</span>
+              </span>
+            ` : ""}
             ${(() => {
               // Prefer the live session's own starting position + Red
               // Mist's own positions-gained calc once live timing data
