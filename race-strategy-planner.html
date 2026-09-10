@@ -1465,12 +1465,20 @@ function unsubscribeRedmistLive(){
 // unknown-state fallback. Order matters: check red/yellow before green so
 // a value like "Green/Yellow" (if Red Mist ever reports transitions that
 // way) doesn't get misread.
+// Red Mist's Flags type is an integer enum (0-12), confirmed against the
+// published OpenAPI schema — NOT a string like "Green"/"Yellow" as this
+// function originally assumed (that version called .toLowerCase() on a
+// number and would have thrown the first time a live flag came through).
+// Only a few codes are confirmed from prior project validation: 0=pre,
+// 1=green, 2=transition, 3=red, 5=checkered, 7=yellow. The rest (4, 6,
+// 8-12) are unconfirmed, so they fall through to the neutral color rather
+// than guessing at a red/yellow/green mapping that might be wrong.
 function flagToLiveColor(flag){
-  const f = (flag || "").toLowerCase();
-  if (f.includes("red")) return T.red;
-  if (f.includes("yellow") || f.includes("caution")) return T.amber;
-  if (f.includes("green")) return T.green;
-  return T.textFaint; // unrecognized/unset flag (e.g. "Checkered", pre-session) — shown as a neutral dot rather than guessing
+  const f = Number(flag);
+  if (f === 3) return T.red;
+  if (f === 7 || f === 2) return T.amber; // 7=yellow, 2=transition (treated as caution-adjacent)
+  if (f === 1) return T.green;
+  return T.textFaint; // 0=pre, 5=checkered, or an unconfirmed code — neutral rather than guessed
 }
 
 let homeLiveChannel = null;
