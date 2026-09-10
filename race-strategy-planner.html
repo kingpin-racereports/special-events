@@ -2703,9 +2703,12 @@ function liveTimingBlock(car){
 
   // Positions gained/lost this session — Red Mist computes this itself
   // (class_positions_gained), -999 means "not available yet" rather than
-  // zero, so that sentinel is hidden rather than shown as "-999".
+  // zero, so that sentinel is hidden rather than shown as "-999". A real
+  // zero (no positions gained or lost) is hidden too, same as the delta
+  // badge elsewhere in the app — "+0"/"0" is just noise next to a plain
+  // position number, worth showing only when something actually changed.
   const cpg = pos.class_positions_gained;
-  const gainedLabel = (cpg==null || cpg===-999) ? null : (cpg>0 ? `+${cpg}` : `${cpg}`);
+  const gainedLabel = (cpg==null || cpg===-999 || cpg===0) ? null : (cpg>0 ? `+${cpg}` : `${cpg}`);
   const gainedColor = cpg>0 ? T.green : cpg<0 ? T.red : T.textMuted;
 
   // Consistency = coefficient of variation (stdev / mean) of this stint's
@@ -2821,7 +2824,7 @@ function carPlanSection(cp, plan, archived){
                 const pos = race.redmistLive.byCarNumber[car.number];
                 const startPos = pos.starting_class_position;
                 const cpg = pos.class_positions_gained;
-                const gained = (cpg==null || cpg===-999) ? null : (cpg>0?`+${cpg}`:`${cpg}`);
+                const gained = (cpg==null || cpg===-999 || cpg===0) ? null : (cpg>0?`+${cpg}`:`${cpg}`);
                 const gainedColor = cpg>0?T.green:(cpg<0?T.red:T.textMuted);
                 return `
                   ${startPos!=null ? `<span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);">Start P${startPos}</span>` : ""}
