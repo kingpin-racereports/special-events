@@ -1265,7 +1265,7 @@ async function loadRedmistPitCyclesFromSupabase(raceId){
 // redmist_event_watch; this just reads that row rather than guessing.
 let redmistChannel = null;
 
-async function refreshRedmistCar(race, carNumber){
+async function refreshRedmistCar(race, carNumber, skipRender){
   const eventId = state.redmistEventId;
   if (!eventId) return;
   const [{ data: pos, error: posErr }, { data: stats, error: statsErr }] = await Promise.all([
@@ -1278,40 +1278,132 @@ async function refreshRedmistCar(race, carNumber){
   if (!race.redmistLive) race.redmistLive = { byCarNumber:{}, statsByCarNumber:{} };
   if (pos) race.redmistLive.byCarNumber[carNumber] = pos;
   if (stats) race.redmistLive.statsByCarNumber[carNumber] = stats;
-  render();
+  if (pos) await handleRedmistDriverChange(race, carNumber, pos);
+  // skipRender=true during openRace()'s initial batch fetch — that call
+  // site does its own single render() once ALL cars have resolved, so the
+  // car-plan tiles reach their final collapsed/expanded state in one paint
+  // rather than settling in piecemeal as each car's query lands.
+  if (!skipRender) render();
 }
 
-// Called from the open-race handler for a non-archived race. Silently
-// no-ops (no error state, nothing rendered) if nothing's live right now —
-// that's the expected, common case, not a failure. All decision points
-// log to console under the [redmist-live] prefix so a "nothing showed up"
-// report can be diagnosed from the browser console alone.
-async function subscribeRedmistLive(raceId){
-  unsubscribeRedmistLive();
+// Confirms a driver change is real (not a flickered read — Red Mist's
+// driver identity is known unreliable, see redmist-backfill's own
+// same-did-flickering / stale-did notes) by requiring the SAME driver_id
+// on the SAME pit lap across two consecutive polls before touching the
+// stint plan. Once confirmed:
+//   1. Closes the outgoing stint with its real end time via
+//      updateStintEnd() — the exact same overrun-cascade path the manual
+//      "Finish Stint" button uses, so downstream start times get the same
+//      validated re-timing rather than new bespoke math.
+//   2. ONLY THEN, as a separate step, reassigns the next stint's driver if
+//      the person who actually got in differs from the plan — mirroring
+//      how quiet-time is applied after the cascade rather than folded
+//      into it: timing and "who's driving" are kept as separate edits.
+// Deliberately does nothing for a race that isn't the one currently open
+// in the editable plan (state.plan) — there's nothing in memory to mutate
+// for any other race.
+async function handleRedmistDriverChange(race, carNumber, pos){
+  if (!state.plan || state.currentRaceId !== race.id) return;
+  if (pos.last_lap_completed == null || pos.last_lap_pitted !== pos.last_lap_completed) return; // not fresh off a pit lap
 
+  if (!race.redmistLive.driverConfirm) race.redmistLive.driverConfirm = {};
+  if (!race.redmistLive.processedStops) race.redmistLive.processedStops = new Set();
+  const stopKey = `${carNumber}:${pos.last_lap_pitted}`;
+  if (race.redmistLive.processedStops.has(stopKey)) return; // already handled this exact stop
+
+  const confirm = race.redmistLive.driverConfirm[carNumber];
+  if (!confirm || confirm.lap !== pos.last_lap_pitted || confirm.driverId !== pos.driver_id){
+    race.redmistLive.driverConfirm[carNumber] = { lap: pos.last_lap_pitted, driverId: pos.driver_id, streak: 1 };
+    console.log(`[redmist-live] car ${carNumber}: new driver reading (${pos.driver_name}) on lap ${pos.last_lap_pitted} — waiting for a second matching poll before touching the stint plan`);
+    return;
+  }
+  confirm.streak++;
+  if (confirm.streak < 2) return;
+
+  const cp = state.plan.carPlans.find(cp=>cp.car.number===carNumber);
+  if (!cp) return;
+
+  const liveIdx = computeLiveStintIndex(cp.stints, false);
+  if (liveIdx === -1){
+    console.log(`[redmist-live] car ${carNumber}: driver change confirmed but no unfinished live stint found — nothing to close out`);
+    race.redmistLive.processedStops.add(stopKey);
+    return;
+  }
+
+  const outgoingStint = cp.stints[liveIdx];
+  const incomingDriver = (pos.driver_name || "").trim();
+  if (outgoingStint.driver && incomingDriver && outgoingStint.driver.trim().toLowerCase() === incomingDriver.toLowerCase()){
+    // The plan's current live stint already lists the incoming driver —
+    // not actually a change relative to the plan (or already handled).
+    race.redmistLive.processedStops.add(stopKey);
+    return;
+  }
+
+  console.log(`[redmist-live] car ${carNumber}: confirmed driver change (Lap ${pos.last_lap_pitted}) — closing Stint ${liveIdx+1} (${outgoingStint.driver}) with the real time`);
+
+  const actualEnd = new Date(pos.fetched_at || Date.now());
+  const hhmm = `${String(actualEnd.getHours()).padStart(2,"0")}:${String(actualEnd.getMinutes()).padStart(2,"0")}`;
+  await updateStintEnd(cp.car.id, liveIdx, hhmm);
+  logStintNote(cp, liveIdx, `Stint finished automatically from Red Mist live timing — pit stop detected on Lap ${pos.last_lap_pitted}.`, "info", "redmist-auto-finish");
+
+  const nextIdx = liveIdx + 1;
+  const nextStint = cp.stints[nextIdx];
+  if (nextStint && !nextStint.finished && incomingDriver && nextStint.driver !== incomingDriver){
+    const plannedDriver = nextStint.driver;
+    if (!cp.car.drivers.some(d=>d.trim().toLowerCase() === incomingDriver.toLowerCase())){
+      cp.car.drivers.push(incomingDriver);
+      if (!cp.car.driverStintMode) cp.car.driverStintMode = [];
+      cp.car.driverStintMode.push('60');
+      console.log(`[redmist-live] car ${carNumber}: "${incomingDriver}" wasn't in the driver roster — added automatically`);
+    }
+    await updateStintDriver(cp.car.id, nextIdx, incomingDriver);
+    logStintNote(cp, nextIdx, `Driver updated from live timing — plan had ${plannedDriver || "no one"} scheduled next, but ${incomingDriver} got in the car (Lap ${pos.last_lap_pitted}).`, "warn", "redmist-driver-swap");
+  }
+
+  race.redmistLive.processedStops.add(stopKey);
+  delete race.redmistLive.driverConfirm[carNumber];
+}
+
+
+// Resolves whether a WRL event is currently live and, if so, fetches
+// initial position/stint data for every car in the race. Deliberately
+// split from subscribeRedmistLiveChannel() below — this half is the part
+// openRace() awaits BEFORE its first render, specifically so a car tile
+// that turns out to have live data is already collapsed on first paint
+// instead of rendering expanded and then visibly snapping shut once this
+// fetch resolves a moment later. All decision points log under the
+// [redmist-live] prefix for console-based debugging.
+async function loadRedmistLiveState(raceId){
   const race = state.races.find(r=>r.id===raceId);
   const carNumbers = (race?.cars||[]).map(c=>c.number).filter(Boolean);
-  if (!race){ console.log("[redmist-live] no race found for id", raceId); return; }
-  if (!carNumbers.length){ console.log("[redmist-live] race has no cars with a number set — nothing to match against"); return; }
+  if (!race){ console.log("[redmist-live] no race found for id", raceId); return { race:null, carNumbers:[] }; }
+  if (!carNumbers.length){ console.log("[redmist-live] race has no cars with a number set — nothing to match against"); return { race, carNumbers }; }
   console.log("[redmist-live] watching for car numbers:", carNumbers);
 
   const { data: watch, error: watchErr } = await supabase
     .from("redmist_event_watch").select("event_id, is_live, event_name").eq("id", 1).maybeSingle();
-  if (watchErr){ console.error("[redmist-live] watch lookup failed:", watchErr); return; }
+  if (watchErr){ console.error("[redmist-live] watch lookup failed:", watchErr); return { race, carNumbers }; }
   console.log("[redmist-live] redmist_event_watch row:", watch);
 
   state.redmistEventId = watch?.is_live ? watch.event_id : null;
-  if (!state.redmistEventId){ console.log("[redmist-live] no live event (is_live is false or row missing) — stopping here, this is expected when nothing's live"); return; }
-  console.log("[redmist-live] using event_id", state.redmistEventId, "— fetching initial data for each car");
+  if (!state.redmistEventId){ console.log("[redmist-live] no live event (is_live is false or row missing) — stopping here, this is expected when nothing's live"); return { race, carNumbers }; }
+  console.log("[redmist-live] using event_id", state.redmistEventId, "— fetching initial data for each car (blocking first paint)");
 
-  await Promise.all(carNumbers.map(num => refreshRedmistCar(race, num)));
+  await Promise.all(carNumbers.map(num => refreshRedmistCar(race, num, /*skipRender=*/true)));
 
   const matched = Object.keys(race.redmistLive?.byCarNumber || {});
-  console.log(`[redmist-live] done — ${matched.length}/${carNumbers.length} cars matched:`, matched);
+  console.log(`[redmist-live] initial fetch done — ${matched.length}/${carNumbers.length} cars matched:`, matched);
   if (!matched.length){
     console.log("[redmist-live] zero matches — check that redmist_live_positions actually has rows for event_id", state.redmistEventId, "and for these car numbers specifically:", carNumbers);
   }
+  return { race, carNumbers };
+}
 
+// The Realtime subscription itself doesn't need to block the first paint —
+// only the initial data does — so this runs AFTER openRace() has already
+// rendered once with correct data.
+function subscribeRedmistLiveChannel(raceId, race, carNumbers){
+  if (!state.redmistEventId || !race || !carNumbers.length) return;
   redmistChannel = supabase
     .channel(`redmist-live-${raceId}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'redmist_live_positions' }, payload => {
@@ -1323,6 +1415,16 @@ async function subscribeRedmistLive(raceId){
       if (num && carNumbers.includes(num) && payload.new.event_id === state.redmistEventId) refreshRedmistCar(race, num);
     })
     .subscribe();
+}
+
+// Convenience wrapper for call sites that don't need to block a render on
+// this (none currently do — openRace() uses the split functions above
+// directly — but kept for any future direct call).
+async function subscribeRedmistLive(raceId){
+  unsubscribeRedmistLive();
+  const { race, carNumbers } = await loadRedmistLiveState(raceId);
+  render();
+  if (race) subscribeRedmistLiveChannel(raceId, race, carNumbers);
 }
 
 function unsubscribeRedmistLive(){
@@ -2504,7 +2606,7 @@ function liveTimingBlock(car){
       </div>
       <div class="mylaps-carstat-grid">
         ${tile("In Seat", esc(pos.driver_name || "—"))}
-        ${tile("Position", `P${pos.class_position ?? "—"}`, gainedLabel ? `<span style="color:${gainedColor}">${gainedLabel}</span>` : null)}
+        ${tile("Position", `P${pos.class_position ?? "—"}` + (gainedLabel ? ` <span style="font-size:13px;color:${gainedColor}">${gainedLabel}</span>` : ""))}
         ${tile("Last Lap", esc(trimLapTime(pos.last_lap_time)))}
         ${tile("Average Lap", stats ? fmtLapSeconds(stats.avg_lap_seconds) : "—")}
         ${tile("Consistency", consistencyColor ? `<span style="color:${consistencyColor}">${consistencyLabel}</span>` : consistencyLabel)}
@@ -3474,14 +3576,21 @@ async function adjustStintStart(carId, stintIdx, deltaMinutes){
   render();
 }
 
-function openRace(race){
-  // Fires here rather than only in the "open-race" click handler so that
-  // navBack()'s re-fetch-and-reopen path (returning to a plan screen via
-  // Back/Esc/device-back) also picks the live subscription back up, not
-  // just the first time the race is opened. subscribeRedmistLive() itself
-  // no-ops quickly if nothing's actually live.
-  if (race.status !== "archived") subscribeRedmistLive(race.id);
-  else unsubscribeRedmistLive();
+async function openRace(race){
+  // Awaited BEFORE any state/render below — this is what actually fixes
+  // the collapse "jump": the car-plan tiles' collapsed/expanded state
+  // depends on whether live data exists, so that has to be known before
+  // the first paint, not discovered by a second render right after it.
+  // The Realtime channel itself is set up after — it doesn't need to
+  // block anything, only the one-time data fetch does.
+  let liveRace = null, liveCarNumbers = [];
+  if (race.status !== "archived"){
+    const resolved = await loadRedmistLiveState(race.id);
+    liveRace = resolved.race;
+    liveCarNumbers = resolved.carNumbers;
+  } else {
+    unsubscribeRedmistLive();
+  }
 
   state.currentRaceId = race.id;
   state.currentStatus = race.status;
@@ -3512,6 +3621,8 @@ function openRace(race){
   state.reserveDraft = {};
   state.page = "plan";
   render();
+
+  if (liveRace) subscribeRedmistLiveChannel(race.id, liveRace, liveCarNumbers);
 }
 
 function addCarFromCatalog(def){
