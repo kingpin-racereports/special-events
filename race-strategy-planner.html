@@ -1480,17 +1480,23 @@ let homeLiveChannel = null;
 // and again whenever the watch/session rows change via the realtime
 // subscription below.
 async function loadHomeLiveStatus(){
-  const { data: watch } = await supabase
+  const { data: watch, error: watchErr } = await supabase
     .from("redmist_event_watch").select("event_id, is_live").eq("id", 1).maybeSingle();
+  if (watchErr) console.error("[home-live] redmist_event_watch fetch failed:", watchErr);
+  console.log("[home-live] redmist_event_watch row:", watch);
   const eventId = watch?.is_live ? watch.event_id : null;
+  if (!eventId) console.log("[home-live] no live event (is_live false/missing) — badge will not show, this is expected when nothing's live");
 
   let flag = null;
   if (eventId){
-    const { data: session } = await supabase
+    const { data: session, error: sessionErr } = await supabase
       .from("redmist_live_session").select("current_flag").eq("event_id", eventId).maybeSingle();
+    if (sessionErr) console.error("[home-live] redmist_live_session fetch failed:", sessionErr);
+    console.log("[home-live] redmist_live_session row for event", eventId, ":", session);
     flag = session?.current_flag ?? null;
   }
   state.homeLive = { eventId, flag };
+  console.log("[home-live] resolved state.homeLive:", state.homeLive);
   render();
 }
 
@@ -2038,14 +2044,21 @@ function raceTile(race){
   // independent of isRaceLiveAndLocked(), which only exists for a race
   // that's actually open, and independent of state.isEngineer, since
   // this is a public status indicator, not an edit gate.
-  const isLive = race.status!=="archived" && race.redmistEventId && race.redmistEventId === state.homeLive.eventId;
+  // String-compared rather than === -- Postgres bigint columns come back
+  // from Supabase as JS strings while int columns come back as numbers,
+  // so if redmist_event_id and redmist_event_watch.event_id aren't the
+  // same underlying Postgres type, a strict === silently never matches
+  // even though both sides print identically.
+  const isLive = race.status!=="archived" && race.redmistEventId != null && state.homeLive.eventId != null
+    && String(race.redmistEventId) === String(state.homeLive.eventId);
+  if (race.status!=="archived") console.log("[home-live] tile check for", race.eventName, "— race.redmistEventId:", race.redmistEventId, typeof race.redmistEventId, "vs homeLive.eventId:", state.homeLive.eventId, typeof state.homeLive.eventId, "-> isLive:", isLive); // TEMP debug
   const liveColor = isLive ? flagToLiveColor(state.homeLive.flag) : null;
   return `
     <div class="race-tile" data-act="open-race" data-id="${race.id}" role="button" tabindex="0" style="border-color:${accent};">
       <div class="strip" style="background:var(--panelRaised);">
         ${trackStripContent(race.track, accent)}
         ${isLive ? `
-        <div class="live-badge" style="background:${liveColor}26;border:1px solid ${liveColor};">
+        <div class="live-badge" style="background:rgba(10,12,16,0.72);border:1px solid ${liveColor};">
           <span class="dot" style="background:${liveColor};"></span>
           <span class="lbl" style="color:${liveColor};">LIVE</span>
         </div>` : ""}
