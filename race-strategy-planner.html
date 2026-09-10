@@ -1272,42 +1272,13 @@ let redmistChannel = null;
 // real polling data is flowing. isEngineer's role narrows to authoring
 // the plan before the race goes live.
 //
-// The staleness check exists specifically as the fallback we agreed was
-// necessary: if the feed goes quiet — network hiccup, a real Red Mist
-// outage — this flips back to false, and readOnly falls through to the
-// normal isEngineer gate below it, so the plan doesn't get stuck
-// unreachably locked with no way to intervene mid-race.
-const REDMIST_FEED_STALE_MS = 30000; // no fresh poll in 30s -> treat the feed as down
-function redmistFeedIsHealthy(race){
-  const byCarNumber = race?.redmistLive?.byCarNumber;
-  if (!byCarNumber) return false;
-  let mostRecent = null;
-  for (const num in byCarNumber){
-    const fetchedAt = byCarNumber[num]?.fetched_at;
-    if (!fetchedAt) continue;
-    const t = new Date(fetchedAt).getTime();
-    if (mostRecent == null || t > mostRecent) mostRecent = t;
-  }
-  return mostRecent != null && (Date.now() - mostRecent) < REDMIST_FEED_STALE_MS;
-}
+// Deliberately no staleness/fallback check here: a prior version reopened
+// manual editing if the feed went quiet for 30s, but a mid-race feed
+// hiccup reopening editing mid-race caused more risk than it solved (and
+// is a rare case) — so once a race is linked to a live Red Mist event,
+// it stays locked for its duration regardless of feed gaps.
 function isRaceLiveAndLocked(race){
-  return !!(state.redmistEventId && race && redmistFeedIsHealthy(race));
-}
-
-// Freshness is only re-evaluated when render() runs, and nothing forces a
-// render just because time passed with no new data — so if the feed goes
-// silent, the UI would otherwise stay showing "locked" forever, with
-// nothing to notice the staleness. This just re-renders periodically
-// while a race is open so that check gets re-run against the current
-// clock even when no new poll ever arrives. Started in openRace(),
-// stopped everywhere the live subscriptions are torn down.
-let redmistFreshnessTimer = null;
-function startRedmistFreshnessTimer(){
-  stopRedmistFreshnessTimer();
-  redmistFreshnessTimer = setInterval(() => { if (state.page === "plan") render(); }, 10000);
-}
-function stopRedmistFreshnessTimer(){
-  if (redmistFreshnessTimer){ clearInterval(redmistFreshnessTimer); redmistFreshnessTimer = null; }
+  return !!(state.redmistEventId && race);
 }
 
 async function refreshRedmistCar(race, carNumber, skipRender){
@@ -2255,7 +2226,7 @@ function renderPlan(){
         <div style="display:flex;align-items:center;gap:8px;margin-top:14px;padding:8px 12px;border-radius:8px;background:rgba(226,68,92,0.10);">
           <span style="width:6px;height:6px;border-radius:999px;background:var(--red);animation:livePulse 1.2s ease-in-out infinite;flex-shrink:0;"></span>
           <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textMuted);">
-            Live — driven automatically from Red Mist timing. Manual editing resumes if the feed goes stale.
+            Live — driven automatically from Red Mist timing.
           </span>
         </div>
       ` : ""}
@@ -2681,12 +2652,11 @@ function carPlanSection(cp, plan, archived){
   const race = state.races.find(r=>r.id===state.currentRaceId);
   // archived = the race's real status, used for status DISPLAY (podium
   // colors, seat-time summary, collapsing). readOnly = whether editing
-  // controls should render at all — true once archived, OR once a live
-  // race has a healthy Red Mist feed (see isRaceLiveAndLocked — RedMist
-  // is the sole authority once real polling data is flowing, regardless
-  // of isEngineer), OR whenever the signed-in person isn't an engineer
-  // (the driver/public read-only view, and also the fallback path if the
-  // Red Mist feed itself goes stale mid-race).
+  // controls should render at all — true once archived, OR once a race
+  // is linked to a live Red Mist event (see isRaceLiveAndLocked — RedMist
+  // is the sole authority for the rest of that race's duration, regardless
+  // of isEngineer and regardless of feed gaps), OR whenever the signed-in
+  // person isn't an engineer (the driver/public read-only view).
   const readOnly = archived || isRaceLiveAndLocked(race) || !state.isEngineer;
   const shortNames = buildShortNames(car.drivers.filter(d=>d.trim()));
   const timelineAbbrev = buildTimelineAbbrev(car.drivers.filter(d=>d.trim()));
@@ -3225,7 +3195,6 @@ async function handleAction(act, el){
       // walk back into whatever we just left.
       unsubscribeRedmistLive();
       unsubscribeStintChanges();
-      stopRedmistFreshnessTimer();
       navReset();
       state.page = "home"; render(); break;
     case "nav-back":
@@ -3288,7 +3257,7 @@ async function handleAction(act, el){
         const { error } = await supabase.from('races').delete().eq('id', cd.id);
         if (error) console.error('delete race failed:', error);
         state.races = state.races.filter(r=>r.id!==cd.id);
-        if (state.currentRaceId === cd.id){ unsubscribeRedmistLive(); unsubscribeStintChanges(); stopRedmistFreshnessTimer(); state.page="home"; state.currentRaceId=null; state.plan=null; }
+        if (state.currentRaceId === cd.id){ unsubscribeRedmistLive(); unsubscribeStintChanges(); state.page="home"; state.currentRaceId=null; state.plan=null; }
       } else if (cd.type === "car"){
         state.cars = state.cars.filter(c=>c.id!==cd.id);
       } else if (cd.type === "catalogCar"){
@@ -3536,7 +3505,6 @@ async function navBack(){
   // the live subscription rather than leaving it running unattended.
   unsubscribeRedmistLive();
   unsubscribeStintChanges();
-  stopRedmistFreshnessTimer();
   state.page = entry.page;
   render();
 }
@@ -3650,10 +3618,8 @@ async function openRace(race){
     const resolved = await loadRedmistLiveState(race.id);
     liveRace = resolved.race;
     liveCarNumbers = resolved.carNumbers;
-    startRedmistFreshnessTimer();
   } else {
     unsubscribeRedmistLive();
-    stopRedmistFreshnessTimer();
   }
 
   state.currentRaceId = race.id;
