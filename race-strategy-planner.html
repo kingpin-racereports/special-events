@@ -4329,9 +4329,10 @@ document.addEventListener("keydown", function(e){
 // tab-switch, not on refresh.
 // Re-fetches races fresh from Supabase, but preserves any fields that only
 // live in memory and aren't part of the races/cars row shape itself -
-// currently `mylaps` (imported MyLaps results) and `redmistPitCycles` (Red
-// Mist pit-cycle data), both attached separately by the open-race handler,
-// not part of loadRaces()'s own query.
+// currently `mylaps` (imported MyLaps results), `redmistPitCycles` (Red
+// Mist pit-cycle data), and `redmistLive` (live timing + the
+// driver-change debounce state), all attached separately from
+// loadRaces()'s own query.
 //
 // Needed because Supabase's auth client can fire a SIGNED_IN-equivalent
 // event on its own when a tab regains focus/visibility (routine token
@@ -4341,7 +4342,10 @@ document.addEventListener("keydown", function(e){
 // loaded data even though nothing the person did should have discarded it.
 // A full page reload masked this (it re-opens the race properly and
 // re-fetches everything), which is why the bug only showed up on
-// tab-switch, not on refresh.
+// tab-switch, not on refresh. redmistLive is a second, later instance of
+// exactly this same problem: every tab-focus event was quietly resetting
+// the live tile AND the driver-change confirmation streak back to
+// nothing, which looked like the debounce simply never confirming.
 async function startApp(isEngineer){
   state.isEngineer = isEngineer;
   const fresh = await loadRaces();
@@ -4352,6 +4356,7 @@ async function startApp(isEngineer){
     const preserved = { ...r };
     if (prev.mylaps) preserved.mylaps = prev.mylaps;
     if (prev.redmistPitCycles) preserved.redmistPitCycles = prev.redmistPitCycles;
+    if (prev.redmistLive) preserved.redmistLive = prev.redmistLive;
     return preserved;
   });
   state.catalog = await loadCatalog();
