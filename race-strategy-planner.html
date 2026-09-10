@@ -630,6 +630,8 @@ let state = {
   mylapsError: null,        // UI-only: last fetch/parse error message
   mylapsShowFullField: false, // UI-only: full standings table expanded
   mylapsAutoLoading: false, // UI-only: fetching saved results from Supabase after opening an archived race
+
+  redmistEventId: null, // Red Mist event id currently being polled — set by subscribeRedmistLive(), null when nothing's live
 };
 
 // ---- persistence (Supabase — see supabase-client.js for setup) ----
@@ -1253,6 +1255,66 @@ async function loadRedmistPitCyclesFromSupabase(raceId){
   }
 
   return { byCarNumber };
+}
+
+// ---- Red Mist live timing ----
+// redmist_live_positions / redmist_live_laps are populated server-side by
+// the redmist-live-poll Edge Function (on a pg_cron schedule) — the
+// frontend only ever reads Supabase, never Red Mist directly. Which event
+// is currently live is likewise resolved server-side into
+// redmist_event_watch; this just reads that row rather than guessing.
+let redmistChannel = null;
+
+async function refreshRedmistCar(race, carNumber){
+  const eventId = state.redmistEventId;
+  if (!eventId) return;
+  const [{ data: pos, error: posErr }, { data: stats, error: statsErr }] = await Promise.all([
+    supabase.from("redmist_live_positions").select("*").eq("event_id", eventId).eq("car_number", carNumber).maybeSingle(),
+    supabase.from("redmist_current_stint_stats").select("*").eq("event_id", eventId).eq("car_number", carNumber).maybeSingle(),
+  ]);
+  if (posErr) console.error("refreshRedmistCar positions failed:", posErr);
+  if (statsErr) console.error("refreshRedmistCar stats failed:", statsErr);
+  if (!race.redmistLive) race.redmistLive = { byCarNumber:{}, statsByCarNumber:{} };
+  if (pos) race.redmistLive.byCarNumber[carNumber] = pos;
+  if (stats) race.redmistLive.statsByCarNumber[carNumber] = stats;
+  render();
+}
+
+// Called from the open-race handler for a non-archived race. Silently
+// no-ops (no error state, nothing rendered) if nothing's live right now —
+// that's the expected, common case, not a failure.
+async function subscribeRedmistLive(raceId){
+  unsubscribeRedmistLive();
+
+  const race = state.races.find(r=>r.id===raceId);
+  const carNumbers = (race?.cars||[]).map(c=>c.number).filter(Boolean);
+  if (!race || !carNumbers.length) return;
+
+  const { data: watch, error: watchErr } = await supabase
+    .from("redmist_event_watch").select("event_id, is_live").eq("id", 1).maybeSingle();
+  if (watchErr){ console.error("subscribeRedmistLive watch lookup failed:", watchErr); return; }
+
+  state.redmistEventId = watch?.is_live ? watch.event_id : null;
+  if (!state.redmistEventId) return;
+
+  await Promise.all(carNumbers.map(num => refreshRedmistCar(race, num)));
+
+  redmistChannel = supabase
+    .channel(`redmist-live-${raceId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'redmist_live_positions' }, payload => {
+      const num = payload.new?.car_number;
+      if (num && carNumbers.includes(num) && payload.new.event_id === state.redmistEventId) refreshRedmistCar(race, num);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'redmist_live_laps' }, payload => {
+      const num = payload.new?.car_number;
+      if (num && carNumbers.includes(num) && payload.new.event_id === state.redmistEventId) refreshRedmistCar(race, num);
+    })
+    .subscribe();
+}
+
+function unsubscribeRedmistLive(){
+  if (redmistChannel){ supabase.removeChannel(redmistChannel); redmistChannel = null; }
+  state.redmistEventId = null;
 }
 
 // Matches this race's own cars (by car number) against imported MyLaps
@@ -2371,6 +2433,71 @@ function pitCycleBlock(car){
     </div>`;
 }
 
+// Live Red Mist Timing data for one car, populated by subscribeRedmistLive()
+// into race.redmistLive.byCarNumber / .statsByCarNumber. Average Lap and
+// Consistency are scoped to the CURRENT STINT only (laps since the last
+// detected driver change, pit laps excluded) — see the
+// redmist_current_stint_stats view — so both reset to blank the moment a
+// driver swap is detected, on purpose: a whole-race average across
+// different drivers/conditions wouldn't mean much for either.
+function liveTimingBlock(car){
+  const race = state.races.find(r=>r.id===state.currentRaceId);
+  const pos = race?.redmistLive?.byCarNumber?.[car.number];
+  if (!pos) return "";
+  const stats = race.redmistLive.statsByCarNumber?.[car.number];
+
+  // RedMist's HH:mm:ss.fff lap-time format — trim the always-zero hour for
+  // a normal lap so it reads as "1:35.420" rather than "00:01:35.420".
+  const trimLapTime = t => {
+    if (!t) return "—";
+    const m = t.match(/^00:(\d{2}):(\d{2}\.\d+)$/);
+    return m ? `${Number(m[1])}:${m[2]}` : t;
+  };
+  const fmtLapSeconds = sec => {
+    if (sec == null) return "—";
+    const m = Math.floor(sec/60), s = sec - m*60;
+    return `${m}:${s.toFixed(3).padStart(6,"0")}`;
+  };
+
+  // Positions gained/lost this session — Red Mist computes this itself
+  // (class_positions_gained), -999 means "not available yet" rather than
+  // zero, so that sentinel is hidden rather than shown as "-999".
+  const cpg = pos.class_positions_gained;
+  const gainedLabel = (cpg==null || cpg===-999) ? null : (cpg>0 ? `+${cpg}` : `${cpg}`);
+  const gainedColor = cpg>0 ? T.green : cpg<0 ? T.red : T.textMuted;
+
+  // Consistency = coefficient of variation (stdev / mean) of this stint's
+  // laps — scale-independent across tracks, unlike raw stdev. Thresholds
+  // here are a starting assumption, not a validated figure the way the pit
+  // duration fields are — worth revisiting once real session data is in.
+  const cv = stats?.consistency_cv;
+  const consistencyLabel = cv==null ? "—" : `${(cv*100).toFixed(1)}%`;
+  const consistencyColor = cv==null ? null : cv>=0.02 ? T.red : cv>=0.01 ? T.amber : T.green;
+
+  const stintLabel = stats ? `${stats.stint_lap_count} lap${stats.stint_lap_count===1?"":"s"}` : "—";
+
+  const row = (label, value) => `<div class="summary-driver"><span>${label}</span><span class="font-mono">${value}</span></div>`;
+
+  return `
+    <div class="summary-box">
+      <div class="summary-driver" style="margin-bottom:6px;">
+        <span></span>
+        <span class="fin-label" style="margin:0;">${icon("flag",12)} Live Timing</span>
+      </div>
+      ${row("In Seat", esc(pos.driver_name || "—"))}
+      ${row("Position", `P${pos.class_position ?? "—"}` + (gainedLabel ? ` <span style="color:${gainedColor}">${gainedLabel}</span>` : ""))}
+      ${row("Last Lap", esc(trimLapTime(pos.last_lap_time)))}
+      ${row("Average Lap", stats ? fmtLapSeconds(stats.avg_lap_seconds) : "—")}
+      ${row("Consistency", consistencyColor ? `<span style="color:${consistencyColor}">${consistencyLabel}</span>` : consistencyLabel)}
+      ${row("Stint", stintLabel)}
+      ${row("Last Pit", pos.last_lap_pitted!=null ? `Lap ${pos.last_lap_pitted}` : "—")}
+      ${row("Pit Time", pos.pit_duration_ms!=null ? `${(pos.pit_duration_ms/1000).toFixed(1)}s` : "—")}
+      <p style="font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.5;color:var(--textFaint);margin:10px 0 0;">
+        Live from Red Mist Timing. Average Lap / Consistency reset with each driver change.
+      </p>
+    </div>`;
+}
+
 function carPlanSection(cp, plan, archived){
   const car = cp.car, stints = cp.stints;
   // archived = the race's real status, used for status DISPLAY (podium
@@ -2380,7 +2507,9 @@ function carPlanSection(cp, plan, archived){
   const readOnly = archived || !state.isEngineer;
   const shortNames = buildShortNames(car.drivers.filter(d=>d.trim()));
   const timelineAbbrev = buildTimelineAbbrev(car.drivers.filter(d=>d.trim()));
-  const race = archived ? state.races.find(r=>r.id===state.currentRaceId) : null;
+  // Resolved regardless of archived status now — live timing needs it for
+  // a currently-open (non-archived) race too, not just the post-race view.
+  const race = state.races.find(r=>r.id===state.currentRaceId);
   const effectivePos = archived ? getEffectiveFinishPosition(car, race) : null;
   const carPodium = archived ? podiumColor(typeof effectivePos === "number" ? effectivePos : null) : null;
   const hasDelta = archived && car.startingPosition!=null && typeof effectivePos === "number";
@@ -2394,11 +2523,19 @@ function carPlanSection(cp, plan, archived){
   // updateLiveHighlights().
   const liveIdx = computeLiveStintIndex(stints, archived);
 
-  // Collapsible tile: currently enabled only on the archive/plan view for
-  // archived races — the tile header (image + team/finish info) toggles
-  // visibility of everything below it (Seat Time, Horizontal Planner,
-  // Stint Planner, Stint Adjustments). Not yet wired up for planned races.
-  const collapsible = archived;
+  // Live Red Mist Timing data for this car, if a WRL event is currently
+  // live and subscribeRedmistLive() has picked it up for the open race
+  // (see open-race handler). Deliberately independent of archived/planned
+  // status — a race stays "planned" in this app right up until someone
+  // archives it after the checkered flag, so this is what actually gates
+  // whether the car is being timed live right now, not the race's own
+  // status field.
+  const hasLiveTiming = !!(race?.redmistLive?.byCarNumber?.[car.number]);
+
+  // Collapsible tile: enabled on the archive/plan view for archived races,
+  // and now also for a race with live timing data flowing — same
+  // collapse/expand mechanic (state.expandedCarPlans) either way.
+  const collapsible = archived || hasLiveTiming;
   const isCollapsed = collapsible && !state.expandedCarPlans.has(car.id);
   const headerAttrs = collapsible ? `data-act="toggle-car-plan" data-car="${car.id}" role="button" tabindex="0" style="cursor:pointer;"` : "";
 
@@ -2429,6 +2566,7 @@ function carPlanSection(cp, plan, archived){
       ${isCollapsed ? "" : `
       <div class="car-plan-body fade-in">
       ${archived ? mylapsCarHeaderBlock(car) + pitCycleBlock(car) + raceSummaryBlock(cp) : ""}
+      ${hasLiveTiming ? liveTimingBlock(car) : ""}
 
       <div class="timeline">
         ${stints.map((s,i)=>{
@@ -2879,6 +3017,7 @@ async function handleAction(act, el){
     case "go-home":
       // Home is a root screen — drop the trail rather than letting Back
       // walk back into whatever we just left.
+      unsubscribeRedmistLive();
       navReset();
       state.page = "home"; render(); break;
     case "nav-back":
@@ -2916,6 +3055,9 @@ async function handleAction(act, el){
             render();
           });
         }
+        // Live-subscription branch lives inside openRace() itself (see
+        // there for why) so it also fires on the navBack() re-fetch path,
+        // not just this direct click.
       }
       break;
     }
@@ -2938,7 +3080,7 @@ async function handleAction(act, el){
         const { error } = await supabase.from('races').delete().eq('id', cd.id);
         if (error) console.error('delete race failed:', error);
         state.races = state.races.filter(r=>r.id!==cd.id);
-        if (state.currentRaceId === cd.id){ state.page="home"; state.currentRaceId=null; state.plan=null; }
+        if (state.currentRaceId === cd.id){ unsubscribeRedmistLive(); state.page="home"; state.currentRaceId=null; state.plan=null; }
       } else if (cd.type === "car"){
         state.cars = state.cars.filter(c=>c.id!==cd.id);
       } else if (cd.type === "catalogCar"){
@@ -3182,6 +3324,9 @@ async function navBack(){
     if (full){ openRace(full); return; } // openRace renders
     state.page = "home"; render(); return;
   }
+  // Leaving the plan screen for anything else (Home, Archive, ...) — stop
+  // the live subscription rather than leaving it running unattended.
+  unsubscribeRedmistLive();
   state.page = entry.page;
   render();
 }
@@ -3284,6 +3429,14 @@ async function adjustStintStart(carId, stintIdx, deltaMinutes){
 }
 
 function openRace(race){
+  // Fires here rather than only in the "open-race" click handler so that
+  // navBack()'s re-fetch-and-reopen path (returning to a plan screen via
+  // Back/Esc/device-back) also picks the live subscription back up, not
+  // just the first time the race is opened. subscribeRedmistLive() itself
+  // no-ops quickly if nothing's actually live.
+  if (race.status !== "archived") subscribeRedmistLive(race.id);
+  else unsubscribeRedmistLive();
+
   state.currentRaceId = race.id;
   state.currentStatus = race.status;
   state.eventName = race.eventName;
