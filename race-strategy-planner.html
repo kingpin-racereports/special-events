@@ -3643,6 +3643,27 @@ async function openRace(race){
   state.page = "plan";
   render();
 
+  // Now that state.currentRaceId/state.plan are actually set, re-run the
+  // driver-change check against the data already fetched above — this is
+  // what closes the gap that just showed up in testing: the FIRST pass at
+  // this data happened during loadRedmistLiveState() above, before
+  // state.currentRaceId was set, so handleRedmistDriverChange's own safety
+  // check (never touch a plan that isn't actually the open one) correctly
+  // refused to run at that point. Without this second pass, a driver
+  // change that already happened before the page was opened would never
+  // get a chance to be detected at all — only a change occurring AFTER
+  // this point, via the Realtime channel below, would. This call is what
+  // that first confirmation opportunity looks like (still subject to the
+  // normal two-poll debounce — a second matching update, whether from a
+  // real subsequent poll or another manual test update, is still what
+  // actually applies the change).
+  if (liveRace){
+    for (const num of liveCarNumbers){
+      const p = liveRace.redmistLive?.byCarNumber?.[num];
+      if (p) await handleRedmistDriverChange(liveRace, num, p);
+    }
+  }
+
   if (liveRace) subscribeRedmistLiveChannel(race.id, liveRace, liveCarNumbers);
 }
 
