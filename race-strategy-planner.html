@@ -1313,18 +1313,36 @@ async function refreshRedmistCar(race, carNumber, skipRender){
 // so the mismatch that triggers this naturally stops being true on the
 // next poll.
 async function handleRedmistDriverChange(race, carNumber, pos){
-  if (!state.plan || state.currentRaceId !== race.id) return;
-  if (!pos.last_lap_pitted) return; // no stop recorded yet this event — nothing to compare against
+  if (!state.plan || state.currentRaceId !== race.id){
+    console.log(`[redmist-live] car ${carNumber}: skipping driver-change check — this isn't the currently open editable plan (state.currentRaceId=${state.currentRaceId}, race.id=${race.id})`);
+    return;
+  }
+  if (!pos.last_lap_pitted){
+    console.log(`[redmist-live] car ${carNumber}: skipping driver-change check — last_lap_pitted is ${pos.last_lap_pitted} (no stop recorded yet this event)`);
+    return;
+  }
 
   const cp = state.plan.carPlans.find(cp=>cp.car.number===carNumber);
-  if (!cp) return;
+  if (!cp){
+    console.log(`[redmist-live] car ${carNumber}: skipping driver-change check — no matching car in state.plan.carPlans (car numbers in plan: ${state.plan.carPlans.map(c=>c.car.number).join(", ")})`);
+    return;
+  }
   const liveIdx = computeLiveStintIndex(cp.stints, false);
-  if (liveIdx === -1) return; // nothing currently live per the plan — see computeLiveStintIndex if this seems wrong
+  if (liveIdx === -1){
+    console.log(`[redmist-live] car ${carNumber}: skipping driver-change check — computeLiveStintIndex found no live stint (either every stint is already finished, or the plan's Stint 1 start time hasn't passed real "now" yet)`);
+    return;
+  }
 
   const outgoingStint = cp.stints[liveIdx];
   const incomingDriver = (pos.driver_name || "").trim();
-  if (!incomingDriver) return;
-  if (outgoingStint.driver && outgoingStint.driver.trim().toLowerCase() === incomingDriver.toLowerCase()) return; // plan already matches reality
+  if (!incomingDriver){
+    console.log(`[redmist-live] car ${carNumber}: skipping driver-change check — Red Mist isn't reporting a driver_name right now`);
+    return;
+  }
+  if (outgoingStint.driver && outgoingStint.driver.trim().toLowerCase() === incomingDriver.toLowerCase()){
+    console.log(`[redmist-live] car ${carNumber}: no change needed — plan's live Stint ${liveIdx+1} already lists ${outgoingStint.driver}, matching what's being reported`);
+    return;
+  }
 
   if (!race.redmistLive.driverConfirm) race.redmistLive.driverConfirm = {};
   if (!race.redmistLive.applying) race.redmistLive.applying = new Set();
@@ -1333,7 +1351,7 @@ async function handleRedmistDriverChange(race, carNumber, pos){
   const confirm = race.redmistLive.driverConfirm[carNumber];
   if (!confirm || confirm.driverId !== pos.driver_id){
     race.redmistLive.driverConfirm[carNumber] = { driverId: pos.driver_id, streak: 1 };
-    console.log(`[redmist-live] car ${carNumber}: plan says ${outgoingStint.driver || "no one"} but live shows ${incomingDriver} — waiting for a second matching poll before touching the stint plan`);
+    console.log(`[redmist-live] car ${carNumber}: plan says ${outgoingStint.driver || "no one"} (Stint ${liveIdx+1}) but live shows ${incomingDriver} — waiting for a second matching poll before touching the stint plan`);
     return;
   }
   confirm.streak++;
