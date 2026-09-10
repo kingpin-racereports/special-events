@@ -2787,6 +2787,7 @@ function carPlanSection(cp, plan, archived){
   // whether the car is being timed live right now, not the race's own
   // status field.
   const hasLiveTiming = !!(race?.redmistLive?.byCarNumber?.[car.number]);
+  const livePos = hasLiveTiming ? race.redmistLive.byCarNumber[car.number] : null;
 
   // Collapsible tile: enabled on the archive/plan view for archived races,
   // and now also for a race with live timing data flowing — same
@@ -2811,25 +2812,22 @@ function carPlanSection(cp, plan, archived){
             ${hasLiveTiming ? `
               <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;background:rgba(226,68,92,0.12);">
                 <span style="width:6px;height:6px;border-radius:999px;background:var(--red);animation:livePulse 1.2s ease-in-out infinite;"></span>
-                <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:0.05em;color:var(--red);">LIVE</span>
+                <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:0.05em;color:var(--text);">Currently P${livePos.class_position ?? "—"}</span>
               </span>
             ` : ""}
             ${(() => {
-              // Prefer the live session's own starting position + Red
-              // Mist's own positions-gained calc once live timing data
-              // exists for this car; otherwise fall back to the
-              // manually-entered plan value from Setup, same as before
-              // live data existed at all.
+              // Positions-gained badge from Red Mist's own calc, once live
+              // timing exists for this car — starting position used to be
+              // shown alongside it here too, but that's redundant now
+              // that the LIVE pill itself shows the current position
+              // (removed on request). Pre-live races still fall back to
+              // the manually-entered plan value from Setup, same as
+              // before live data existed at all.
               if (!archived && hasLiveTiming){
-                const pos = race.redmistLive.byCarNumber[car.number];
-                const startPos = pos.starting_class_position;
-                const cpg = pos.class_positions_gained;
+                const cpg = livePos.class_positions_gained;
                 const gained = (cpg==null || cpg===-999 || cpg===0) ? null : (cpg>0?`+${cpg}`:`${cpg}`);
                 const gainedColor = cpg>0?T.green:(cpg<0?T.red:T.textMuted);
-                return `
-                  ${startPos!=null ? `<span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);">Start P${startPos}</span>` : ""}
-                  ${gained ? `<span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:11px;color:${gainedColor}">${gained}</span>` : ""}
-                `;
+                return gained ? `<span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:11px;color:${gainedColor}">${gained}</span>` : "";
               }
               return !archived && car.startingPosition!=null
                 ? `<span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);">Start P${car.startingPosition}</span>`
