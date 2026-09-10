@@ -632,6 +632,7 @@ let state = {
   mylapsLoading: false,     // UI-only: fetch in progress
   mylapsError: null,        // UI-only: last fetch/parse error message
   mylapsShowFullField: false, // UI-only: full standings table expanded
+  liveShowFullField: false,   // UI-only: live full-field standings table expanded (see renderLiveStandingsPanel)
   mylapsAutoLoading: false, // UI-only: fetching saved results from Supabase after opening an archived race
 
   redmistEventId: null, // Red Mist event id currently being polled — set by subscribeRedmistLive(), null when nothing's live
@@ -1365,6 +1366,66 @@ function subscribeRedmistLiveChannel(raceId, race, carNumbers){
       if (num && carNumbers.includes(num) && payload.new.event_id === state.redmistEventId) refreshRedmistCar(race, num);
     })
     .subscribe();
+}
+
+// ---- Full-field live standings (beneath the track map, not the
+// per-car tiles above) — deliberately separate data path from
+// byCarNumber above, since that's scoped to only this team's own cars.
+// This needs every car currently in the Red Mist event, so it's its own
+// fetch/subscription pair, lazily started only once the panel is
+// expanded (see the "live-toggle-field" action) rather than always
+// pulling all ~30+ cars' data whether or not anyone's looking at it.
+let fullFieldChannel = null;
+
+async function loadRedmistFullField(race, eventId){
+  const { data: positions, error: posErr } = await supabase
+    .from("redmist_live_positions").select("*").eq("event_id", eventId);
+  if (posErr) console.error("[redmist-live] loadRedmistFullField positions failed:", posErr);
+
+  if (!race.redmistLive) race.redmistLive = { byCarNumber:{}, statsByCarNumber:{} };
+  race.redmistLive.fullField = positions || [];
+  await refreshFullFieldStopCounts(race, eventId); // also renders
+}
+
+// Recomputed from scratch on every pit-stop change rather than
+// incrementally tracked — this table is low volume (a handful of stops
+// per car per race), so a full recount is cheap and avoids any drift
+// from a missed or out-of-order realtime event.
+async function refreshFullFieldStopCounts(race, eventId){
+  const { data: stops, error } = await supabase
+    .from("redmist_live_pit_stops").select("car_number").eq("event_id", eventId);
+  if (error){ console.error("[redmist-live] refreshFullFieldStopCounts failed:", error); return; }
+  const counts = {};
+  (stops||[]).forEach(r => { counts[r.car_number] = (counts[r.car_number]||0) + 1; });
+  if (!race.redmistLive) race.redmistLive = { byCarNumber:{}, statsByCarNumber:{} };
+  race.redmistLive.stopCountsByCarNumber = counts;
+  render();
+}
+
+function mergeFullFieldPositionRow(race, row){
+  if (!race.redmistLive || !row) return;
+  const arr = race.redmistLive.fullField || [];
+  const idx = arr.findIndex(r => r.car_number === row.car_number);
+  if (idx >= 0) arr[idx] = row; else arr.push(row);
+  race.redmistLive.fullField = arr;
+  render();
+}
+
+function subscribeFullFieldChannel(raceId, race, eventId){
+  if (fullFieldChannel) return; // idempotent — toggling the panel open twice shouldn't double-subscribe
+  fullFieldChannel = supabase
+    .channel(`redmist-fullfield-${raceId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'redmist_live_positions', filter: `event_id=eq.${eventId}` }, payload => {
+      mergeFullFieldPositionRow(race, payload.new);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'redmist_live_pit_stops', filter: `event_id=eq.${eventId}` }, () => {
+      refreshFullFieldStopCounts(race, eventId);
+    })
+    .subscribe();
+}
+
+function unsubscribeFullFieldChannel(){
+  if (fullFieldChannel){ supabase.removeChannel(fullFieldChannel); fullFieldChannel = null; }
 }
 
 // ---- Live mirror of server-side stint automation (Phase 1) ----
@@ -2366,6 +2427,8 @@ function renderPlan(){
 
       ${trackDetailSection(plan.track)}
 
+      ${!archived ? renderLiveStandingsPanel(race) : ""}
+
       ${!readOnly ? `
       <div class="archive-box fade-in">
         <div class="head">${icon("archive",15)} Race Complete?</div>
@@ -2507,6 +2570,59 @@ function renderMylapsPanel(race){
       <p style="font-family:'JetBrains Mono',monospace;font-size:11px;color:${T.textFaint};margin-top:8px;">
         Gap is the true time gap to the car ahead, but only when both cars are on the same lap — otherwise the field shows the lap deficit.
       </p>` : ""}
+    </div>`;
+}
+
+// Live counterpart to renderMylapsPanel() above — same table markup/CSS
+// (.mylaps-table), reused deliberately so the two look identical, but
+// sourced from redmist_live_positions/redmist_live_pit_stops for every
+// car in the event (not just this team's own cars, and not just the
+// class either — same "full field" scope as the archived version).
+// Header says "Pos" rather than "Finish" since the race isn't over yet;
+// Status is omitted entirely (no live DNF/DNS source, and asked to drop
+// it) rather than shown as a column that never has anything in it.
+function renderLiveStandingsPanel(race){
+  const fullField = race?.redmistLive?.fullField;
+  if (!fullField || !fullField.length) return "";
+  const stopCounts = race.redmistLive.stopCountsByCarNumber || {};
+
+  const sorted = [...fullField].sort((a,b)=>{
+    const ap = a.class_position, bp = b.class_position;
+    if (ap == null && bp == null) return 0;
+    if (ap == null) return 1;
+    if (bp == null) return -1;
+    return ap - bp;
+  });
+
+  const fieldRows = state.liveShowFullField ? sorted.map(pos => {
+    const isOurs = race.cars.some(c=>c.number===pos.car_number);
+    const gapLabel = pos.class_position === 1 ? "Leader" : (pos.current_gap || "—");
+    return `<tr style="${isOurs?`background:${T.gold}17;border-left:2px solid ${T.gold};`:""}">
+      <td class="num">P${pos.class_position ?? "—"}</td>
+      <td><span class="num">#${esc(pos.car_number)}</span> - <span style="font-weight:600;">${esc(pos.team_name || "—")}</span></td>
+      <td class="num">${esc(gapLabel)}</td>
+      <td class="num">${pos.last_lap_completed ?? 0}</td>
+      <td class="stops">${stopCounts[pos.car_number] ?? 0}</td>
+      <td class="mylaps-cls">${esc(pos.class || "—")}</td>
+    </tr>`;
+  }).join("") : "";
+
+  return `
+    <div class="mylaps-panel fade-in">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <span class="eyebrow" style="color:${T.red};">Live Standings</span>
+      </div>
+      <button class="link-muted" data-act="live-toggle-field" style="margin-top:8px;font-size:12px;">
+        ${state.liveShowFullField ? "Hide" : "Show"} full-field standings ${icon(state.liveShowFullField?"chevronUp":"chevronDown",12)}
+      </button>
+
+      ${state.liveShowFullField ? `
+      <div class="mylaps-table-wrap">
+      <table class="mylaps-table">
+        <thead><tr><th>Pos</th><th>Car</th><th>Gap</th><th>Laps</th><th>Stops</th><th>Class</th></tr></thead>
+        <tbody>${fieldRows}</tbody>
+      </table>
+      </div>` : ""}
     </div>`;
 }
 
@@ -3307,6 +3423,7 @@ async function handleAction(act, el){
       // walk back into whatever we just left.
       unsubscribeRedmistLive();
       unsubscribeStintChanges();
+      unsubscribeFullFieldChannel();
       navReset();
       state.page = "home"; render(); break;
     case "nav-back":
@@ -3369,7 +3486,7 @@ async function handleAction(act, el){
         const { error } = await supabase.from('races').delete().eq('id', cd.id);
         if (error) console.error('delete race failed:', error);
         state.races = state.races.filter(r=>r.id!==cd.id);
-        if (state.currentRaceId === cd.id){ unsubscribeRedmistLive(); unsubscribeStintChanges(); state.page="home"; state.currentRaceId=null; state.plan=null; }
+        if (state.currentRaceId === cd.id){ unsubscribeRedmistLive(); unsubscribeStintChanges(); unsubscribeFullFieldChannel(); state.page="home"; state.currentRaceId=null; state.plan=null; }
       } else if (cd.type === "car"){
         state.cars = state.cars.filter(c=>c.id!==cd.id);
       } else if (cd.type === "catalogCar"){
@@ -3507,6 +3624,17 @@ async function handleAction(act, el){
       render(); break;
     case "mylaps-toggle-field":
       state.mylapsShowFullField = !state.mylapsShowFullField; render(); break;
+    case "live-toggle-field": {
+      state.liveShowFullField = !state.liveShowFullField;
+      const race = state.races.find(r=>r.id===state.currentRaceId);
+      if (state.liveShowFullField && race && state.redmistEventId){
+        if (!race.redmistLive?.fullField) await loadRedmistFullField(race, state.redmistEventId);
+        subscribeFullFieldChannel(state.currentRaceId, race, state.redmistEventId);
+      } else if (!state.liveShowFullField){
+        unsubscribeFullFieldChannel();
+      }
+      render(); break;
+    }
     case "mylaps-run": {
       const sessionId = state.mylapsSessionDraft.trim();
       if (!sessionId){ state.mylapsError = "Enter a session ID."; render(); break; }
@@ -3617,6 +3745,7 @@ async function navBack(){
   // the live subscription rather than leaving it running unattended.
   unsubscribeRedmistLive();
   unsubscribeStintChanges();
+  unsubscribeFullFieldChannel();
   state.page = entry.page;
   render();
 }
@@ -3719,6 +3848,12 @@ async function adjustStintStart(carId, stintIdx, deltaMinutes){
 }
 
 async function openRace(race){
+  // Full-field standings are per-race (scoped to whatever event_id that
+  // race is linked to) — reset here unconditionally so a channel/expanded
+  // state from a previously-open race never leaks into this one.
+  unsubscribeFullFieldChannel();
+  state.liveShowFullField = false;
+
   // Awaited BEFORE any state/render below — this is what actually fixes
   // the collapse "jump": the car-plan tiles' collapsed/expanded state
   // depends on whether live data exists, so that has to be known before
