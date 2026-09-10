@@ -1289,8 +1289,8 @@ async function refreshRedmistCar(race, carNumber, skipRender){
 // Confirms a driver change is real (not a flickered read — Red Mist's
 // driver identity is known unreliable, see redmist-backfill's own
 // same-did-flickering / stale-did notes) by requiring the SAME driver_id
-// on the SAME pit lap across two consecutive polls before touching the
-// stint plan. Once confirmed:
+// across two consecutive polls before touching the stint plan. Once
+// confirmed:
 //   1. Closes the outgoing stint with its real end time via
 //      updateStintEnd() — the exact same overrun-cascade path the manual
 //      "Finish Stint" button uses, so downstream start times get the same
@@ -1299,69 +1299,72 @@ async function refreshRedmistCar(race, carNumber, skipRender){
 //      the person who actually got in differs from the plan — mirroring
 //      how quiet-time is applied after the cascade rather than folded
 //      into it: timing and "who's driving" are kept as separate edits.
-// Deliberately does nothing for a race that isn't the one currently open
-// in the editable plan (state.plan) — there's nothing in memory to mutate
-// for any other race.
+//
+// Deliberately triggers off "does the plan's currently-live stint driver
+// match who Red Mist is reporting right now" rather than "are we on the
+// exact pit lap" — a car sitting several laps past its stop still needs
+// this to fire (e.g. the page was opened after the stop already
+// happened, or a poll was missed), and pinning it to one specific lap
+// number meant the check permanently stopped applying the moment that lap
+// was no longer the car's most recent one.
+//
+// Self-limiting without a separate "already handled" list: once the swap
+// is applied, the plan's live stint driver equals what's being reported,
+// so the mismatch that triggers this naturally stops being true on the
+// next poll.
 async function handleRedmistDriverChange(race, carNumber, pos){
   if (!state.plan || state.currentRaceId !== race.id) return;
-  if (pos.last_lap_completed == null || pos.last_lap_pitted !== pos.last_lap_completed) return; // not fresh off a pit lap
+  if (!pos.last_lap_pitted) return; // no stop recorded yet this event — nothing to compare against
+
+  const cp = state.plan.carPlans.find(cp=>cp.car.number===carNumber);
+  if (!cp) return;
+  const liveIdx = computeLiveStintIndex(cp.stints, false);
+  if (liveIdx === -1) return; // nothing currently live per the plan — see computeLiveStintIndex if this seems wrong
+
+  const outgoingStint = cp.stints[liveIdx];
+  const incomingDriver = (pos.driver_name || "").trim();
+  if (!incomingDriver) return;
+  if (outgoingStint.driver && outgoingStint.driver.trim().toLowerCase() === incomingDriver.toLowerCase()) return; // plan already matches reality
 
   if (!race.redmistLive.driverConfirm) race.redmistLive.driverConfirm = {};
-  if (!race.redmistLive.processedStops) race.redmistLive.processedStops = new Set();
-  const stopKey = `${carNumber}:${pos.last_lap_pitted}`;
-  if (race.redmistLive.processedStops.has(stopKey)) return; // already handled this exact stop
+  if (!race.redmistLive.applying) race.redmistLive.applying = new Set();
+  if (race.redmistLive.applying.has(carNumber)) return; // a previous confirmed change for this car is still being applied
 
   const confirm = race.redmistLive.driverConfirm[carNumber];
-  if (!confirm || confirm.lap !== pos.last_lap_pitted || confirm.driverId !== pos.driver_id){
-    race.redmistLive.driverConfirm[carNumber] = { lap: pos.last_lap_pitted, driverId: pos.driver_id, streak: 1 };
-    console.log(`[redmist-live] car ${carNumber}: new driver reading (${pos.driver_name}) on lap ${pos.last_lap_pitted} — waiting for a second matching poll before touching the stint plan`);
+  if (!confirm || confirm.driverId !== pos.driver_id){
+    race.redmistLive.driverConfirm[carNumber] = { driverId: pos.driver_id, streak: 1 };
+    console.log(`[redmist-live] car ${carNumber}: plan says ${outgoingStint.driver || "no one"} but live shows ${incomingDriver} — waiting for a second matching poll before touching the stint plan`);
     return;
   }
   confirm.streak++;
   if (confirm.streak < 2) return;
 
-  const cp = state.plan.carPlans.find(cp=>cp.car.number===carNumber);
-  if (!cp) return;
+  race.redmistLive.applying.add(carNumber);
+  try {
+    console.log(`[redmist-live] car ${carNumber}: confirmed driver change (last pitted Lap ${pos.last_lap_pitted}) — closing Stint ${liveIdx+1} (${outgoingStint.driver}) with the real time`);
 
-  const liveIdx = computeLiveStintIndex(cp.stints, false);
-  if (liveIdx === -1){
-    console.log(`[redmist-live] car ${carNumber}: driver change confirmed but no unfinished live stint found — nothing to close out`);
-    race.redmistLive.processedStops.add(stopKey);
-    return;
-  }
+    const actualEnd = new Date(pos.fetched_at || Date.now());
+    const hhmm = `${String(actualEnd.getHours()).padStart(2,"0")}:${String(actualEnd.getMinutes()).padStart(2,"0")}`;
+    await updateStintEnd(cp.car.id, liveIdx, hhmm);
+    logStintNote(cp, liveIdx, `Stint finished automatically from Red Mist live timing — pit stop detected on Lap ${pos.last_lap_pitted}.`, "info", "redmist-auto-finish");
 
-  const outgoingStint = cp.stints[liveIdx];
-  const incomingDriver = (pos.driver_name || "").trim();
-  if (outgoingStint.driver && incomingDriver && outgoingStint.driver.trim().toLowerCase() === incomingDriver.toLowerCase()){
-    // The plan's current live stint already lists the incoming driver —
-    // not actually a change relative to the plan (or already handled).
-    race.redmistLive.processedStops.add(stopKey);
-    return;
-  }
-
-  console.log(`[redmist-live] car ${carNumber}: confirmed driver change (Lap ${pos.last_lap_pitted}) — closing Stint ${liveIdx+1} (${outgoingStint.driver}) with the real time`);
-
-  const actualEnd = new Date(pos.fetched_at || Date.now());
-  const hhmm = `${String(actualEnd.getHours()).padStart(2,"0")}:${String(actualEnd.getMinutes()).padStart(2,"0")}`;
-  await updateStintEnd(cp.car.id, liveIdx, hhmm);
-  logStintNote(cp, liveIdx, `Stint finished automatically from Red Mist live timing — pit stop detected on Lap ${pos.last_lap_pitted}.`, "info", "redmist-auto-finish");
-
-  const nextIdx = liveIdx + 1;
-  const nextStint = cp.stints[nextIdx];
-  if (nextStint && !nextStint.finished && incomingDriver && nextStint.driver !== incomingDriver){
-    const plannedDriver = nextStint.driver;
-    if (!cp.car.drivers.some(d=>d.trim().toLowerCase() === incomingDriver.toLowerCase())){
-      cp.car.drivers.push(incomingDriver);
-      if (!cp.car.driverStintMode) cp.car.driverStintMode = [];
-      cp.car.driverStintMode.push('60');
-      console.log(`[redmist-live] car ${carNumber}: "${incomingDriver}" wasn't in the driver roster — added automatically`);
+    const nextIdx = liveIdx + 1;
+    const nextStint = cp.stints[nextIdx];
+    if (nextStint && !nextStint.finished && nextStint.driver !== incomingDriver){
+      const plannedDriver = nextStint.driver;
+      if (!cp.car.drivers.some(d=>d.trim().toLowerCase() === incomingDriver.toLowerCase())){
+        cp.car.drivers.push(incomingDriver);
+        if (!cp.car.driverStintMode) cp.car.driverStintMode = [];
+        cp.car.driverStintMode.push('60');
+        console.log(`[redmist-live] car ${carNumber}: "${incomingDriver}" wasn't in the driver roster — added automatically`);
+      }
+      await updateStintDriver(cp.car.id, nextIdx, incomingDriver);
+      logStintNote(cp, nextIdx, `Driver updated from live timing — plan had ${plannedDriver || "no one"} scheduled next, but ${incomingDriver} got in the car (Lap ${pos.last_lap_pitted}).`, "warn", "redmist-driver-swap");
     }
-    await updateStintDriver(cp.car.id, nextIdx, incomingDriver);
-    logStintNote(cp, nextIdx, `Driver updated from live timing — plan had ${plannedDriver || "no one"} scheduled next, but ${incomingDriver} got in the car (Lap ${pos.last_lap_pitted}).`, "warn", "redmist-driver-swap");
+  } finally {
+    delete race.redmistLive.driverConfirm[carNumber];
+    race.redmistLive.applying.delete(carNumber);
   }
-
-  race.redmistLive.processedStops.add(stopKey);
-  delete race.redmistLive.driverConfirm[carNumber];
 }
 
 
