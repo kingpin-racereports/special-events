@@ -91,6 +91,9 @@
   .catalog-tile{cursor:pointer;}
   .race-tile .strip{aspect-ratio:8/7;position:relative;}
   .race-tile .strip button.del{position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:999px;background:rgba(10,12,16,0.55);border:none;color:#fff;display:flex;align-items:center;justify-content:center;}
+  .race-tile .strip .live-badge{position:absolute;top:6px;left:6px;display:flex;align-items:center;gap:5px;padding:3px 8px 3px 6px;border-radius:999px;z-index:2;backdrop-filter:blur(2px);}
+  .race-tile .strip .live-badge .dot{width:6px;height:6px;border-radius:999px;flex-shrink:0;animation:livePulse 1.2s ease-in-out infinite;}
+  .race-tile .strip .live-badge .lbl{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;letter-spacing:0.05em;}
   .race-tile button.dup{position:absolute;bottom:8px;right:8px;width:22px;height:22px;border-radius:999px;background:rgba(10,12,16,0.55);border:none;color:#fff;display:flex;align-items:center;justify-content:center;z-index:2;}
   .race-tile .body{padding:12px 30px 14px 14px;}
   .race-tile .name{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:19px;line-height:1.15;margin-bottom:3px;}
@@ -632,6 +635,11 @@ let state = {
   mylapsAutoLoading: false, // UI-only: fetching saved results from Supabase after opening an archived race
 
   redmistEventId: null, // Red Mist event id currently being polled — set by subscribeRedmistLive(), null when nothing's live
+  // Whichever WRL event is currently live, tracked independently of any
+  // single race being open — unlike redmistEventId above, this exists so
+  // Home's race tiles can show a pulsating LIVE badge on the matching
+  // race even when no one has opened it. See subscribeHomeLiveWatch().
+  homeLive: { eventId: null, flag: null },
 };
 
 // ---- persistence (Supabase — see supabase-client.js for setup) ----
@@ -649,6 +657,7 @@ function mapRaceRowToRecord(row){
     id: row.id,
     eventName: row.event_name,
     eventDateISO: row.event_date,
+    redmistEventId: row.redmist_event_id ?? null, // links this race to a WRL event for the Home-tile LIVE badge — see subscribeHomeLiveWatch()
     track: row.track || "",
     startTime: (row.start_time || "10:00:00").slice(0,5),
     durationHours: Number(row.duration_hours),
@@ -1379,15 +1388,20 @@ function subscribeStintChanges(raceId, carIds){
   stintsChannel = supabase
     .channel(`stint-mirror-${raceId}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'stints', filter: carIdFilter }, payload => {
+      console.log("[stint-mirror] stints event received:", payload); // TEMP debug — remove once realtime is confirmed working
       mergeStintRowIntoPlan(payload.new);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'cars', filter: `id=in.(${carIds.join(",")})` }, payload => {
+      console.log("[stint-mirror] cars event received:", payload); // TEMP debug
       mergeCarRowIntoPlan(payload.new);
     })
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'races', filter: `id=eq.${raceId}` }, payload => {
+      console.log("[stint-mirror] races event received:", payload); // TEMP debug
       mergeRaceRowIntoPlan(payload.new);
     })
-    .subscribe();
+    .subscribe((status, err) => {
+      console.log("[stint-mirror] channel status:", status, err || ""); // TEMP debug — look for "SUBSCRIBED" here
+    });
 }
 
 function unsubscribeStintChanges(){
@@ -1439,6 +1453,70 @@ async function subscribeRedmistLive(raceId){
 function unsubscribeRedmistLive(){
   if (redmistChannel){ supabase.removeChannel(redmistChannel); redmistChannel = null; }
   state.redmistEventId = null;
+}
+
+// ---- Home screen: live race indicator ----
+// Maps Red Mist's raw current_flag string to the badge color. Matched by
+// substring rather than an exact enum since the real values coming back
+// from GetCurrentSessionStateJson haven't been fully catalogued yet (we
+// only have "Green"/"Yellow"/"Red" confirmed from the three states this
+// badge was built for) — this way a variant like "Full Course Yellow" or
+// "Red Flag" still resolves correctly instead of falling through to the
+// unknown-state fallback. Order matters: check red/yellow before green so
+// a value like "Green/Yellow" (if Red Mist ever reports transitions that
+// way) doesn't get misread.
+function flagToLiveColor(flag){
+  const f = (flag || "").toLowerCase();
+  if (f.includes("red")) return T.red;
+  if (f.includes("yellow") || f.includes("caution")) return T.amber;
+  if (f.includes("green")) return T.green;
+  return T.textFaint; // unrecognized/unset flag (e.g. "Checkered", pre-session) — shown as a neutral dot rather than guessing
+}
+
+let homeLiveChannel = null;
+
+// Fetches which WRL event (if any) is currently live and that event's
+// current flag, independent of any race being open. Called once at boot
+// and again whenever the watch/session rows change via the realtime
+// subscription below.
+async function loadHomeLiveStatus(){
+  const { data: watch } = await supabase
+    .from("redmist_event_watch").select("event_id, is_live").eq("id", 1).maybeSingle();
+  const eventId = watch?.is_live ? watch.event_id : null;
+
+  let flag = null;
+  if (eventId){
+    const { data: session } = await supabase
+      .from("redmist_live_session").select("current_flag").eq("event_id", eventId).maybeSingle();
+    flag = session?.current_flag ?? null;
+  }
+  state.homeLive = { eventId, flag };
+  render();
+}
+
+// Kept running for the life of the tab (started once at boot, not tied to
+// Home specifically) — cheap single-row tables, and it means the badge is
+// already current the moment someone navigates back to Home rather than
+// waiting on a fresh fetch. No car/race filter: whichever event is live
+// can change over time, so this just re-resolves from scratch on every
+// watch/session change rather than trying to filter for an id known in
+// advance.
+function subscribeHomeLiveWatch(){
+  if (homeLiveChannel) return; // idempotent — startApp() can run again (tab-focus re-auth) without double-subscribing
+  homeLiveChannel = supabase
+    .channel("home-live-watch")
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'redmist_event_watch', filter: 'id=eq.1' }, () => {
+      loadHomeLiveStatus();
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'redmist_live_session' }, (payload) => {
+      // Only worth a re-fetch if it's the event we actually care about —
+      // avoids a pointless round trip every poll cycle once other events
+      // exist in history.
+      if (payload.new?.event_id === state.homeLive.eventId || payload.new?.event_id === state.redmistEventId){
+        loadHomeLiveStatus();
+      }
+    })
+    .subscribe();
 }
 
 // Matches this race's own cars (by car number) against imported MyLaps
@@ -1955,10 +2033,22 @@ function renderEngineerLoginModal(){
 function raceTile(race){
   const carsCount = race.cars.length;
   const accent = race.cars[0] ? race.cars[0].accent : T.blue;
+  // Live badge: this race's own redmist_event_id matches whichever event
+  // Home is currently watching as live (see subscribeHomeLiveWatch()) —
+  // independent of isRaceLiveAndLocked(), which only exists for a race
+  // that's actually open, and independent of state.isEngineer, since
+  // this is a public status indicator, not an edit gate.
+  const isLive = race.status!=="archived" && race.redmistEventId && race.redmistEventId === state.homeLive.eventId;
+  const liveColor = isLive ? flagToLiveColor(state.homeLive.flag) : null;
   return `
     <div class="race-tile" data-act="open-race" data-id="${race.id}" role="button" tabindex="0" style="border-color:${accent};">
       <div class="strip" style="background:var(--panelRaised);">
         ${trackStripContent(race.track, accent)}
+        ${isLive ? `
+        <div class="live-badge" style="background:${liveColor}26;border:1px solid ${liveColor};">
+          <span class="dot" style="background:${liveColor};"></span>
+          <span class="lbl" style="color:${liveColor};">LIVE</span>
+        </div>` : ""}
         ${(state.isEngineer && race.status!=="archived") ? `<button class="del" data-act="del-race" data-id="${race.id}" data-label="${esc(race.eventName)}" onclick="event.stopPropagation()">${icon("x",13)}</button>` : ""}
       </div>
       <div class="body">
@@ -4377,6 +4467,12 @@ async function bootIfAuthorized(){
     // immediately rather than gating on (or redirecting for) a login.
     await startApp(false);
   }
+
+  // Home's LIVE race badge — started once here (not inside startApp,
+  // which re-runs on every tab-focus re-auth) and left running for the
+  // life of the tab, independent of whether any race is currently open.
+  loadHomeLiveStatus();
+  subscribeHomeLiveWatch();
 
   // Safety net / upgrade path: picks up a session that lands after the
   // initial render (e.g. a magic-link click that opened this same URL,
