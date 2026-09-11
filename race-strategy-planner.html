@@ -2582,8 +2582,15 @@ function renderMylapsPanel(race){
 // Status is omitted entirely (no live DNF/DNS source, and asked to drop
 // it) rather than shown as a column that never has anything in it.
 function renderLiveStandingsPanel(race){
-  const fullField = race?.redmistLive?.fullField;
-  if (!fullField || !fullField.length) return "";
+  // Gate on whether this race has live timing AT ALL (same signal
+  // carPlanSection uses for hasLiveTiming) — NOT on whether fullField has
+  // already been fetched, which only ever happens after the toggle button
+  // below is clicked. Gating on fullField here would hide the very button
+  // that triggers the fetch, so the panel could never render anything.
+  const hasLiveTiming = !!(race?.redmistLive?.byCarNumber && Object.keys(race.redmistLive.byCarNumber).length);
+  if (!hasLiveTiming) return "";
+
+  const fullField = race.redmistLive.fullField || [];
   const stopCounts = race.redmistLive.stopCountsByCarNumber || {};
 
   const sorted = [...fullField].sort((a,b)=>{
