@@ -35,6 +35,16 @@
   .no-scrollbar{-ms-overflow-style:none;scrollbar-width:none;}
   @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
   .fade-in{animation:fadeIn .35s ease-out;}
+  /* Entrance animation only on an actual page change — a same-page
+     re-render (live data arriving) must not replay the fade/slide, which
+     is what made the whole page "blink" on every Realtime update. */
+  #app.same-page-render .fade-in{animation:none;}
+  /* Every rebuilt pulse dot would otherwise restart its cycle at 0 on each
+     re-render (a visible stutter). --pulse-phase is set in render() to a
+     negative delay from a shared clock, so a rebuilt dot resumes exactly
+     where the old one was. !important so it beats inline animation:
+     shorthands on the ad-hoc dots. */
+  #app .live-badge .dot, #app .live-dot, #app .row-live .dot, #app [style*="livePulse"]{animation-delay:var(--pulse-phase,0ms)!important;}
   input[type="time"]::-webkit-calendar-picker-indicator{filter:invert(0.7);}
   select option{background:var(--panelRaised);color:var(--text);}
   input:focus, select:focus, button:focus-visible{outline:2px solid var(--blue); outline-offset:1px;}
@@ -1312,7 +1322,7 @@ async function refreshRedmistCar(race, carNumber, skipRender){
   // site does its own single render() once ALL cars have resolved, so the
   // car-plan tiles reach their final collapsed/expanded state in one paint
   // rather than settling in piecemeal as each car's query lands.
-  if (!skipRender) render();
+  if (!skipRender) scheduleRender();
 }
 
 // Resolves whether a WRL event is currently live and, if so, fetches
@@ -1407,7 +1417,7 @@ async function refreshFullFieldStopCounts(race, eventId, skipRender){
   // skipRender=true during openRace()'s initial blocking load — same
   // reasoning as refreshRedmistCar's skipRender: that call site does its
   // own single render() once everything (including this) has resolved.
-  if (!skipRender) render();
+  if (!skipRender) scheduleRender();
 }
 
 function mergeFullFieldPositionRow(race, row){
@@ -1416,7 +1426,7 @@ function mergeFullFieldPositionRow(race, row){
   const idx = arr.findIndex(r => r.car_number === row.car_number);
   if (idx >= 0) arr[idx] = row; else arr.push(row);
   race.redmistLive.fullField = arr;
-  render();
+  scheduleRender();
 }
 
 function subscribeFullFieldChannel(raceId, race, eventId){
@@ -1489,7 +1499,7 @@ function mergeStintRowIntoPlan(row){
     flags: row.flags || [], removed: row.removed || false,
     quietMinutes: row.quiet_minutes || 0, finished: row.finished || false,
   };
-  render();
+  scheduleRender();
 }
 
 function mergeCarRowIntoPlan(row){
@@ -1499,14 +1509,14 @@ function mergeCarRowIntoPlan(row){
   cp.car.drivers = row.drivers || [];
   cp.car.driverStintMode = row.driver_stint_mode || [];
   cp.retiredAtStint = row.retired_at_stint ?? null;
-  render();
+  scheduleRender();
 }
 
 function mergeRaceRowIntoPlan(row){
   if (!state.plan || state.currentRaceId !== row.id) return;
   if (row.plan_end_at) state.plan.endDateTime = new Date(row.plan_end_at);
   if (row.total_minutes != null) state.plan.totalMinutes = row.total_minutes;
-  render();
+  scheduleRender();
 }
 
 // Convenience wrapper for call sites that don't need to block a render on
@@ -1574,8 +1584,32 @@ async function loadHomeLiveStatus(){
   }
   state.homeLive = { eventId, flag };
   console.log("[home-live] resolved state.homeLive:", state.homeLive);
-  render();
+
+  if (eventId){
+    // The server auto-links a race to the live event (maybeAutoLinkRace),
+    // but state.races was loaded at boot and never saw that write — so the
+    // Home tile's LIVE badge couldn't light up without a page reload.
+    if (!state.races.some(r => String(r.redmistEventId) === String(eventId))){
+      const { data: linked } = await supabase.from("races").select("id").eq("redmist_event_id", eventId);
+      (linked || []).forEach(row => {
+        const r = state.races.find(r => r.id === row.id);
+        if (r) r.redmistEventId = eventId;
+      });
+    }
+    // A race opened BEFORE the event went live resolved "nothing live" in
+    // openRace() and never looked again — no data until the page was
+    // reloaded. Attach it now, once, when the event appears.
+    if (state.page === "plan" && state.currentRaceId && state.currentStatus !== "archived"
+        && String(state.redmistEventId) !== String(eventId) && !lateAttachInFlight){
+      lateAttachInFlight = true;
+      console.log("[redmist-live] event went live while race was open — attaching now");
+      try { await subscribeRedmistLive(state.currentRaceId); }
+      finally { lateAttachInFlight = false; }
+    }
+  }
+  scheduleRender();
 }
+let lateAttachInFlight = false;
 
 // Kept running for the life of the tab (started once at boot, not tied to
 // Home specifically) — cheap single-row tables, and it means the badge is
@@ -1961,7 +1995,32 @@ function carStripContent(number, team, accent){
 // RENDER
 // ============================================================================
 let lastRenderedPage = null; // used to scroll to top only on an actual page change, not every re-render
-function render(){
+let lastRenderedHtml = null; // skip the DOM write entirely when nothing visible changed
+
+// Coalesced render for Realtime/background callbacks. A single poll can
+// deliver dozens of row events within a few ms (one per car); calling
+// render() for each rebuilt the entire page dozens of times per second.
+// This collapses any burst into one render on the next animation frame.
+// Also defers while someone is typing in a field inside #app, since a
+// rebuild would destroy the input and drop their focus/cursor mid-edit —
+// it runs as soon as they leave the field instead.
+let renderScheduled = false;
+function scheduleRender(){
+  if (renderScheduled) return;
+  renderScheduled = true;
+  requestAnimationFrame(()=>{
+    renderScheduled = false;
+    const a = document.activeElement;
+    const app = document.getElementById("app");
+    if (a && app && app.contains(a) && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT")){
+      a.addEventListener("blur", scheduleRender, { once:true });
+      return;
+    }
+    render({ background:true });
+  });
+}
+
+function render(opts){
   const app = document.getElementById("app");
   if (state.confirmDelete){
     // modal renders on top of whatever page is current
@@ -1994,6 +2053,17 @@ function render(){
   if (state.confirmDelete){
     html += renderConfirmModal();
   }
+
+  // Background (Realtime) render where nothing visible changed — the
+  // common case for a live-data tick — leaves the DOM alone entirely.
+  // Limited to background renders on purpose: an explicit render() after a
+  // user action may be relied on to reset DOM-only state (e.g. snapping an
+  // input back after a rejected write), so those always rebuild.
+  if (opts && opts.background && !pageChanged && html === lastRenderedHtml) return;
+  lastRenderedHtml = html;
+
+  app.classList.toggle("same-page-render", !pageChanged);
+  app.style.setProperty("--pulse-phase", `-${Math.round(performance.now() % 1200)}ms`); // 1200 = livePulse duration
   app.innerHTML = html;
   bindEvents();
 
