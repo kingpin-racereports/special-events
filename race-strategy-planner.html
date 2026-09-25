@@ -650,7 +650,7 @@ let state = {
   // Home's race tiles can show a pulsating LIVE badge on the matching
   // race even when no one has opened it. See subscribeHomeLiveWatch().
   homeLive: { eventId: null, watchEventId: null, flag: null },
-  liveSessionName: null, // Red Mist session_name for the attached live session — drives the header label and quali/race standings mode // eventId = event whose SESSION is live (drives badge + data); watchEventId = event Red Mist lists as live (may be between sessions)
+  liveSession: null, // { id, name, type } of the attached Red Mist session — scopes every live query and drives header + standings mode // eventId = event whose SESSION is live (drives badge + data); watchEventId = event Red Mist lists as live (may be between sessions)
 };
 
 // ---- persistence (Supabase — see supabase-client.js for setup) ----
@@ -1314,13 +1314,42 @@ const SESSION_FRESH_MS = 120_000;
 // Red Mist can report isLive=false with sessionId=0 during a running
 // session (seen in qualifying) — so an on-track flag also counts.
 const ACTIVE_FLAGS = new Set([1, 2, 3, 7]); // green, transition, red, yellow
+// MUST match classifySession() in redmist-live-poll. Only Qualifying and
+// Race sessions are reported; HPDE/test/practice (incl. "Race Practice N")
+// are Practice and never attach. Order matters for that reason.
+function classifySession(name){
+  const n = String(name || "").toLowerCase();
+  if (/qualif/.test(n)) return "Qualifying";
+  if (/practice|hpde|test|warm/.test(n)) return "Practice";
+  if (/race|hour|enduro/.test(n)) return "Race";
+  return "Practice";
+}
 function isSessionActive(session){
   if (!session) return false;
+  if (classifySession(session.session_name) === "Practice") return false;
   return session.is_live === true || ACTIVE_FLAGS.has(Number(session.current_flag));
 }
 function isSessionRowLive(session){
   if (!session || !session.fetched_at || !isSessionActive(session)) return false;
   return Date.now() - new Date(session.fetched_at).getTime() < SESSION_FRESH_MS;
+}
+
+function sessionKeyOf(session){
+  return session ? { id: Number(session.session_id ?? 0), name: session.session_name ?? "", type: classifySession(session.session_name) } : null;
+}
+function isSameSession(a, b){
+  return !!(a && b && a.id === b.id && a.name === b.name);
+}
+// Live rows carry event_id + session_id + session_name; anything from
+// another session of the same event (practice, yesterday's quali) is ignored.
+function isCurrentSessionRow(row){
+  const ls = state.liveSession;
+  return !!(row && ls && String(row.event_id) === String(state.redmistEventId)
+    && Number(row.session_id) === ls.id && row.session_name === ls.name);
+}
+function scopeToLiveSession(query){
+  const ls = state.liveSession;
+  return query.eq("session_id", ls ? ls.id : -1).eq("session_name", ls ? ls.name : "");
 }
 
 function isRaceLiveAndLocked(race){
@@ -1331,7 +1360,7 @@ async function refreshRedmistCar(race, carNumber, skipRender){
   const eventId = state.redmistEventId;
   if (!eventId) return;
   const [{ data: pos, error: posErr }, { data: stats, error: statsErr }] = await Promise.all([
-    supabase.from("redmist_live_positions").select("*").eq("event_id", eventId).eq("car_number", carNumber).maybeSingle(),
+    scopeToLiveSession(supabase.from("redmist_live_positions").select("*").eq("event_id", eventId).eq("car_number", carNumber)).maybeSingle(),
     supabase.from("redmist_current_stint_stats").select("*").eq("event_id", eventId).eq("car_number", carNumber).maybeSingle(),
   ]);
   if (posErr) console.error("[redmist-live] refreshRedmistCar positions failed for car", carNumber, ":", posErr);
@@ -1377,12 +1406,14 @@ async function loadRedmistLiveState(raceId){
   if (!watchEventId){ console.log("[redmist-live] no live event (is_live is false or row missing) — stopping here, this is expected when nothing's live"); return { race, carNumbers }; }
 
   const { data: session, error: sessionErr } = await supabase
-    .from("redmist_live_session").select("session_name, is_live, current_flag, fetched_at").eq("event_id", watchEventId).maybeSingle();
+    .from("redmist_live_session").select("session_id, session_name, is_live, current_flag, fetched_at").eq("event_id", watchEventId).maybeSingle();
   if (sessionErr){ console.error("[redmist-live] session lookup failed:", sessionErr); return { race, carNumbers }; }
   console.log("[redmist-live] redmist_live_session row:", session);
   if (!isSessionRowLive(session)){ console.log("[redmist-live] event", watchEventId, "is listed live but no session is running (is_live false or row stale) — not attaching yet"); return { race, carNumbers }; }
   state.redmistEventId = watchEventId;
-  state.liveSessionName = session.session_name || null;
+  state.liveSession = sessionKeyOf(session);
+  // Fresh per-session container — nothing from a previous session carries over.
+  race.redmistLive = { byCarNumber:{}, statsByCarNumber:{} };
   console.log("[redmist-live] using event_id", state.redmistEventId, "— fetching initial data for each car (blocking first paint)");
 
   await Promise.all([
@@ -1407,11 +1438,11 @@ function subscribeRedmistLiveChannel(raceId, race, carNumbers){
     .channel(`redmist-live-${raceId}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'redmist_live_positions' }, payload => {
       const num = payload.new?.car_number;
-      if (num && carNumbers.includes(num) && String(payload.new.event_id) === String(state.redmistEventId)) refreshRedmistCar(race, num);
+      if (num && carNumbers.includes(num) && isCurrentSessionRow(payload.new)) refreshRedmistCar(race, num);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'redmist_live_laps' }, payload => {
       const num = payload.new?.car_number;
-      if (num && carNumbers.includes(num) && String(payload.new.event_id) === String(state.redmistEventId)) refreshRedmistCar(race, num);
+      if (num && carNumbers.includes(num) && isCurrentSessionRow(payload.new)) refreshRedmistCar(race, num);
     })
     .subscribe();
   // Full-field standings load automatically alongside this team's own
@@ -1429,8 +1460,8 @@ function subscribeRedmistLiveChannel(raceId, race, carNumbers){
 let fullFieldChannel = null;
 
 async function loadRedmistFullField(race, eventId, skipRender){
-  const { data: positions, error: posErr } = await supabase
-    .from("redmist_live_positions").select("*").eq("event_id", eventId);
+  const { data: positions, error: posErr } = await scopeToLiveSession(supabase
+    .from("redmist_live_positions").select("*").eq("event_id", eventId));
   if (posErr) console.error("[redmist-live] loadRedmistFullField positions failed:", posErr);
 
   if (!race.redmistLive) race.redmistLive = { byCarNumber:{}, statsByCarNumber:{} };
@@ -1443,8 +1474,8 @@ async function loadRedmistFullField(race, eventId, skipRender){
 // per car per race), so a full recount is cheap and avoids any drift
 // from a missed or out-of-order realtime event.
 async function refreshFullFieldStopCounts(race, eventId, skipRender){
-  const { data: stops, error } = await supabase
-    .from("redmist_live_pit_stops").select("car_number").eq("event_id", eventId);
+  const { data: stops, error } = await scopeToLiveSession(supabase
+    .from("redmist_live_pit_stops").select("car_number").eq("event_id", eventId));
   if (error){ console.error("[redmist-live] refreshFullFieldStopCounts failed:", error); return; }
   const counts = {};
   (stops||[]).forEach(r => { counts[r.car_number] = (counts[r.car_number]||0) + 1; });
@@ -1457,7 +1488,7 @@ async function refreshFullFieldStopCounts(race, eventId, skipRender){
 }
 
 function mergeFullFieldPositionRow(race, row){
-  if (!race.redmistLive || !row) return;
+  if (!race.redmistLive || !row || !isCurrentSessionRow(row)) return;
   const arr = race.redmistLive.fullField || [];
   const idx = arr.findIndex(r => r.car_number === row.car_number);
   if (idx >= 0) arr[idx] = row; else arr.push(row);
@@ -1568,7 +1599,7 @@ async function subscribeRedmistLive(raceId){
 function unsubscribeRedmistLive(){
   if (redmistChannel){ supabase.removeChannel(redmistChannel); redmistChannel = null; }
   state.redmistEventId = null;
-  state.liveSessionName = null;
+  state.liveSession = null;
 }
 
 // ---- Home screen: live race indicator ----
@@ -1612,13 +1643,12 @@ async function loadHomeLiveStatus(){
   let session = null;
   if (watchEventId){
     const { data, error: sessionErr } = await supabase
-      .from("redmist_live_session").select("session_name, is_live, current_flag, fetched_at").eq("event_id", watchEventId).maybeSingle();
+      .from("redmist_live_session").select("session_id, session_name, is_live, current_flag, fetched_at").eq("event_id", watchEventId).maybeSingle();
     if (sessionErr) console.error("[home-live] redmist_live_session fetch failed:", sessionErr);
     session = data;
   }
   const sessionLive = isSessionRowLive(session);
   const eventId = sessionLive ? watchEventId : null;
-  if (sessionLive && session.session_name) state.liveSessionName = session.session_name;
   state.homeLive = { eventId, watchEventId, flag: sessionLive ? (session.current_flag ?? null) : null };
   console.log("[home-live] watch event:", watchEventId, "| session:", session, "| session live:", sessionLive);
 
@@ -1639,7 +1669,11 @@ async function loadHomeLiveStatus(){
 
   // Session went live while a race was open (including one opened before
   // anything was live) — attach once.
-  if (raceOpen && sessionLive && String(state.redmistEventId) !== String(eventId) && !liveAttachInFlight){
+  // Also re-attach when the event stays the same but the session changes
+  // (e.g. quali -> race) so every query re-scopes to the new session.
+  const sessionSwitched = sessionLive && state.redmistEventId && !isSameSession(state.liveSession, sessionKeyOf(session));
+  if (raceOpen && sessionLive && (String(state.redmistEventId) !== String(eventId) || sessionSwitched) && !liveAttachInFlight){
+    if (sessionSwitched) unsubscribeFullFieldChannel();
     liveAttachInFlight = true;
     console.log("[redmist-live] session went live while race was open — attaching");
     try { await subscribeRedmistLive(state.currentRaceId); }
@@ -2527,7 +2561,7 @@ function renderPlan(){
         <div style="display:flex;align-items:center;gap:8px;margin-top:14px;padding:8px 12px;border-radius:8px;background:rgba(226,68,92,0.10);">
           <span style="width:6px;height:6px;border-radius:999px;background:var(--red);animation:livePulse 1.2s ease-in-out infinite;flex-shrink:0;"></span>
           <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textMuted);">
-            Live${state.liveSessionName ? ` - ${esc(state.liveSessionName)}` : ""} - provided by RedMist
+            Live${state.liveSession?.name ? ` - ${esc(state.liveSession.name)}` : ""} - provided by RedMist
           </span>
         </div>
       ` : ""}
@@ -2726,17 +2760,14 @@ function renderLiveQualifyingTable(race, fullField){
     if (b.best == null) return -1;
     return a.best - b.best;
   });
-  const pole = rows.find(r => r.best != null)?.best ?? null;
 
   const fieldRows = rows.map((r, i) => {
     const pos = r.p;
     const isOurs = race.cars.some(c=>c.number===pos.car_number);
-    const gapLabel = r.best == null ? "—" : (i === 0 ? "Pole" : `+${(r.best - pole).toFixed(3)}`);
     return `<tr style="${isOurs?`background:${T.gold}17;border-left:2px solid ${T.gold};`:""}">
       <td class="num">${r.best == null ? "—" : `P${i + 1}`}</td>
       <td><span class="num">#${esc(pos.car_number)}</span> - <span style="font-weight:600;">${esc(pos.team_name || "—")}</span></td>
       <td class="num" style="font-weight:600;">${fmtLapTime(r.best)}</td>
-      <td class="num">${esc(gapLabel)}</td>
       <td class="num">${pos.last_lap_completed ?? 0}</td>
       <td class="mylaps-cls">${esc(pos.class || "—")}</td>
     </tr>`;
@@ -2749,7 +2780,7 @@ function renderLiveQualifyingTable(race, fullField){
       </div>
       <div class="mylaps-table-wrap">
       <table class="mylaps-table">
-        <thead><tr><th>Pos</th><th>Car</th><th>Best Lap</th><th>Gap</th><th>Laps</th><th>Class</th></tr></thead>
+        <thead><tr><th>Pos</th><th>Car</th><th>Best Lap</th><th>Laps</th><th>Class</th></tr></thead>
         <tbody>${fieldRows}</tbody>
       </table>
       </div>
@@ -2777,7 +2808,7 @@ function renderLiveStandingsPanel(race){
 
   // Qualifying is decided by fastest lap, not running order — separate
   // table: sorted by best_time, gap measured to P1's best lap, no stops.
-  if (/qualif/i.test(state.liveSessionName || "")) return renderLiveQualifyingTable(race, fullField);
+  if (state.liveSession?.type === "Qualifying") return renderLiveQualifyingTable(race, fullField);
 
   // Sorted and numbered by OVERALL position, not class position — class
   // position alone would give every class its own P1/P2/P3, which reads
@@ -2797,6 +2828,7 @@ function renderLiveStandingsPanel(race){
     return `<tr style="${isOurs?`background:${T.gold}17;border-left:2px solid ${T.gold};`:""}">
       <td class="num">P${pos.overall_position ?? "—"}</td>
       <td><span class="num">#${esc(pos.car_number)}</span> - <span style="font-weight:600;">${esc(pos.team_name || "—")}</span></td>
+      <td class="num">${fmtLapTime(rmTimeToSeconds(pos.last_lap_time))}</td>
       <td class="num">${esc(gapLabel)}</td>
       <td class="num">${pos.last_lap_completed ?? 0}</td>
       <td class="stops">${stopCounts[pos.car_number] ?? 0}</td>
@@ -2811,7 +2843,7 @@ function renderLiveStandingsPanel(race){
       </div>
       <div class="mylaps-table-wrap">
       <table class="mylaps-table">
-        <thead><tr><th>Pos</th><th>Car</th><th>Gap</th><th>Laps</th><th>Stops</th><th>Class</th></tr></thead>
+        <thead><tr><th>Pos</th><th>Car</th><th>Last Lap</th><th>Gap</th><th>Laps</th><th>Stops</th><th>Class</th></tr></thead>
         <tbody>${fieldRows}</tbody>
       </table>
       </div>
