@@ -1324,9 +1324,16 @@ function classifySession(name){
   if (/race|hour|enduro/.test(n)) return "Race";
   return "Practice";
 }
+// The poller's session_type wins over the name: Red Mist can carry a stale
+// name into a new session (Race Practice arrived still named "GP1/GP2
+// Qualifying"), and the poller demotes those to Practice. Name-based
+// classification is only the fallback for rows written before that column.
+function sessionTypeOf(session){
+  return session?.session_type || classifySession(session?.session_name);
+}
 function isSessionActive(session){
   if (!session) return false;
-  if (classifySession(session.session_name) === "Practice") return false;
+  if (sessionTypeOf(session) === "Practice") return false;
   return session.is_live === true || ACTIVE_FLAGS.has(Number(session.current_flag));
 }
 function isSessionRowLive(session){
@@ -1335,7 +1342,7 @@ function isSessionRowLive(session){
 }
 
 function sessionKeyOf(session){
-  return session ? { id: Number(session.session_id ?? 0), name: session.session_name ?? "", type: classifySession(session.session_name) } : null;
+  return session ? { id: Number(session.session_id ?? 0), name: session.session_name ?? "", type: sessionTypeOf(session) } : null;
 }
 function isSameSession(a, b){
   return !!(a && b && a.id === b.id && a.name === b.name);
@@ -1412,7 +1419,7 @@ async function loadRedmistLiveState(raceId){
   if (!watchEventId){ console.log("[redmist-live] no live event (is_live is false or row missing) — stopping here, this is expected when nothing's live"); return { race, carNumbers }; }
 
   const { data: session, error: sessionErr } = await supabase
-    .from("redmist_live_session").select("session_id, session_name, is_live, current_flag, fetched_at").eq("event_id", watchEventId).maybeSingle();
+    .from("redmist_live_session").select("session_id, session_name, session_type, is_live, current_flag, fetched_at").eq("event_id", watchEventId).maybeSingle();
   if (sessionErr){ console.error("[redmist-live] session lookup failed:", sessionErr); return { race, carNumbers }; }
   console.log("[redmist-live] redmist_live_session row:", session);
   if (!isSessionRowLive(session)){ console.log("[redmist-live] event", watchEventId, "is listed live but no session is running (is_live false or row stale) — not attaching yet"); return { race, carNumbers }; }
@@ -1649,7 +1656,7 @@ async function loadHomeLiveStatus(){
   let session = null;
   if (watchEventId){
     const { data, error: sessionErr } = await supabase
-      .from("redmist_live_session").select("session_id, session_name, is_live, current_flag, fetched_at").eq("event_id", watchEventId).maybeSingle();
+      .from("redmist_live_session").select("session_id, session_name, session_type, is_live, current_flag, fetched_at").eq("event_id", watchEventId).maybeSingle();
     if (sessionErr) console.error("[home-live] redmist_live_session fetch failed:", sessionErr);
     session = data;
   }
