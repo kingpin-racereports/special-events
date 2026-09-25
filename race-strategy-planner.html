@@ -633,7 +633,6 @@ let state = {
   plan: null,
   finishDrafts: {},
   openStintNotes: new Set(), // UI-only: which stint rows have their note field expanded
-  qualiResultsOpen: null, // UI-only: null = default (open unless a race session is live), else user's toggle
   expandedCarPlans: new Set(), // UI-only: which cars' plan sections are expanded (archive view — collapsed by default)
   addingReserve: new Set(), // UI-only: which cars currently have the "Add Reserve Driver" input open
   reserveDraft: {}, // UI-only: in-progress reserve driver name per car id, keyed by car.id
@@ -1353,8 +1352,14 @@ function scopeToLiveSession(query){
   return query.eq("session_id", ls ? ls.id : -1).eq("session_name", ls ? ls.name : "");
 }
 
-function isRaceLiveAndLocked(race){
+// Attached = a Qualifying or Race session is live for this race's event.
+// Locked = only during a Race session: that's when the server-side stint
+// automation owns the plan. Qualifying (any class) never locks editing.
+function isLiveAttached(race){
   return !!(state.redmistEventId && race);
+}
+function isRaceLiveAndLocked(race){
+  return isLiveAttached(race) && state.liveSession?.type === "Race";
 }
 
 async function refreshRedmistCar(race, carNumber, skipRender){
@@ -2426,10 +2431,6 @@ function renderSetup(){
               })()}
               <button class="add-driver" style="color:${car.accent};" data-act="add-driver" data-car="${car.id}">${icon("plus",14)} Additional Driver</button>
 
-              <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
-                <label class="label">${icon("trophy",12)} Class Starting Position</label>
-                <input class="field" style="font-size:14px;" placeholder="e.g. P7" value="${esc(car.startingPosition ?? '')}" data-act="update-start-pos" data-car="${car.id}" />
-              </div>
             </div>
           </div>`).join("")}
       </section>` : ""}
@@ -2547,7 +2548,7 @@ function renderPlan(){
   // an actual engineer needs to know WHY their edit controls disappeared
   // mid-race rather than just silently losing them, or this looks like a
   // bug rather than the intended handoff to Red Mist.
-  const liveLocked = !archived && isRaceLiveAndLocked(race);
+  const liveLocked = !archived && isLiveAttached(race); // drives the live bar (shown for quali too); editing lock is readOnly above
 
   return `
     <div class="page page-wide fade-in">
@@ -2593,7 +2594,6 @@ function renderPlan(){
       ${trackDetailSection(plan.track)}
 
       ${!archived ? renderLiveStandingsPanel(race) : ""}
-      ${!archived ? renderQualifyingResultsPanel(race) : ""}
 
       ${!readOnly ? `
       <div class="archive-box fade-in">
@@ -2756,15 +2756,9 @@ function fmtLapTime(sec){
 }
 
 function renderLiveQualifyingTable(race, fullField, opts = {}){
-  const title = opts.title || "Qualifying — Fastest Lap";
-  const open = opts.toggle ? !!opts.open : true;
-  const rows = fullField.map(p => ({ p, best: rmTimeToSeconds(p.best_time) }));
-  rows.sort((a, b) => {
-    if (a.best == null && b.best == null) return String(a.p.car_number).localeCompare(String(b.p.car_number), undefined, { numeric:true });
-    if (a.best == null) return 1;
-    if (b.best == null) return -1;
-    return a.best - b.best;
-  });
+  const title = opts.title || "Qualifying";
+  const isLive = opts.status === "Live";
+  const rows = rankByBestLap(fullField);
 
   const fieldRows = rows.map((r, i) => {
     const pos = r.p;
@@ -2780,53 +2774,117 @@ function renderLiveQualifyingTable(race, fullField, opts = {}){
 
   return `
     <div class="mylaps-panel fade-in">
-      <div ${opts.toggle ? `data-act="toggle-quali-results" data-open="${open ? 1 : 0}" role="button" tabindex="0"` : ""} style="display:flex;align-items:center;justify-content:space-between;${open ? "margin-bottom:12px;" : ""}${opts.toggle ? "cursor:pointer;" : ""}">
-        <span class="eyebrow" style="color:${opts.toggle ? T.gold : T.red};">${esc(title)}</span>
-        ${opts.toggle ? `<span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);">${open ? "Hide" : "Show"}</span>` : ""}
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;">
+        <span class="eyebrow" style="color:${isLive ? T.red : T.gold};">${esc(title)} — Fastest Lap</span>
+        ${opts.status ? `
+        <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;background:${isLive ? "rgba(226,68,92,0.12)" : "var(--panelRaised)"};">
+          ${isLive ? `<span style="width:6px;height:6px;border-radius:999px;background:var(--red);animation:livePulse 1.2s ease-in-out infinite;"></span>` : ""}
+          <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:0.05em;color:${isLive ? "var(--text)" : "var(--textFaint)"};">${isLive ? "LIVE" : "FINISHED"}</span>
+        </span>` : ""}
       </div>
-      ${open ? `
       <div class="mylaps-table-wrap">
       <table class="mylaps-table">
         <thead><tr><th>Pos</th><th>Car</th><th>Best Lap</th><th>Laps</th><th>Class</th></tr></thead>
         <tbody>${fieldRows}</tbody>
       </table>
-      </div>` : ""}
+      </div>
     </div>`;
 }
 
-// ---- Retained qualifying results ----
+// ---- Qualifying results (all qualifying sessions of the event) ----
 // Qualifying rows stay in redmist_live_positions under their own
-// session_id/session_name after the session ends (nothing deletes them),
-// so the planning page can keep showing the qualifying order for the rest
-// of the weekend without anything being live. If an event somehow has
-// more than one Qualifying session, the most recently updated one wins.
+// session_id/session_name after each session ends, so every qualifying
+// session run so far (GTO, GP1/GP2, ...) can be shown for the rest of the
+// weekend. Sessions that haven't run yet simply have no rows.
 async function loadQualifyingResults(race){
   if (!race || race.redmistEventId == null) return;
   const { data, error } = await supabase
     .from("redmist_live_positions").select("*")
     .eq("event_id", race.redmistEventId).eq("session_type", "Qualifying");
   if (error){ console.error("[quali-results] fetch failed:", error); return; }
-  if (!data || !data.length){ race.qualiResults = null; scheduleRender(); return; }
 
   const bySession = {};
-  data.forEach(r => {
-    const k = `${r.session_id}|${r.session_name}`;
-    (bySession[k] ||= { name: r.session_name, rows: [], latest: 0 }).rows.push(r);
-    bySession[k].latest = Math.max(bySession[k].latest, new Date(r.fetched_at || 0).getTime());
+  (data || []).forEach(r => {
+    const key = `${r.session_id}|${r.session_name}`;
+    const g = (bySession[key] ||= { key, id: Number(r.session_id), name: r.session_name, rows: [], latest: 0 });
+    g.rows.push(r);
+    g.latest = Math.max(g.latest, new Date(r.fetched_at || 0).getTime());
   });
-  const pick = Object.values(bySession).sort((a,b) => b.latest - a.latest)[0];
-  race.qualiResults = { sessionName: pick.name, rows: pick.rows };
+  race.qualiResults = { sessions: Object.values(bySession) };
+  applyQualifyingStartPositions(race);
   scheduleRender();
 }
 
-function renderQualifyingResultsPanel(race){
-  const q = race?.qualiResults;
-  if (!q || !q.rows.length) return "";
-  // The live qualifying table already shows this while quali is running.
-  if (isRaceLiveAndLocked(race) && state.liveSession?.type === "Qualifying") return "";
-  const raceLive = isRaceLiveAndLocked(race) && state.liveSession?.type === "Race";
-  const open = state.qualiResultsOpen ?? !raceLive;
-  return renderLiveQualifyingTable(race, q.rows, { title: `Qualifying Results — ${q.sessionName}`, toggle: true, open });
+function qualiSessionKey(ls){ return ls ? `${ls.id}|${ls.name}` : null; }
+
+// Rows ranked by best lap; untimed (null / 00:00:00.000) cars go last.
+function rankByBestLap(rows){
+  return rows.map(p => ({ p, best: rmTimeToSeconds(p.best_time) }))
+    .sort((a, b) => {
+      if (a.best == null && b.best == null) return String(a.p.car_number).localeCompare(String(b.p.car_number), undefined, { numeric:true });
+      if (a.best == null) return 1;
+      if (b.best == null) return -1;
+      return a.best - b.best;
+    });
+}
+
+// Class starting position from qualifying: rank by best lap among cars of
+// the same class, within the qualifying session this car ran in. Null if
+// the car has no qualifying row or no timed lap.
+function qualiClassStartPos(race, carNumber){
+  const sessions = race?.qualiResults?.sessions || [];
+  const session = sessions.find(s => s.rows.some(r => r.car_number === carNumber));
+  if (!session) return null;
+  const me = session.rows.find(r => r.car_number === carNumber);
+  const ranked = rankByBestLap(session.rows.filter(r => (r.class || "") === (me.class || "")));
+  const idx = ranked.findIndex(x => x.p.car_number === carNumber);
+  return idx >= 0 && ranked[idx].best != null ? idx + 1 : null;
+}
+
+// Starting position used everywhere (tile badge, heatmap, archive delta):
+// qualifying-derived when available, otherwise whatever is saved on the car.
+function startPosFor(car){
+  const race = state.races.find(r => r.id === state.currentRaceId);
+  const derived = race && race.status !== "archived" ? qualiClassStartPos(race, car.number) : null;
+  return derived ?? parsePosition(car.startingPosition);
+}
+
+// Persist qualifying-derived start positions to cars.starting_position so
+// they survive into the archived race (archived races read the saved
+// value). Engineer sessions only — a viewer's write would be silently
+// rejected by RLS anyway.
+function applyQualifyingStartPositions(race){
+  if (!race || race.status === "archived") return;
+  (race.cars || []).forEach(car => {
+    const derived = qualiClassStartPos(race, car.number);
+    if (derived == null || derived === parsePosition(car.startingPosition)) return;
+    car.startingPosition = derived;
+    (state.cars || []).forEach(c => { if (c.id === car.id) c.startingPosition = derived; });
+    (state.plan?.carPlans || []).forEach(cp => { if (cp.car.id === car.id) cp.car.startingPosition = derived; });
+    if (state.isEngineer){
+      supabase.from("cars").update({ starting_position: derived }).eq("id", car.id)
+        .then(({ error }) => { if (error) console.error("[quali-results] saving start position failed for car", car.number, ":", error); });
+    }
+  });
+}
+
+// Every qualifying session so far, each its own table. The live one (if
+// any) uses the realtime full-field data and is badged Live; the rest are
+// Finished. Replaced entirely by race standings during a Race session.
+function renderQualifyingPanels(race){
+  const liveQuali = isLiveAttached(race) && state.liveSession?.type === "Qualifying";
+  const liveKey = liveQuali ? qualiSessionKey(state.liveSession) : null;
+  const ourNumbers = new Set(race.cars.map(c => c.number));
+
+  const finished = (race.qualiResults?.sessions || [])
+    .filter(sess => sess.key !== liveKey && sess.rows.length)
+    // our class's session first, then most recent
+    .sort((a, b) => (b.rows.some(r => ourNumbers.has(r.car_number)) - a.rows.some(r => ourNumbers.has(r.car_number))) || (b.latest - a.latest));
+
+  const panels = [];
+  if (liveQuali) panels.push(renderLiveQualifyingTable(race, race.redmistLive?.fullField || [], { title: state.liveSession.name, status: "Live" }));
+  finished.forEach(sess => panels.push(renderLiveQualifyingTable(race, sess.rows, { title: sess.name, status: "Finished" })));
+  return panels.join("");
 }
 
 // Live counterpart to renderMylapsPanel() above — same table markup/CSS
@@ -2842,15 +2900,14 @@ function renderLiveStandingsPanel(race){
   // carPlanSection uses for hasLiveTiming) — the full-field data itself
   // now loads automatically (see loadRedmistLiveState/subscribeRedmistLiveChannel),
   // no click required, so this is the only gate left.
-  const hasLiveTiming = !!(race?.redmistLive?.byCarNumber && Object.keys(race.redmistLive.byCarNumber).length);
-  if (!hasLiveTiming) return "";
+  // Race session live -> race standings replace qualifying. Otherwise
+  // (qualifying live, or nothing live) -> every qualifying session so far.
+  // No longer gated on this team's cars being in the session: another
+  // class's qualifying still shows, badged Live.
+  if (!(isLiveAttached(race) && state.liveSession?.type === "Race")) return renderQualifyingPanels(race);
 
-  const fullField = race.redmistLive.fullField || [];
-  const stopCounts = race.redmistLive.stopCountsByCarNumber || {};
-
-  // Qualifying is decided by fastest lap, not running order — separate
-  // table: sorted by best_time, gap measured to P1's best lap, no stops.
-  if (state.liveSession?.type === "Qualifying") return renderLiveQualifyingTable(race, fullField);
+  const fullField = race.redmistLive?.fullField || [];
+  const stopCounts = race.redmistLive?.stopCountsByCarNumber || {};
 
   // Sorted and numbered by OVERALL position, not class position — class
   // position alone would give every class its own P1/P2/P3, which reads
@@ -3158,8 +3215,9 @@ function carPlanSection(cp, plan, archived){
   const timelineAbbrev = buildTimelineAbbrev(car.drivers.filter(d=>d.trim()));
   const effectivePos = archived ? getEffectiveFinishPosition(car, race) : null;
   const carPodium = archived ? podiumColor(typeof effectivePos === "number" ? effectivePos : null) : null;
-  const hasDelta = archived && car.startingPosition!=null && typeof effectivePos === "number";
-  const delta = hasDelta ? car.startingPosition - effectivePos : null;
+  const startPos = startPosFor(car);
+  const hasDelta = archived && startPos!=null && typeof effectivePos === "number";
+  const delta = hasDelta ? startPos - effectivePos : null;
   const deltaLabel = delta!=null ? (delta>0?`+${delta}`:`${delta}`) : null;
   const deltaColor = delta>0?T.green:(delta<0?T.red:T.textMuted);
 
@@ -3219,8 +3277,8 @@ function carPlanSection(cp, plan, archived){
                 const gainedColor = cpg>0?T.green:(cpg<0?T.red:T.textMuted);
                 return gained ? `<span style="font-family:'JetBrains Mono',monospace;font-weight:600;font-size:11px;color:${gainedColor}">${gained}</span>` : "";
               }
-              return !archived && car.startingPosition!=null
-                ? `<span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);">Start P${car.startingPosition}</span>`
+              return !archived && startPos!=null
+                ? `<span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);">Start P${startPos}</span>`
                 : "";
             })()}
             ${archived && effectivePos!=null ? `
@@ -3295,7 +3353,7 @@ function carPlanSection(cp, plan, archived){
               </span>
             </div>`;
           }
-          const posStyle = positionCellStyle(s.position, car.startingPosition);
+          const posStyle = positionCellStyle(s.position, startPos);
           const validDrivers = car.drivers.filter(d=>d.trim());
           const dotColor = DRIVER_PALETTE[s.driverIndex % DRIVER_PALETTE.length];
           const noteKey = car.id+"__"+i;
@@ -3387,7 +3445,7 @@ function carPlanSection(cp, plan, archived){
           </div>` : ""}`;
         }).join("")}
       </div>
-      ${car.startingPosition==null ? `<p style="font-size:11px;color:var(--textFaint);margin:6px 2px 0;">Set a class starting position on the Setup page to enable the finish-position heatmap.</p>` : ""}
+      ${startPos==null ? `<p style="font-size:11px;color:var(--textFaint);margin:6px 2px 0;">Starting position fills in automatically from qualifying results — the finish-position heatmap turns on once it's available.</p>` : ""}
 
       ${!readOnly ? `
       <div class="reserve-driver-block">
@@ -3936,11 +3994,6 @@ async function handleAction(act, el){
       await toggleStintFlag(el.getAttribute("data-car"), +el.getAttribute("data-stint"), el.getAttribute("data-flag"));
       break;
     }
-    case "toggle-quali-results": {
-      state.qualiResultsOpen = el.getAttribute("data-open") !== "1";
-      render();
-      break;
-    }
     case "toggle-car-plan": {
       const carId = el.getAttribute("data-car");
       if (state.expandedCarPlans.has(carId)) state.expandedCarPlans.delete(carId);
@@ -4155,7 +4208,6 @@ async function openRace(race){
   state.expandedCarPlans = new Set();
   state.addingReserve = new Set();
   state.reserveDraft = {};
-  state.qualiResultsOpen = null;
   state.page = "plan";
   render();
   if (race.status !== "archived") loadQualifyingResults(race);
