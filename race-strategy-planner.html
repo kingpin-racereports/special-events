@@ -309,7 +309,7 @@
   .stint-pos-edit{width:32px;height:28px;padding:0;margin:0 auto;flex-shrink:0;}
   .stint-table .head span:nth-child(3), .stint-table .head span:nth-child(4){text-align:center;}
 
-  .archive-box{margin-bottom:40px;border-radius:16px;background:var(--panel);border:1px solid var(--border);padding:16px;max-width:460px;display:flex;flex-direction:column;gap:14px;}
+  .archive-box{margin:24px 0 40px;border-radius:16px;background:var(--panel);border:1px solid var(--border);padding:16px;max-width:460px;display:flex;flex-direction:column;gap:14px;}
   .archive-box .head{display:flex;align-items:center;gap:8px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:16px;}
   .archive-box p{margin:0;font-size:14px;color:var(--textMuted);}
 
@@ -1684,6 +1684,10 @@ async function loadHomeLiveStatus(){
     console.log("[redmist-live] session went live while race was open — attaching");
     try { await subscribeRedmistLive(state.currentRaceId); }
     finally { liveAttachInFlight = false; }
+    // Quali results were only loaded at race open and on explicit session
+    // end. A direct switch (GTO quali -> GP1/GP2 quali) never ends in
+    // between, so the finished session's final rows were never picked up.
+    loadQualifyingResults(state.races.find(r => r.id === state.currentRaceId));
   }
 
   // Session explicitly ended (is_live=false written by the poller, or the
@@ -2797,10 +2801,14 @@ function renderLiveQualifyingTable(race, fullField, opts = {}){
 // session run so far (GTO, GP1/GP2, ...) can be shown for the rest of the
 // weekend. Sessions that haven't run yet simply have no rows.
 async function loadQualifyingResults(race){
-  if (!race || race.redmistEventId == null) return;
+  if (!race) return;
+  // race.redmistEventId can still be null in memory if the race was opened
+  // before the server auto-linked it; fall back to the attached live event.
+  const eventId = race.redmistEventId ?? (race.id === state.currentRaceId ? state.redmistEventId : null);
+  if (eventId == null){ console.log("[quali-results] no event id linked to this race yet — skipping"); return; } // TEMP debug
   const { data, error } = await supabase
     .from("redmist_live_positions").select("*")
-    .eq("event_id", race.redmistEventId).eq("session_type", "Qualifying");
+    .eq("event_id", eventId).eq("session_type", "Qualifying");
   if (error){ console.error("[quali-results] fetch failed:", error); return; }
 
   const bySession = {};
@@ -2811,6 +2819,7 @@ async function loadQualifyingResults(race){
     g.latest = Math.max(g.latest, new Date(r.fetched_at || 0).getTime());
   });
   race.qualiResults = { sessions: Object.values(bySession) };
+  console.log("[quali-results] event", eventId, "sessions:", race.qualiResults.sessions.map(g => `${g.key} (${g.rows.length} cars)`), "| live key:", qualiSessionKey(state.liveSession)); // TEMP debug
   applyQualifyingStartPositions(race);
   scheduleRender();
 }
