@@ -1361,7 +1361,7 @@ async function refreshRedmistCar(race, carNumber, skipRender){
   if (!eventId) return;
   const [{ data: pos, error: posErr }, { data: stats, error: statsErr }] = await Promise.all([
     scopeToLiveSession(supabase.from("redmist_live_positions").select("*").eq("event_id", eventId).eq("car_number", carNumber)).maybeSingle(),
-    supabase.from("redmist_current_stint_stats").select("*").eq("event_id", eventId).eq("car_number", carNumber).maybeSingle(),
+    scopeToLiveSession(supabase.from("redmist_current_stint_stats").select("*").eq("event_id", eventId).eq("car_number", carNumber)).maybeSingle(),
   ]);
   if (posErr) console.error("[redmist-live] refreshRedmistCar positions failed for car", carNumber, ":", posErr);
   if (statsErr) console.error("[redmist-live] refreshRedmistCar stats failed for car", carNumber, ":", statsErr);
