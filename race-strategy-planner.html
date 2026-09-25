@@ -633,6 +633,7 @@ let state = {
   plan: null,
   finishDrafts: {},
   openStintNotes: new Set(), // UI-only: which stint rows have their note field expanded
+  qualiResultsOpen: null, // UI-only: null = default (open unless a race session is live), else user's toggle
   expandedCarPlans: new Set(), // UI-only: which cars' plan sections are expanded (archive view — collapsed by default)
   addingReserve: new Set(), // UI-only: which cars currently have the "Add Reserve Driver" input open
   reserveDraft: {}, // UI-only: in-progress reserve driver name per car id, keyed by car.id
@@ -1688,6 +1689,7 @@ async function loadHomeLiveStatus(){
     console.log("[redmist-live] session ended — detaching live data");
     unsubscribeRedmistLive();
     unsubscribeFullFieldChannel();
+    if (raceOpen) loadQualifyingResults(state.races.find(r => r.id === state.currentRaceId));
   }
 
   scheduleRender();
@@ -2591,6 +2593,7 @@ function renderPlan(){
       ${trackDetailSection(plan.track)}
 
       ${!archived ? renderLiveStandingsPanel(race) : ""}
+      ${!archived ? renderQualifyingResultsPanel(race) : ""}
 
       ${!readOnly ? `
       <div class="archive-box fade-in">
@@ -2752,7 +2755,9 @@ function fmtLapTime(sec){
   return m ? `${m}:${s}` : s;
 }
 
-function renderLiveQualifyingTable(race, fullField){
+function renderLiveQualifyingTable(race, fullField, opts = {}){
+  const title = opts.title || "Qualifying — Fastest Lap";
+  const open = opts.toggle ? !!opts.open : true;
   const rows = fullField.map(p => ({ p, best: rmTimeToSeconds(p.best_time) }));
   rows.sort((a, b) => {
     if (a.best == null && b.best == null) return String(a.p.car_number).localeCompare(String(b.p.car_number), undefined, { numeric:true });
@@ -2775,16 +2780,53 @@ function renderLiveQualifyingTable(race, fullField){
 
   return `
     <div class="mylaps-panel fade-in">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-        <span class="eyebrow" style="color:${T.red};">Qualifying — Fastest Lap</span>
+      <div ${opts.toggle ? `data-act="toggle-quali-results" data-open="${open ? 1 : 0}" role="button" tabindex="0"` : ""} style="display:flex;align-items:center;justify-content:space-between;${open ? "margin-bottom:12px;" : ""}${opts.toggle ? "cursor:pointer;" : ""}">
+        <span class="eyebrow" style="color:${opts.toggle ? T.gold : T.red};">${esc(title)}</span>
+        ${opts.toggle ? `<span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);">${open ? "Hide" : "Show"}</span>` : ""}
       </div>
+      ${open ? `
       <div class="mylaps-table-wrap">
       <table class="mylaps-table">
         <thead><tr><th>Pos</th><th>Car</th><th>Best Lap</th><th>Laps</th><th>Class</th></tr></thead>
         <tbody>${fieldRows}</tbody>
       </table>
-      </div>
+      </div>` : ""}
     </div>`;
+}
+
+// ---- Retained qualifying results ----
+// Qualifying rows stay in redmist_live_positions under their own
+// session_id/session_name after the session ends (nothing deletes them),
+// so the planning page can keep showing the qualifying order for the rest
+// of the weekend without anything being live. If an event somehow has
+// more than one Qualifying session, the most recently updated one wins.
+async function loadQualifyingResults(race){
+  if (!race || race.redmistEventId == null) return;
+  const { data, error } = await supabase
+    .from("redmist_live_positions").select("*")
+    .eq("event_id", race.redmistEventId).eq("session_type", "Qualifying");
+  if (error){ console.error("[quali-results] fetch failed:", error); return; }
+  if (!data || !data.length){ race.qualiResults = null; scheduleRender(); return; }
+
+  const bySession = {};
+  data.forEach(r => {
+    const k = `${r.session_id}|${r.session_name}`;
+    (bySession[k] ||= { name: r.session_name, rows: [], latest: 0 }).rows.push(r);
+    bySession[k].latest = Math.max(bySession[k].latest, new Date(r.fetched_at || 0).getTime());
+  });
+  const pick = Object.values(bySession).sort((a,b) => b.latest - a.latest)[0];
+  race.qualiResults = { sessionName: pick.name, rows: pick.rows };
+  scheduleRender();
+}
+
+function renderQualifyingResultsPanel(race){
+  const q = race?.qualiResults;
+  if (!q || !q.rows.length) return "";
+  // The live qualifying table already shows this while quali is running.
+  if (isRaceLiveAndLocked(race) && state.liveSession?.type === "Qualifying") return "";
+  const raceLive = isRaceLiveAndLocked(race) && state.liveSession?.type === "Race";
+  const open = state.qualiResultsOpen ?? !raceLive;
+  return renderLiveQualifyingTable(race, q.rows, { title: `Qualifying Results — ${q.sessionName}`, toggle: true, open });
 }
 
 // Live counterpart to renderMylapsPanel() above — same table markup/CSS
@@ -3894,6 +3936,11 @@ async function handleAction(act, el){
       await toggleStintFlag(el.getAttribute("data-car"), +el.getAttribute("data-stint"), el.getAttribute("data-flag"));
       break;
     }
+    case "toggle-quali-results": {
+      state.qualiResultsOpen = el.getAttribute("data-open") !== "1";
+      render();
+      break;
+    }
     case "toggle-car-plan": {
       const carId = el.getAttribute("data-car");
       if (state.expandedCarPlans.has(carId)) state.expandedCarPlans.delete(carId);
@@ -4108,8 +4155,10 @@ async function openRace(race){
   state.expandedCarPlans = new Set();
   state.addingReserve = new Set();
   state.reserveDraft = {};
+  state.qualiResultsOpen = null;
   state.page = "plan";
   render();
+  if (race.status !== "archived") loadQualifyingResults(race);
 
   // Mirrors any stints/cars/races changes for this race's cars — this is
   // what makes the Edge Function's server-side stint automation (and any
@@ -4813,6 +4862,7 @@ async function startApp(isEngineer){
     if (prev.mylaps) preserved.mylaps = prev.mylaps;
     if (prev.redmistPitCycles) preserved.redmistPitCycles = prev.redmistPitCycles;
     if (prev.redmistLive) preserved.redmistLive = prev.redmistLive;
+    if (prev.qualiResults) preserved.qualiResults = prev.qualiResults;
     return preserved;
   });
   state.catalog = await loadCatalog();
