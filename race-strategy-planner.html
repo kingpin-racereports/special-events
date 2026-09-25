@@ -1310,8 +1310,15 @@ let redmistChannel = null;
 // does NOT detach; only an explicit is_live=false does. That keeps the
 // earlier decision that a mid-race feed gap must never reopen editing.
 const SESSION_FRESH_MS = 120_000;
+// Red Mist can report isLive=false with sessionId=0 during a running
+// session (seen in qualifying) — so an on-track flag also counts.
+const ACTIVE_FLAGS = new Set([1, 2, 3, 7]); // green, transition, red, yellow
+function isSessionActive(session){
+  if (!session) return false;
+  return session.is_live === true || ACTIVE_FLAGS.has(Number(session.current_flag));
+}
 function isSessionRowLive(session){
-  if (!session || session.is_live !== true || !session.fetched_at) return false;
+  if (!session || !session.fetched_at || !isSessionActive(session)) return false;
   return Date.now() - new Date(session.fetched_at).getTime() < SESSION_FRESH_MS;
 }
 
@@ -1369,7 +1376,7 @@ async function loadRedmistLiveState(raceId){
   if (!watchEventId){ console.log("[redmist-live] no live event (is_live is false or row missing) — stopping here, this is expected when nothing's live"); return { race, carNumbers }; }
 
   const { data: session, error: sessionErr } = await supabase
-    .from("redmist_live_session").select("session_name, is_live, fetched_at").eq("event_id", watchEventId).maybeSingle();
+    .from("redmist_live_session").select("session_name, is_live, current_flag, fetched_at").eq("event_id", watchEventId).maybeSingle();
   if (sessionErr){ console.error("[redmist-live] session lookup failed:", sessionErr); return { race, carNumbers }; }
   console.log("[redmist-live] redmist_live_session row:", session);
   if (!isSessionRowLive(session)){ console.log("[redmist-live] event", watchEventId, "is listed live but no session is running (is_live false or row stale) — not attaching yet"); return { race, carNumbers }; }
@@ -1638,7 +1645,7 @@ async function loadHomeLiveStatus(){
   // Session explicitly ended (is_live=false written by the poller, or the
   // event dropped off the live list entirely) — detach. A merely STALE row
   // does not detach; see isSessionRowLive().
-  const explicitlyEnded = !watchEventId || (session && session.is_live === false);
+  const explicitlyEnded = !watchEventId || (session && !isSessionActive(session));
   if (state.redmistEventId && explicitlyEnded){
     console.log("[redmist-live] session ended — detaching live data");
     unsubscribeRedmistLive();
