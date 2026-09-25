@@ -351,6 +351,16 @@
     .mylaps-table thead th:nth-child(6), .mylaps-table tbody td:nth-child(6){display:none;}
     .mylaps-table thead th:nth-child(7), .mylaps-table tbody td:nth-child(7){display:none;}
     .mylaps-table{min-width:0;}
+    /* Live quali/race standings: tighter on phones so every column fits
+       without sideways scrolling. The team name absorbs the squeeze and
+       truncates with an ellipsis instead of pushing Laps/Class off-screen. */
+    .live-panel{padding:14px 10px;}
+    .live-table thead th{font-size:9px;letter-spacing:0.04em;padding:0 4px 5px;}
+    .live-table tbody td{font-size:11px;padding:6px 4px;}
+    .live-table thead th:nth-child(1), .live-table tbody td:nth-child(1),
+    .live-table thead th:nth-child(2), .live-table tbody td:nth-child(2){padding-left:4px;padding-right:4px;}
+    .live-table tbody td:nth-child(2){width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis;}
+    .live-table .mylaps-cls{font-size:10px;}
   }
   .mylaps-badge{font-family:'JetBrains Mono',monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:0.07em;padding:2px 6px;border-radius:5px;}
   .mylaps-badge.dnf{background:rgba(226,68,92,0.15);color:var(--red);}
@@ -2784,7 +2794,7 @@ function renderLiveQualifyingTable(race, fullField, opts = {}){
   }).join("");
 
   return `
-    <div class="mylaps-panel fade-in">
+    <div class="mylaps-panel live-panel fade-in">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;">
         <span class="eyebrow" style="color:${isLive ? T.red : T.gold};">${esc(title)} — Fastest Lap</span>
         ${opts.status ? `
@@ -2794,7 +2804,7 @@ function renderLiveQualifyingTable(race, fullField, opts = {}){
         </span>` : ""}
       </div>
       <div class="mylaps-table-wrap">
-      <table class="mylaps-table">
+      <table class="mylaps-table live-table">
         <thead><tr><th>Pos</th><th>Car</th><th>Best Lap</th><th>Laps</th><th>Class</th></tr></thead>
         <tbody>${fieldRows}</tbody>
       </table>
@@ -2952,12 +2962,12 @@ function renderLiveStandingsPanel(race){
   }).join("");
 
   return `
-    <div class="mylaps-panel fade-in">
+    <div class="mylaps-panel live-panel fade-in">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
         <span class="eyebrow" style="color:${T.red};">Live Standings</span>
       </div>
       <div class="mylaps-table-wrap">
-      <table class="mylaps-table">
+      <table class="mylaps-table live-table">
         <thead><tr><th>Pos</th><th>Car</th><th>Last Lap</th><th>Gap</th><th>Laps</th><th>Stops</th><th>Class</th></tr></thead>
         <tbody>${fieldRows}</tbody>
       </table>
