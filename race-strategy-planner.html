@@ -4219,7 +4219,10 @@ async function openRace(race){
   state.reserveDraft = {};
   state.page = "plan";
   render();
-  if (race.status !== "archived") loadQualifyingResults(race);
+  // Must target the state.races entry, not `race`: openRace() is handed a
+  // fresh object from fetchFullRace(), but renderPlan()/startPosFor() read
+  // from state.races — results stored on `race` were never seen.
+  if (race.status !== "archived") loadQualifyingResults(state.races.find(r => r.id === race.id) || race);
 
   // Mirrors any stints/cars/races changes for this race's cars — this is
   // what makes the Edge Function's server-side stint automation (and any
