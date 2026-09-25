@@ -649,7 +649,7 @@ let state = {
   // single race being open — unlike redmistEventId above, this exists so
   // Home's race tiles can show a pulsating LIVE badge on the matching
   // race even when no one has opened it. See subscribeHomeLiveWatch().
-  homeLive: { eventId: null, flag: null },
+  homeLive: { eventId: null, watchEventId: null, flag: null }, // eventId = event whose SESSION is live (drives badge + data); watchEventId = event Red Mist lists as live (may be between sessions)
 };
 
 // ---- persistence (Supabase — see supabase-client.js for setup) ----
@@ -1296,6 +1296,25 @@ let redmistChannel = null;
 // hiccup reopening editing mid-race caused more risk than it solved (and
 // is a rare case) — so once a race is linked to a live Red Mist event,
 // it stays locked for its duration regardless of feed gaps.
+// The live-data trigger: a session is live when redmist_live_session says
+// is_live AND the row is fresh. Discovery still goes LoadLiveEvents ->
+// redmist_event_watch (that's where the event id comes from), but the
+// event being listed as live only means "this weekend is happening" —
+// between Saturday's and Sunday's sessions it's still listed. The session
+// row is what says cars are actually on track.
+//
+// Freshness: the poller only writes the session row while it's polling
+// that event (on change, plus a 30s heartbeat). A row nobody has touched
+// in SESSION_FRESH_MS is a leftover, not a live session. The freshness
+// check gates ATTACHING only — once attached, a stale row (feed hiccup)
+// does NOT detach; only an explicit is_live=false does. That keeps the
+// earlier decision that a mid-race feed gap must never reopen editing.
+const SESSION_FRESH_MS = 120_000;
+function isSessionRowLive(session){
+  if (!session || session.is_live !== true || !session.fetched_at) return false;
+  return Date.now() - new Date(session.fetched_at).getTime() < SESSION_FRESH_MS;
+}
+
 function isRaceLiveAndLocked(race){
   return !!(state.redmistEventId && race);
 }
@@ -1345,8 +1364,16 @@ async function loadRedmistLiveState(raceId){
   if (watchErr){ console.error("[redmist-live] watch lookup failed:", watchErr); return { race, carNumbers }; }
   console.log("[redmist-live] redmist_event_watch row:", watch);
 
-  state.redmistEventId = watch?.is_live ? watch.event_id : null;
-  if (!state.redmistEventId){ console.log("[redmist-live] no live event (is_live is false or row missing) — stopping here, this is expected when nothing's live"); return { race, carNumbers }; }
+  state.redmistEventId = null;
+  const watchEventId = watch?.is_live ? watch.event_id : null;
+  if (!watchEventId){ console.log("[redmist-live] no live event (is_live is false or row missing) — stopping here, this is expected when nothing's live"); return { race, carNumbers }; }
+
+  const { data: session, error: sessionErr } = await supabase
+    .from("redmist_live_session").select("session_name, is_live, fetched_at").eq("event_id", watchEventId).maybeSingle();
+  if (sessionErr){ console.error("[redmist-live] session lookup failed:", sessionErr); return { race, carNumbers }; }
+  console.log("[redmist-live] redmist_live_session row:", session);
+  if (!isSessionRowLive(session)){ console.log("[redmist-live] event", watchEventId, "is listed live but no session is running (is_live false or row stale) — not attaching yet"); return { race, carNumbers }; }
+  state.redmistEventId = watchEventId;
   console.log("[redmist-live] using event_id", state.redmistEventId, "— fetching initial data for each car (blocking first paint)");
 
   await Promise.all([
@@ -1570,46 +1597,57 @@ async function loadHomeLiveStatus(){
   const { data: watch, error: watchErr } = await supabase
     .from("redmist_event_watch").select("event_id, is_live").eq("id", 1).maybeSingle();
   if (watchErr) console.error("[home-live] redmist_event_watch fetch failed:", watchErr);
-  console.log("[home-live] redmist_event_watch row:", watch);
-  const eventId = watch?.is_live ? watch.event_id : null;
-  if (!eventId) console.log("[home-live] no live event (is_live false/missing) — badge will not show, this is expected when nothing's live");
+  const watchEventId = watch?.is_live ? watch.event_id : null;
 
-  let flag = null;
-  if (eventId){
-    const { data: session, error: sessionErr } = await supabase
-      .from("redmist_live_session").select("current_flag").eq("event_id", eventId).maybeSingle();
+  let session = null;
+  if (watchEventId){
+    const { data, error: sessionErr } = await supabase
+      .from("redmist_live_session").select("session_name, is_live, current_flag, fetched_at").eq("event_id", watchEventId).maybeSingle();
     if (sessionErr) console.error("[home-live] redmist_live_session fetch failed:", sessionErr);
-    console.log("[home-live] redmist_live_session row for event", eventId, ":", session);
-    flag = session?.current_flag ?? null;
+    session = data;
   }
-  state.homeLive = { eventId, flag };
-  console.log("[home-live] resolved state.homeLive:", state.homeLive);
+  const sessionLive = isSessionRowLive(session);
+  const eventId = sessionLive ? watchEventId : null;
+  state.homeLive = { eventId, watchEventId, flag: sessionLive ? (session.current_flag ?? null) : null };
+  console.log("[home-live] watch event:", watchEventId, "| session:", session, "| session live:", sessionLive);
 
-  if (eventId){
+  if (watchEventId){
     // The server auto-links a race to the live event (maybeAutoLinkRace),
     // but state.races was loaded at boot and never saw that write — so the
     // Home tile's LIVE badge couldn't light up without a page reload.
-    if (!state.races.some(r => String(r.redmistEventId) === String(eventId))){
-      const { data: linked } = await supabase.from("races").select("id").eq("redmist_event_id", eventId);
+    if (!state.races.some(r => String(r.redmistEventId) === String(watchEventId))){
+      const { data: linked } = await supabase.from("races").select("id").eq("redmist_event_id", watchEventId);
       (linked || []).forEach(row => {
         const r = state.races.find(r => r.id === row.id);
-        if (r) r.redmistEventId = eventId;
+        if (r) r.redmistEventId = watchEventId;
       });
     }
-    // A race opened BEFORE the event went live resolved "nothing live" in
-    // openRace() and never looked again — no data until the page was
-    // reloaded. Attach it now, once, when the event appears.
-    if (state.page === "plan" && state.currentRaceId && state.currentStatus !== "archived"
-        && String(state.redmistEventId) !== String(eventId) && !lateAttachInFlight){
-      lateAttachInFlight = true;
-      console.log("[redmist-live] event went live while race was open — attaching now");
-      try { await subscribeRedmistLive(state.currentRaceId); }
-      finally { lateAttachInFlight = false; }
-    }
   }
+
+  const raceOpen = state.page === "plan" && state.currentRaceId && state.currentStatus !== "archived";
+
+  // Session went live while a race was open (including one opened before
+  // anything was live) — attach once.
+  if (raceOpen && sessionLive && String(state.redmistEventId) !== String(eventId) && !liveAttachInFlight){
+    liveAttachInFlight = true;
+    console.log("[redmist-live] session went live while race was open — attaching");
+    try { await subscribeRedmistLive(state.currentRaceId); }
+    finally { liveAttachInFlight = false; }
+  }
+
+  // Session explicitly ended (is_live=false written by the poller, or the
+  // event dropped off the live list entirely) — detach. A merely STALE row
+  // does not detach; see isSessionRowLive().
+  const explicitlyEnded = !watchEventId || (session && session.is_live === false);
+  if (state.redmistEventId && explicitlyEnded){
+    console.log("[redmist-live] session ended — detaching live data");
+    unsubscribeRedmistLive();
+    unsubscribeFullFieldChannel();
+  }
+
   scheduleRender();
 }
-let lateAttachInFlight = false;
+let liveAttachInFlight = false;
 
 // Kept running for the life of the tab (started once at boot, not tied to
 // Home specifically) — cheap single-row tables, and it means the badge is
@@ -1629,7 +1667,9 @@ function subscribeHomeLiveWatch(){
       // Only worth a re-fetch if it's the event we actually care about —
       // avoids a pointless round trip every poll cycle once other events
       // exist in history.
-      if (payload.new?.event_id === state.homeLive.eventId || payload.new?.event_id === state.redmistEventId){
+      // Keyed on the WATCHED event, not the session-live one — the update
+      // that flips is_live false->true has to get through this filter.
+      if (payload.new?.event_id === state.homeLive.watchEventId || payload.new?.event_id === state.redmistEventId){
         loadHomeLiveStatus();
       }
     })
