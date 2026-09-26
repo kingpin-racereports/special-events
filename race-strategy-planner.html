@@ -335,6 +335,8 @@
   /* ---- MyLaps per-car stat tiles (inside collapsible body) ---- */
   .mylaps-header-block{margin-top:0;}
   .mylaps-carstat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:16px;}
+  .live-summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:24px;}
+  @media(max-width:640px){ .live-summary-grid{grid-template-columns:repeat(2,1fr);} }
   .mylaps-carstat-tile{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 10px 8px;}
   .mylaps-carstat-value{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:17px;line-height:1;color:var(--text);}
   .mylaps-stat .val{font-family:'JetBrains Mono',monospace;color:var(--text);}
@@ -659,7 +661,7 @@ let state = {
   // single race being open — unlike redmistEventId above, this exists so
   // Home's race tiles can show a pulsating LIVE badge on the matching
   // race even when no one has opened it. See subscribeHomeLiveWatch().
-  homeLive: { eventId: null, watchEventId: null, flag: null },
+  homeLive: { eventId: null, watchEventId: null, flag: null, timeToGo: null, lapsToGo: null },
   liveSession: null, // { id, name, type } of the attached Red Mist session — scopes every live query and drives header + standings mode // eventId = event whose SESSION is live (drives badge + data); watchEventId = event Red Mist lists as live (may be between sessions)
 };
 
@@ -1645,10 +1647,104 @@ function unsubscribeRedmistLive(){
 // than guessing at a red/yellow/green mapping that might be wrong.
 function flagToLiveColor(flag){
   const f = Number(flag);
-  if (f === 3) return T.red;
-  if (f === 7 || f === 2) return T.amber; // 7=yellow, 2=transition (treated as caution-adjacent)
+  if (f === 3 || f === 6) return T.red;                        // red, black
+  if (f === 2 || f === 12 || f === 11) return T.amber;         // yellow, waving yellow, debris
+  if (f === 7 || f === 8) return T.purple;                     // Code 35 / Code 60
   if (f === 1) return T.green;
-  return T.textFaint; // 0=pre, 5=checkered, or an unconfirmed code — neutral rather than guessed
+  if (f === 4 || f === 5) return T.white;                      // white, checkered
+  return T.textFaint;                                          // 0 unknown/pre-race, 9 blue, 10 meatball
+}
+
+// Red Mist's Flags enum (RedMist.TimingCommon/Models/Flags.cs), in order.
+// Corrects the earlier assumption that 2=transition and 7=yellow — per the
+// enum, 2 is Yellow and 7 is Purple35, i.e. WRL's Code 35 (which is what
+// was actually being observed during cautions).
+const RM_FLAG_LABELS = ["Pre-race","Green","Yellow","Red","White","Checkered","Black","Code 35","Code 60","Blue","Meatball","Debris","Waving Yellow"];
+function flagLabel(flag){
+  if (flag == null || flag === "") return "—";
+  const f = Number(flag);
+  return Number.isInteger(f) && RM_FLAG_LABELS[f] ? RM_FLAG_LABELS[f] : "—";
+}
+
+// ---- Car retirement / inactivity ----
+// Red Mist has no explicit "retired" field. Signals, strongest first:
+//   car_status (mcs): Red Mist's own status text (DNS / Contact /
+//     Mechanical ...) — only populated on multiloop timing systems.
+//   is_stale (st): Red Mist's "not updated for a while" flag.
+//   last_lap_at: when the poller last saw this car complete a lap. No lap
+//     for INACTIVE_AFTER_MIN while not red-flagged -> Inactive.
+// Labelled "Inactive" rather than "Retired" unless Red Mist itself says
+// so — a long garage repair looks identical until the car comes back out,
+// and the badge clears itself the moment it completes a lap.
+const INACTIVE_AFTER_MIN = 12;
+function liveCarStatus(pos, leaderLaps){
+  if (!pos) return null;
+  const mcs = (pos.car_status || "").trim();
+  if (mcs && !/^(active|in pits?)$/i.test(mcs)) return { label: mcs, tone: "dnf" };
+  if (!(pos.last_lap_completed > 0) && leaderLaps >= 3) return { label: "DNS", tone: "dns" };
+  if (pos.is_stale === true) return { label: "Inactive", tone: "dnf" };
+  if (pos.last_lap_at && Number(state.homeLive.flag) !== 3){
+    const mins = (Date.now() - new Date(pos.last_lap_at).getTime()) / 60000;
+    if (mins >= INACTIVE_AFTER_MIN) return { label: `Inactive ${Math.floor(mins)}m`, tone: "dnf" };
+  }
+  return null;
+}
+function liveLeaderLaps(race){
+  const field = race?.redmistLive?.fullField || [];
+  return field.reduce((m, r) => Math.max(m, r.last_lap_completed || 0), 0);
+}
+function liveStatusBadge(st){
+  return st ? `<span class="mylaps-badge ${st.tone}" style="margin-left:6px;">${esc(st.label)}</span>` : "";
+}
+
+// Race-wide summary above the first car tile while a race session is
+// live. Built from data already loaded for the standings table
+// (fullField) plus the session row (flag / time to go) — no new queries.
+function renderLiveRaceSummary(race){
+  if (!(isLiveAttached(race) && state.liveSession?.type === "Race")) return "";
+  const field = race.redmistLive?.fullField || [];
+  if (!field.length) return "";
+
+  const leaderLaps = liveLeaderLaps(race);
+  const leader = field.find(r => r.overall_position === 1)
+    || field.find(r => (r.last_lap_completed || 0) === leaderLaps);
+  const flag = state.homeLive.flag;
+  const finished = Number(flag) === 5;
+  // The lap the leader is ON, not the last one completed — except after
+  // the checkered, where the final completed lap is the answer.
+  const currentLap = leaderLaps ? (finished ? leaderLaps : leaderLaps + 1) : "—";
+
+  // Class leaders for the classes this team is running in (skipped when
+  // the overall leader already is that class leader).
+  const ourClasses = [...new Set(field.filter(r => race.cars.some(c => c.number === r.car_number)).map(r => r.class).filter(Boolean))];
+  const classLeaders = ourClasses
+    .map(cls => field.find(r => r.class === cls && r.class_position === 1))
+    .filter(r => r && r.car_number !== leader?.car_number)
+    .map(r => `${esc(r.class)}: #${esc(r.car_number)}`).join(" · ");
+
+  let onTrack = 0, inPit = 0, inactive = 0;
+  field.forEach(r => {
+    if (liveCarStatus(r, leaderLaps)) inactive++;
+    else if (r.in_pit === true) inPit++;
+    else onTrack++;
+  });
+  const countSub = [inPit ? `${inPit} in pit` : null, inactive ? `${inactive} inactive` : null].filter(Boolean).join(" · ");
+
+  const flagColor = flagToLiveColor(flag);
+  const tile = (label, value, sub) => `
+    <div class="mylaps-carstat-tile">
+      <div class="mylaps-stat-label">${label}</div>
+      <div class="mylaps-carstat-value">${value}</div>
+      ${sub ? `<div class="mylaps-stat-sub">${sub}</div>` : ""}
+    </div>`;
+
+  return `
+    <div class="live-summary-grid">
+      ${tile("Current Lap", esc(String(currentLap)), state.homeLive.timeToGo ? `${esc(String(state.homeLive.timeToGo))} to go` : null)}
+      ${tile("Leader", leader ? `#${esc(leader.car_number)} <span style="font-size:13px;color:var(--textMuted);">${esc(leader.team_name || "")}</span>` : "—", classLeaders || null)}
+      ${tile("Flag", `<span style="display:inline-flex;align-items:center;gap:7px;"><span style="width:9px;height:9px;border-radius:999px;background:${flagColor};flex-shrink:0;${finished ? "" : "animation:livePulse 1.2s ease-in-out infinite;"}"></span><span style="color:${flagColor}">${flagLabel(flag)}</span></span>`)}
+      ${tile("Cars on Track", `${onTrack}<span style="font-size:13px;color:var(--textMuted);"> / ${field.length}</span>`, countSub || null)}
+    </div>`;
 }
 
 let homeLiveChannel = null;
@@ -1666,13 +1762,18 @@ async function loadHomeLiveStatus(){
   let session = null;
   if (watchEventId){
     const { data, error: sessionErr } = await supabase
-      .from("redmist_live_session").select("session_id, session_name, session_type, is_live, current_flag, fetched_at").eq("event_id", watchEventId).maybeSingle();
+      .from("redmist_live_session").select("session_id, session_name, session_type, is_live, current_flag, time_to_go, laps_to_go, fetched_at").eq("event_id", watchEventId).maybeSingle();
     if (sessionErr) console.error("[home-live] redmist_live_session fetch failed:", sessionErr);
     session = data;
   }
   const sessionLive = isSessionRowLive(session);
   const eventId = sessionLive ? watchEventId : null;
-  state.homeLive = { eventId, watchEventId, flag: sessionLive ? (session.current_flag ?? null) : null };
+  state.homeLive = {
+    eventId, watchEventId,
+    flag: sessionLive ? (session.current_flag ?? null) : null,
+    timeToGo: sessionLive ? (session.time_to_go ?? null) : null,
+    lapsToGo: sessionLive ? (session.laps_to_go ?? null) : null,
+  };
   console.log("[home-live] watch event:", watchEventId, "| session:", session, "| session live:", sessionLive);
 
   if (watchEventId){
@@ -2601,6 +2702,8 @@ function renderPlan(){
 
       ${archived ? renderMylapsPanel(race) : ""}
 
+      ${!archived ? renderLiveRaceSummary(race) : ""}
+
       <div style="display:flex;flex-direction:column;gap:40px;margin-top:24px;">
         ${sortedCarPlans.map(cp=>carPlanSection(cp, plan, archived)).join("")}
       </div>
@@ -2947,12 +3050,14 @@ function renderLiveStandingsPanel(race){
     return ap - bp;
   });
 
+  const leaderLaps = liveLeaderLaps(race);
   const fieldRows = sorted.map(pos => {
     const isOurs = race.cars.some(c=>c.number===pos.car_number);
+    const carStatus = liveCarStatus(pos, leaderLaps);
     const gapLabel = pos.overall_position === 1 ? "Leader" : (pos.current_gap || "—");
     return `<tr style="${isOurs?`background:${T.gold}17;border-left:2px solid ${T.gold};`:""}">
       <td class="num">P${pos.overall_position ?? "—"}</td>
-      <td><span class="num">#${esc(pos.car_number)}</span> - <span style="font-weight:600;">${esc(pos.team_name || "—")}</span></td>
+      <td><span class="num">#${esc(pos.car_number)}</span> - <span style="font-weight:600;">${esc(pos.team_name || "—")}</span>${liveStatusBadge(carStatus)}</td>
       <td class="num">${fmtLapTime(rmTimeToSeconds(pos.last_lap_time))}</td>
       <td class="num">${esc(gapLabel)}</td>
       <td class="num">${pos.last_lap_completed ?? 0}</td>
@@ -3288,6 +3393,7 @@ function carPlanSection(cp, plan, archived){
                 <span style="width:6px;height:6px;border-radius:999px;background:var(--red);animation:livePulse 1.2s ease-in-out infinite;"></span>
                 <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:0.05em;color:var(--text);">Currently P${livePos.class_position ?? "—"}</span>
               </span>
+              ${liveStatusBadge(liveCarStatus(livePos, liveLeaderLaps(race)))}
             ` : ""}
             ${(() => {
               // Positions-gained badge from Red Mist's own calc, once live
