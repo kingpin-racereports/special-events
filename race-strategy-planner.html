@@ -3433,25 +3433,25 @@ function competitorPitTimesPanel(race){
     return `rgb(${a.map((x, k) => Math.round(x + (b[k] - x) * u)).join(",")})`;
   };
   const fmt = s => { const m = Math.floor(s / 60), r = Math.round(s % 60); return r === 60 ? `${m + 1}:00` : `${m}:${String(r).padStart(2, "0")}`; };
-  const cols = "minmax(0,1fr) 56px 76px 150px";
+  const cols = "minmax(0,1fr) 64px 92px 210px";
   const body = rows.map((r, i) => {
     const c = rankColor(i), isOurs = ours.has(r.num);
     return `
-      <div style="display:grid;grid-template-columns:${cols};gap:12px;align-items:center;padding:9px ${isOurs ? "8px" : "0"};${isOurs ? `margin:0 -8px;background:${T.gold}17;border-left:2px solid ${T.gold};` : ""}${i < rows.length - 1 ? "border-bottom:1px solid var(--border);" : ""}">
+      <div style="display:grid;grid-template-columns:${cols};gap:14px;align-items:center;padding:9px 10px;${isOurs ? `background:${T.gold}17;box-shadow:inset 2px 0 0 ${T.gold};` : ""}${i < rows.length - 1 ? "border-bottom:1px solid var(--border);" : ""}">
         <span style="font-size:13.5px;min-width:0;"><span class="num" style="color:var(--textMuted);">#${esc(r.num)}</span> - <span style="font-weight:600;">${esc(r.name)}</span></span>
         <span class="font-mono" style="text-align:right;font-size:13px;">${r.stops}</span>
         <span class="font-mono" style="text-align:right;font-size:13px;">${r.driverChanges}</span>
         <span style="display:flex;align-items:center;justify-content:flex-end;gap:8px;">
-          <span style="flex:1;max-width:70px;height:4px;border-radius:2px;background:var(--border);"><span style="display:block;height:4px;border-radius:2px;width:${Math.max(4, Math.round(r.seconds / maxS * 100))}%;background:${c};"></span></span>
-          <span class="font-mono" style="font-size:13px;font-weight:700;color:${c};min-width:44px;text-align:right;">${fmt(r.seconds)}</span>
+          <span style="flex:1;max-width:130px;height:5px;border-radius:3px;background:var(--border);"><span style="display:block;height:5px;border-radius:3px;width:${Math.max(4, Math.round(r.seconds / maxS * 100))}%;background:${c};"></span></span>
+          <span class="font-mono" style="font-size:13px;font-weight:700;color:${c};min-width:48px;text-align:right;">${fmt(r.seconds)}</span>
         </span>
       </div>`;
   }).join("");
   return `
     <div class="mylaps-panel fade-in">
       <div style="margin-bottom:12px;"><span class="eyebrow" style="color:${T.gold};">Competitors Pit Times - GTO</span></div>
-      <div class="mylaps-table-wrap" style="margin-top:0;"><div style="min-width:420px;">
-        <div style="display:grid;grid-template-columns:${cols};gap:12px;padding-bottom:8px;border-bottom:1px solid var(--border);">
+      <div class="mylaps-table-wrap" style="margin-top:0;"><div style="min-width:480px;">
+        <div style="display:grid;grid-template-columns:${cols};gap:14px;padding:0 10px 8px;border-bottom:1px solid var(--border);">
           <span class="fin-label" style="margin:0;">Competitor</span>
           <span class="fin-label" style="margin:0;justify-content:flex-end;">Stops</span>
           <span class="fin-label" style="margin:0;justify-content:flex-end;">Driver Chg</span>
