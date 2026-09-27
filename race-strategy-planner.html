@@ -1378,6 +1378,111 @@ function rmAvgLaps(classification, lapsByPos){
   return out;
 }
 
+// ---- Archive extras: fastest lap, fastest stops, per-driver consistency ----
+const RM_MIN_PIT_MS = 15000; // shorter "stops" are drive-throughs / timing noise
+
+// Fastest single lap of the race, any class — from each car's best lap.
+function rmFastestLap(classification){
+  let best = null;
+  classification.forEach(c => {
+    const t = mylapsTimeToSec(c.bestTime);
+    if (!t || c.status === "DNS") return;
+    if (!best || t < best.seconds) best = { num: c.startNumber, name: c.name, cls: c.resultClass, seconds: t, lap: c.bestLap || null };
+  });
+  return best;
+}
+
+// Fastest GTO pit stops by Red Mist's pit duration, split by whether the
+// driver changed. Stops overlapping a red flag are excluded — the pit
+// clock keeps running while the field is stopped.
+function rmFastestStops(classification, pitStops, lapRows, redPeriods){
+  const clsByNum = Object.fromEntries(classification.map(c => [c.startNumber, c]));
+  const lapTime = {};
+  lapRows.forEach(l => { lapTime[`${l.car_number}|${l.lap_number}`] = new Date(l.captured_at).getTime(); });
+  const inRed = (num, lap) => {
+    const t = lapTime[`${num}|${lap}`];
+    return t != null && redPeriods.some(p => t >= p.start - 600000 && t <= (p.end || p.start) + 600000);
+  };
+  let plain = null, dc = null;
+  pitStops.forEach(s => {
+    const c = clsByNum[s.car_number];
+    if (!c || c.resultClass !== "GTO") return;
+    const ms = Number(s.pit_duration_ms);
+    if (!ms || ms < RM_MIN_PIT_MS || inRed(s.car_number, s.lap_number)) return;
+    const rec = { num: c.startNumber, name: c.name, seconds: ms / 1000, lap: s.lap_number, driverIn: s.driver_in || null, driverOut: s.driver_out || null };
+    if (s.driver_change){ if (!dc || rec.seconds < dc.seconds) dc = rec; }
+    else if (!plain || rec.seconds < plain.seconds) plain = rec;
+  });
+  return { plain, dc };
+}
+
+// Total time in the pits per GTO finisher (DNF / DNS cars left out — a
+// retirement's long garage stay isn't a pit-work comparison). Stops that
+// overlap a red flag are left out of the total: the pit clock keeps
+// running while the field is stopped.
+function rmPitTimes(classification, pitStops, lapRows, redPeriods){
+  const lapTime = {};
+  lapRows.forEach(l => { lapTime[`${l.car_number}|${l.lap_number}`] = new Date(l.captured_at).getTime(); });
+  const inRed = (num, lap) => {
+    const t = lapTime[`${num}|${lap}`];
+    return t != null && redPeriods.some(p => t >= p.start - 600000 && t <= (p.end || p.start) + 600000);
+  };
+  return classification
+    .filter(c => c.resultClass === "GTO" && c.status === "Normal")
+    .map(c => {
+      const stops = pitStops.filter(s => s.car_number === c.startNumber);
+      const totalMs = stops.reduce((a, s) => a + (!inRed(s.car_number, s.lap_number) && Number(s.pit_duration_ms) > 0 ? Number(s.pit_duration_ms) : 0), 0);
+      return { num: c.startNumber, name: c.name, stops: stops.length, driverChanges: stops.filter(s => s.driver_change).length, seconds: totalMs / 1000 };
+    })
+    .sort((a, b) => a.seconds - b.seconds);
+}
+
+// Driver in the car for each lap. Uses the driver recorded on the lap row
+// when there is one; otherwise rebuilds it from the pit-stop log (driver
+// out before each driver change, driver in after it).
+function rmDriverForLaps(carNumber, laps, lapRows, pitStops, finalDriver){
+  const recorded = {};
+  lapRows.forEach(l => { if (l.car_number === carNumber && l.driver_name) recorded[l.lap_number] = l.driver_name; });
+  const changes = pitStops.filter(s => s.car_number === carNumber && s.driver_change).sort((a, b) => a.lap_number - b.lap_number);
+  return laps.map(l => {
+    if (recorded[l.lap]) return recorded[l.lap];
+    if (!changes.length) return finalDriver || null;
+    for (const ch of changes){ if (l.lap <= ch.lap_number) return ch.driver_out || null; }
+    return changes[changes.length - 1].driver_in || finalDriver || null;
+  });
+}
+
+// Per-driver lap-time standard deviation for this team's cars, over clean
+// green-flag laps (no pit / out / caution laps, nothing over 110% of that
+// driver's median) — the same rules as the live Consistency tile.
+function rmDriverConsistency(ourNumbers, classification, lapsByPos, lapRows, pitStops, resultRows){
+  const out = {};
+  const finalDriver = Object.fromEntries(resultRows.map(r => [String(r.car_number), r.driver_name]));
+  classification.filter(c => ourNumbers.has(c.startNumber)).forEach(c => {
+    const laps = lapsByPos.get(c.position) || [];
+    const drivers = rmDriverForLaps(c.startNumber, laps, lapRows, pitStops, finalDriver[c.startNumber]);
+    const byDriver = {};
+    laps.forEach((l, i) => {
+      const d = drivers[i]; if (!d) return;
+      const g = (byDriver[d] ||= { driver: d, laps: 0, times: [], ranges: [] });
+      g.laps++;
+      // Contiguous lap ranges this driver was in the car, e.g. [[1,50],[90,120]].
+      const last = g.ranges[g.ranges.length - 1];
+      if (last && l.lap === last[1] + 1) last[1] = l.lap; else g.ranges.push([l.lap, l.lap]);
+      if (!l.inPit && l.status === "GREEN" && l.lapTime) g.times.push(l.lapTime);
+    });
+    out[c.startNumber] = Object.values(byDriver).map(g => {
+      const t = [...g.times].sort((a, b) => a - b);
+      const med = t.length ? t[Math.floor(t.length / 2)] : null;
+      const clean = med ? t.filter(x => x <= med * 1.10) : [];
+      const avg = clean.length ? clean.reduce((a, b) => a + b, 0) / clean.length : null;
+      const stdev = clean.length >= 3 ? Math.sqrt(clean.reduce((a, x) => a + (x - avg) ** 2, 0) / (clean.length - 1)) : null;
+      return { driver: g.driver, laps: g.laps, cleanLaps: clean.length, avg, stdev, ranges: g.ranges };
+    });
+  });
+  return out;
+}
+
 function rmAssemble(classification, sessionLabel, summary){
   const pitStopsByNumber = Object.fromEntries(classification.map(c => [c.startNumber, c._pitStops]));
   const intervals = {};
@@ -1404,6 +1509,11 @@ function rmAssemble(classification, sessionLabel, summary){
     bestStint: summary?.best_stint || null,
     longestStint: summary?.longest_stint || null,
     avgLapByNumber: summary?.avg_laps || {},
+    fastestLap: summary?.fastest_lap || null,
+    fastestStop: summary?.fastest_stop || null,
+    fastestStopDc: summary?.fastest_stop_dc || null,
+    driverConsistency: summary?.driver_consistency || {},
+    pitTimes: summary?.pit_times || null,
     raceClasses: ["GTO"],
     reconstructedFromDb: false,
   };
@@ -1418,14 +1528,18 @@ async function buildRedmistArchive(race, { save } = { save: false }){
   const { event_id, session_id, session_name } = resultRows[0];
   const classification = rmClassification(resultRows);
 
-  const [lapRows, periods] = await Promise.all([
-    fetchAllRows(() => supabase.from("redmist_live_laps")
-      .select("car_number, lap_number, lap_time_seconds, is_pit_lap, caution_lap, captured_at")
-      .eq("event_id", event_id).eq("session_id", session_id).eq("session_name", session_name)
-      .order("car_number").order("lap_number")),
+  const scope = q => q.eq("event_id", event_id).eq("session_id", session_id).eq("session_name", session_name);
+  const lapCols = "car_number, lap_number, lap_time_seconds, is_pit_lap, caution_lap, captured_at";
+  const [lapRows, periods, pitStops] = await Promise.all([
+    // driver_name on laps is newer — fall back to the older column set if
+    // the column isn't there yet.
+    fetchAllRows(() => scope(supabase.from("redmist_live_laps").select(lapCols + ", driver_name")).order("car_number").order("lap_number"))
+      .catch(() => fetchAllRows(() => scope(supabase.from("redmist_live_laps").select(lapCols)).order("car_number").order("lap_number"))),
     fetchAllRows(() => supabase.from("redmist_flag_periods").select("flag, started_at, ended_at")
       .eq("event_id", event_id).eq("session_id", session_id).eq("session_name", session_name)
       .order("started_at")).catch(() => []), // table may not exist on older deploys
+    fetchAllRows(() => scope(supabase.from("redmist_live_pit_stops")
+      .select("car_number, lap_number, pit_duration_ms, driver_change, driver_out, driver_in"))).catch(() => []),
   ]);
 
   const lapsByPos = rmLapsByPos(classification, lapRows);
@@ -1435,7 +1549,20 @@ async function buildRedmistArchive(race, { save } = { save: false }){
   const { cautions, redFlags } = periods.length
     ? rmFlagSummary(periods)
     : { cautions: computeCautions(lapsByPos), redFlags: computeRedFlags(lapsByPos) };
-  const stints = computeStints(classification, lapsByPos, new Set(["GTO"]), 15);
+  // Best Stint Pace only counts cars that ran a real share of the race —
+  // at least half their class winner's laps. A car out after 17 laps
+  // (e.g. #54 on Sunday) can post one quick early run, but it isn't
+  // comparable to cars that ran 100+. Longest Stint still considers all.
+  const classWinnerLaps = {};
+  classification.forEach(c => { classWinnerLaps[c.resultClass] = Math.max(classWinnerLaps[c.resultClass] || 0, c.numberOfLaps); });
+  const paceEligible = classification.filter(c => c.numberOfLaps >= 0.5 * (classWinnerLaps[c.resultClass] || 0));
+  const bestStints = computeStints(paceEligible, lapsByPos, new Set(["GTO"]), 15);
+  const allStints = computeStints(classification, lapsByPos, new Set(["GTO"]), 15);
+  const stints = { best: bestStints.best, longest: allStints.longest };
+
+  const flagRedPeriods = periods.length ? rmFlagSummary(periods).redFlags : redFlags;
+  const stops = rmFastestStops(classification, pitStops, lapRows, flagRedPeriods);
+  const ourNumbers = new Set((race.cars || []).map(c => String(c.number)));
 
   const summary = {
     race_id: String(race.id), event_id, session_id, session_name,
@@ -1443,6 +1570,11 @@ async function buildRedmistArchive(race, { save } = { save: false }){
     laps_led: computeLapsLed(classification, lapsByPos),
     best_stint: stints.best, longest_stint: stints.longest,
     avg_laps: rmAvgLaps(classification, lapsByPos),
+    fastest_lap: rmFastestLap(classification),
+    fastest_stop: stops.plain,
+    fastest_stop_dc: stops.dc,
+    driver_consistency: rmDriverConsistency(ourNumbers, classification, lapsByPos, lapRows, pitStops, resultRows),
+    pit_times: rmPitTimes(classification, pitStops, lapRows, flagRedPeriods),
     flag_source: flagSource,
     built_at: new Date().toISOString(),
   };
@@ -1461,7 +1593,10 @@ async function loadRedmistArchive(race){
   if (!resultRows) return null;
   const { data: summary, error } = await supabase.from("redmist_race_summary").select("*").eq("race_id", String(race.id)).maybeSingle();
   if (error) console.error("[rm-archive] summary fetch failed:", error);
-  if (!summary) return buildRedmistArchive(race, { save: state.isEngineer });
+  // No summary yet, or one saved before fastest-stop / driver consistency
+  // were added — build (and, for engineers, save) a fresh one.
+  const dcEntries = summary ? Object.values(summary.driver_consistency || {}).flat() : [];
+  if (!summary || summary.driver_consistency == null || summary.pit_times == null || dcEntries.some(e => !e.ranges)) return buildRedmistArchive(race, { save: state.isEngineer });
   return rmAssemble(rmClassification(resultRows), resultRows[0].session_name, summary);
 }
 
@@ -3231,7 +3366,7 @@ function renderPlan(){
         <span style="color:${bannerColor}">Archived — results below by car</span>
       </div>` : ""}
 
-      ${archived ? renderMylapsPanel(race) : ""}
+      ${archived ? renderMylapsPanel(race) + competitorPitTimesPanel(race) : ""}
 
       ${!archived ? renderLiveRaceSummary(race) : ""}
       ${!archived ? renderFinalStandingsTop(race) : ""}
@@ -3282,6 +3417,51 @@ function infoChip(iconName,label,value){
 // "results not available" message for non-engineers (or the Import
 // prompt for engineers) once that resolves with nothing, or the full
 // results view once race.mylaps is populated.
+// Competitors Pit Times (archive, Red Mist results only): each GTO
+// finisher's stops, driver changes and total time in the pits, least
+// first. Colour is by rank (green -> red) so one long stop doesn't flatten
+// everyone else's colour; the bar is actual time.
+function competitorPitTimesPanel(race){
+  const rows = race?.mylaps?.source === "redmist" ? race.mylaps.pitTimes : null;
+  if (state.mylapsAutoLoading || !rows?.length) return "";
+  const ours = new Set(race.cars.map(c => c.number));
+  const maxS = Math.max(...rows.map(r => r.seconds), 1);
+  const stops = [[63,178,127],[242,166,62],[226,68,92]]; // T.green -> T.amber -> T.red
+  const rankColor = i => {
+    const t = rows.length > 1 ? i / (rows.length - 1) : 0;
+    const a = t < 0.5 ? stops[0] : stops[1], b = t < 0.5 ? stops[1] : stops[2], u = t < 0.5 ? t * 2 : (t - 0.5) * 2;
+    return `rgb(${a.map((x, k) => Math.round(x + (b[k] - x) * u)).join(",")})`;
+  };
+  const fmt = s => { const m = Math.floor(s / 60), r = Math.round(s % 60); return r === 60 ? `${m + 1}:00` : `${m}:${String(r).padStart(2, "0")}`; };
+  const cols = "minmax(0,1fr) 56px 76px 150px";
+  const body = rows.map((r, i) => {
+    const c = rankColor(i), isOurs = ours.has(r.num);
+    return `
+      <div style="display:grid;grid-template-columns:${cols};gap:12px;align-items:center;padding:9px ${isOurs ? "8px" : "0"};${isOurs ? `margin:0 -8px;background:${T.gold}17;border-left:2px solid ${T.gold};` : ""}${i < rows.length - 1 ? "border-bottom:1px solid var(--border);" : ""}">
+        <span style="font-size:13.5px;min-width:0;"><span class="num" style="color:var(--textMuted);">#${esc(r.num)}</span> - <span style="font-weight:600;">${esc(r.name)}</span></span>
+        <span class="font-mono" style="text-align:right;font-size:13px;">${r.stops}</span>
+        <span class="font-mono" style="text-align:right;font-size:13px;">${r.driverChanges}</span>
+        <span style="display:flex;align-items:center;justify-content:flex-end;gap:8px;">
+          <span style="flex:1;max-width:70px;height:4px;border-radius:2px;background:var(--border);"><span style="display:block;height:4px;border-radius:2px;width:${Math.max(4, Math.round(r.seconds / maxS * 100))}%;background:${c};"></span></span>
+          <span class="font-mono" style="font-size:13px;font-weight:700;color:${c};min-width:44px;text-align:right;">${fmt(r.seconds)}</span>
+        </span>
+      </div>`;
+  }).join("");
+  return `
+    <div class="mylaps-panel fade-in">
+      <div style="margin-bottom:12px;"><span class="eyebrow" style="color:${T.gold};">Competitors Pit Times - GTO</span></div>
+      <div class="mylaps-table-wrap" style="margin-top:0;"><div style="min-width:420px;">
+        <div style="display:grid;grid-template-columns:${cols};gap:12px;padding-bottom:8px;border-bottom:1px solid var(--border);">
+          <span class="fin-label" style="margin:0;">Competitor</span>
+          <span class="fin-label" style="margin:0;justify-content:flex-end;">Stops</span>
+          <span class="fin-label" style="margin:0;justify-content:flex-end;">Driver Chg</span>
+          <span class="fin-label" style="margin:0;justify-content:flex-end;">Time in Pits</span>
+        </div>
+        ${body}
+      </div></div>
+    </div>`;
+}
+
 function renderMylapsPanel(race){
   if (!race) return "";
   const mylaps = race.mylaps;
@@ -3376,6 +3556,11 @@ function renderMylapsPanel(race){
         ${overviewTile("Most Laps Led", mylaps.lapsLed ? `${mylaps.lapsLed.laps} laps` : "—", mylaps.lapsLed ? `#${esc(mylaps.lapsLed.num)} ${esc(mylaps.lapsLed.name)}` : "")}
         ${overviewTile("Best Stint Pace - GTO", mylaps.bestStint ? mylapsFmtTime(mylaps.bestStint.avg) : "—", mylaps.bestStint ? `#${esc(mylaps.bestStint.num)} ${esc(mylaps.bestStint.name)} · ${mylaps.bestStint.lapCount} laps` : "")}
         ${overviewTile("Longest Stint - GTO", mylaps.longestStint ? `${mylaps.longestStint.lapCount} laps` : "—", longestStintSub(mylaps.longestStint))}
+        ${mylaps.source === "redmist" ? `
+          ${overviewTile("Fastest Lap", mylaps.fastestLap ? mylapsFmtTime(mylaps.fastestLap.seconds) : "—", mylaps.fastestLap ? `#${esc(mylaps.fastestLap.num)} ${esc(mylaps.fastestLap.name)} · ${esc(mylaps.fastestLap.cls)}${mylaps.fastestLap.lap ? ` · Lap ${mylaps.fastestLap.lap}` : ""}` : "")}
+          ${overviewTile("Fastest Pit Stop - GTO", mylaps.fastestStop ? `${mylaps.fastestStop.seconds.toFixed(1)}s` : "—", mylaps.fastestStop ? `#${esc(mylaps.fastestStop.num)} ${esc(mylaps.fastestStop.name)} · Lap ${mylaps.fastestStop.lap}` : "")}
+          ${overviewTile("Fastest Driver Change - GTO", mylaps.fastestStopDc ? `${mylaps.fastestStopDc.seconds.toFixed(1)}s` : "—", mylaps.fastestStopDc ? `#${esc(mylaps.fastestStopDc.num)} ${esc(mylaps.fastestStopDc.name)} · Lap ${mylaps.fastestStopDc.lap}${(mylaps.fastestStopDc.driverOut || mylaps.fastestStopDc.driverIn) ? `<br>${esc(mylaps.fastestStopDc.driverOut || "?")} → ${esc(mylaps.fastestStopDc.driverIn || "?")}` : ""}` : "")}
+        ` : ""}
       </div>
       ${mylaps.reconstructedFromDb ? `
       <p style="font-family:'JetBrains Mono',monospace;font-size:11px;color:${T.textFaint};margin-top:10px;">
@@ -3837,7 +4022,7 @@ function mylapsCarHeaderBlock(car){
         ${tile("Overall Position", `P${m.position}`)}
         ${tile("Fastest Lap", m.bestTime && m.bestTime!=="00.000" ? esc(m.bestTime) : "—")}
         ${race.mylaps.source === "redmist"
-          ? tile("Average Lap", race.mylaps.avgLapByNumber?.[car.number] ? mylapsFmtTime(race.mylaps.avgLapByNumber[car.number]) : "—", "Green-flag laps")
+          ? tile("Average Lap", race.mylaps.avgLapByNumber?.[car.number] ? mylapsFmtTime(race.mylaps.avgLapByNumber[car.number]) : "—")
           : tile("Highest Speed Avg", m.bestSpeed ? `${m.bestSpeed.toFixed(1)} mph` : "—")}
         ${tile("Pit Stops", m.pitStops)}
         ${tile("Laps Completed", m.numberOfLaps)}
@@ -3845,23 +4030,80 @@ function mylapsCarHeaderBlock(car){
     </div>`;
 }
 
+// Loose driver-name match: every word of the shorter name appears in the
+// longer ("Rosso-Orcel" ~ "Tiziano Rosso-Orcel"). Mirrors the poller's
+// sameDriver().
+function sameDriverName(a, b){
+  const tok = n => String(n || "").toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, "").split(/\s+/).filter(Boolean);
+  const A = tok(a), B = tok(b);
+  if (!A.length || !B.length) return false;
+  const [short, long] = A.length <= B.length ? [A, B] : [B, A];
+  return short.every(t => long.includes(t));
+}
+
 function raceSummaryBlock(cp){
-  const totals = {};
+  // One row per driver: name, the lap ranges they drove, a seat-time share
+  // bar in their timeline colour, seat time + share, and lap-time
+  // consistency (standard deviation over clean green-flag laps, colour
+  // scale only). Plan names can be surname-only, so they're matched to
+  // Red Mist's full names loosely.
+  const totals = {}, colors = {};
   const order = [];
   cp.stints.forEach(s=>{
     if (s.removed || !s.driver) return;
-    if (!(s.driver in totals)){ totals[s.driver] = 0; order.push(s.driver); }
+    if (!(s.driver in totals)){
+      totals[s.driver] = 0; order.push(s.driver);
+      colors[s.driver] = DRIVER_PALETTE[(s.driverIndex ?? order.length - 1) % DRIVER_PALETTE.length];
+    }
     totals[s.driver] += s.lengthMin;
   });
+  const totalMin = Object.values(totals).reduce((a,b)=>a+b, 0) || 1;
+  const race = state.races.find(r=>r.id===state.currentRaceId);
+  const cons = race?.mylaps?.source === "redmist" ? (race.mylaps.driverConsistency?.[cp.car.number] || []) : null;
+  const consFor = d => cons ? cons.find(x => sameDriverName(x.driver, d)) : null;
+  const rangesText = c => c?.ranges?.length
+    ? "Laps " + c.ranges.map(([a,b]) => a === b ? `${a}` : `${a}–${b}`).join(", ")
+    : "";
+  const cols = cons ? "minmax(0,1fr) 92px 92px" : "minmax(0,1fr) 92px";
+
+  const rows = order.map((d, i) => {
+    const c = consFor(d);
+    const share = Math.round(totals[d] / totalMin * 100);
+    let consCell = "";
+    if (cons){
+      if (!c || c.stdev == null) consCell = `<div style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:13.5px;color:var(--textFaint);">—</div>`;
+      else {
+        const cv = c.avg ? c.stdev / c.avg : 0;
+        const color = cv >= 0.02 ? T.red : cv >= 0.01 ? T.amber : T.green;
+        consCell = `<div style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:13.5px;color:${color};" title="${c.cleanLaps} clean laps of ${c.laps}">±${c.stdev.toFixed(3)}s</div>`;
+      }
+    }
+    const lapsLine = rangesText(c);
+    return `
+      <div style="display:grid;grid-template-columns:${cols};gap:12px;align-items:center;padding:10px 0;${i < order.length-1 ? "border-bottom:1px solid var(--border);" : ""}">
+        <div style="min-width:0;">
+          <div style="font-size:14px;font-weight:600;color:var(--text);">${esc(d)}</div>
+          ${lapsLine ? `<div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--textFaint);margin-top:2px;">${esc(lapsLine)}</div>` : ""}
+          <div style="height:4px;border-radius:2px;background:var(--border);margin-top:7px;">
+            <div style="width:${share}%;height:4px;border-radius:2px;background:${colors[d]};"></div>
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:13.5px;color:var(--text);">${formatDuration(totals[d])}</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--textFaint);">${share}%</div>
+        </div>
+        ${consCell}
+      </div>`;
+  }).join("");
+
   return `
     <div class="summary-box">
-      <div class="summary-driver" style="margin-bottom:6px;">
-        <span></span>
-        <span class="fin-label" style="margin:0;">${icon("timer",12)} Seat Time</span>
+      <div style="display:grid;grid-template-columns:${cols};gap:12px;padding-bottom:8px;border-bottom:1px solid var(--border);">
+        <span class="fin-label" style="margin:0;">${icon("timer",12)} Drivers</span>
+        <span class="fin-label" style="margin:0;justify-content:flex-end;">Seat Time</span>
+        ${cons ? `<span class="fin-label" style="margin:0;justify-content:flex-end;">Consistency</span>` : ""}
       </div>
-      <div class="summary-drivers">
-        ${order.map(d=>`<div class="summary-driver"><span>${esc(d)}</span><span class="font-mono">${formatDuration(totals[d])}</span></div>`).join("")}
-      </div>
+      ${rows}
     </div>`;
 }
 
