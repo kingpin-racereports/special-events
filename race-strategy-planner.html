@@ -257,6 +257,11 @@
   .stint-table .row-live .dot{background:var(--red)!important;animation:livePulse 1.2s ease-in-out infinite;}
   .stint-table .row.row-live{position:relative;background:rgba(226,68,92,0.08);}
   .stint-table .row.row-live::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--red);}
+  /* In-pit variant of the live indicators — same shapes, blue accent */
+  .timeline .seg.seg-pit .live-dot{background:var(--blue)!important;}
+  .stint-table .row-live.row-pit .dot{background:var(--blue)!important;}
+  .stint-table .row.row-live.row-pit{background:rgba(61,111,232,0.10);}
+  .stint-table .row.row-live.row-pit::before{background:var(--blue);}
   .stint-table .row.row-finished{opacity:0.62;}
   .stint-table .fin-flag{font-size:11px;line-height:1;margin-right:4px;flex-shrink:0;}
   .stint-time{padding:4px 0;font-size:10px;width:100%;min-width:0;border-radius:6px;text-align:center;}
@@ -1791,6 +1796,18 @@ function liveLeaderLaps(race){
   const field = race?.redmistLive?.fullField || [];
   return field.reduce((m, r) => Math.max(m, r.last_lap_completed || 0), 0);
 }
+// Live indicator state for one of our cars: "pit" while Red Mist says it's
+// in the pit lane, otherwise "track". Drives the colour/label of the
+// header badge, the timeline card and the stint-table row (red ON TRACK /
+// blue IN PIT).
+function liveIndicator(race, carNumber){
+  const pos = race?.redmistLive?.byCarNumber?.[carNumber];
+  const inPit = pos?.in_pit === true;
+  return inPit
+    ? { inPit: true,  color: "var(--blue)", wash: "rgba(61,111,232,0.12)", label: "IN PIT" }
+    : { inPit: false, color: "var(--red)",  wash: "rgba(226,68,92,0.10)", label: "ON TRACK" };
+}
+
 function liveStatusBadge(st){
   return st ? `<span class="mylaps-badge ${st.tone}" style="margin-left:6px;">${esc(st.label)}</span>` : "";
 }
@@ -3247,8 +3264,8 @@ function renderLiveStandingsPanel(race){
     const gapLabel = pos.overall_position === 1 ? "Leader" : (pos.current_gap || "—");
     return `<tr style="${isOurs?`background:${T.gold}17;border-left:2px solid ${T.gold};`:""}">
       <td class="num">P${pos.overall_position ?? "—"}</td>
-      <td><span class="num">#${esc(pos.car_number)}</span> - <span style="font-weight:600;">${esc(pos.team_name || "—")}</span>${liveStatusBadge(carStatus)}</td>
-      <td class="num">${fmtLapTime(rmTimeToSeconds(pos.last_lap_time))}</td>
+      <td><span class="num">#${esc(pos.car_number)}</span> - <span style="font-weight:600;">${esc(pos.team_name || "—")}</span></td>
+      <td class="num">${carStatus ? liveStatusBadge(carStatus).replace("margin-left:6px;", "") : fmtLapTime(rmTimeToSeconds(pos.last_lap_time))}</td>
       <td class="num">${esc(gapLabel)}</td>
       <td class="num">${pos.last_lap_completed ?? 0}</td>
       <td class="stops">${stopCounts[pos.car_number] ?? 0}</td>
@@ -3606,6 +3623,7 @@ function carPlanSection(cp, plan, archived){
   // status field.
   const hasLiveTiming = !!(race?.redmistLive?.byCarNumber?.[car.number]);
   const livePos = hasLiveTiming ? race.redmistLive.byCarNumber[car.number] : null;
+  const liveInd = liveIndicator(race, car.number);
 
   // Collapsible tile: enabled on the archive/plan view for archived races,
   // and now also for a race with live timing data flowing — same
@@ -3628,9 +3646,9 @@ function carPlanSection(cp, plan, archived){
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;white-space:nowrap;">
             ${hasLiveTiming ? `
-              <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;background:rgba(226,68,92,0.12);">
-                <span style="width:6px;height:6px;border-radius:999px;background:var(--red);animation:livePulse 1.2s ease-in-out infinite;"></span>
-                <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:0.05em;color:var(--text);">Currently P${livePos.class_position ?? "—"}</span>
+              <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;background:${liveInd.wash};">
+                <span style="width:6px;height:6px;border-radius:999px;background:${liveInd.color};animation:livePulse 1.2s ease-in-out infinite;"></span>
+                <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:0.05em;color:var(--text);">${liveInd.inPit ? `In Pit · P${livePos.class_position ?? "—"}` : `Currently P${livePos.class_position ?? "—"}`}</span>
               </span>
               ${liveStatusBadge(liveCarStatus(livePos, liveLeaderLaps(race)))}
             ` : ""}
@@ -3682,13 +3700,13 @@ function carPlanSection(cp, plan, archived){
           // red border + tinted wash used for warning entries in the Stint
           // Adjustments log, so "currently on track" reads as one
           // consistent visual language across the app.
-          const liveStyle = isLive ? `border-color:var(--red);background:rgba(226,68,92,0.10);box-shadow:none;` : "";
+          const liveStyle = isLive ? `border-color:${liveInd.color};background:${liveInd.wash};box-shadow:none;` : "";
           const tmContent = isLive
-            ? `<span style="color:var(--red);font-weight:600;">ON TRACK</span>`
+            ? `<span style="color:${liveInd.color};font-weight:600;">${liveInd.label}</span>`
             : (s.finished ? formatDuration(s.lengthMin) : formatTimeUltraCompact(s.start));
           const tmStyle = isLive ? `white-space:normal;overflow:visible;line-height:1.1;` : "";
-          return `<div class="seg ${isLive?'seg-live':''}" data-car="${car.id}" data-stint="${i}" data-color="${color}" data-start-iso="${s.start.toISOString()}" style="flex-grow:${grow};flex-basis:0;background:rgba(${r},${g},${b},0.14);border-top-color:${color};${liveStyle}">
-            <span class="drv" title="${esc(s.driver||'TBD')}">${esc(timelineAbbrev[s.driver]||s.driver||"TBD")}<span class="${isLive?'live-dot':'dot'}" style="background:${isLive?'var(--red)':color};"></span></span>
+          return `<div class="seg ${isLive?'seg-live':''} ${isLive && liveInd.inPit?'seg-pit':''}" data-car="${car.id}" data-stint="${i}" data-color="${color}" data-start-iso="${s.start.toISOString()}" style="flex-grow:${grow};flex-basis:0;background:rgba(${r},${g},${b},0.14);border-top-color:${color};${liveStyle}">
+            <span class="drv" title="${esc(s.driver||'TBD')}">${esc(timelineAbbrev[s.driver]||s.driver||"TBD")}<span class="${isLive?'live-dot':'dot'}" style="background:${isLive?liveInd.color:color};"></span></span>
             <span class="tm" style="${tmStyle}">${tmContent}</span>
           </div>`;
         }).join("")}
@@ -3773,7 +3791,7 @@ function carPlanSection(cp, plan, archived){
             : `<span></span>`;
 
           return `
-          <div class="row ${isLiveRow?'row-live':''} ${isFinishedRow?'row-finished':''}" data-car="${car.id}" data-stint="${i}">
+          <div class="row ${isLiveRow?'row-live':''} ${isLiveRow && liveInd.inPit?'row-pit':''} ${isFinishedRow?'row-finished':''}" data-car="${car.id}" data-stint="${i}">
             <span class="stint-ghost-num">${i+1}</span>
             ${driverCell}
             ${startCell}
@@ -5175,6 +5193,7 @@ function updateLiveHighlights(){
   if (!state.plan || state.currentStatus === "archived") return;
   state.plan.carPlans.forEach(cp=>{
     const liveIdx = computeLiveStintIndex(cp.stints, false);
+    const ind = liveIndicator(state.races.find(r=>r.id===state.currentRaceId), cp.car.number);
 
     document.querySelectorAll(`.timeline .seg[data-car="${cp.car.id}"]`).forEach(el=>{
       const idx = +el.getAttribute("data-stint");
@@ -5183,15 +5202,16 @@ function updateLiveHighlights(){
       const [r,g,b] = hexToRgb(color);
       const stint = cp.stints[idx];
       el.classList.toggle("seg-live", isLive);
-      el.style.background = isLive ? "rgba(226,68,92,0.10)" : `rgba(${r},${g},${b},0.14)`;
-      el.style.borderColor = isLive ? "var(--red)" : "transparent";
+      el.classList.toggle("seg-pit", isLive && ind.inPit);
+      el.style.background = isLive ? ind.wash : `rgba(${r},${g},${b},0.14)`;
+      el.style.borderColor = isLive ? ind.color : "transparent";
       if (!isLive) el.style.borderTopColor = color; // border-color shorthand above also reset the top accent stripe — reassert it
       el.style.boxShadow = "none";
       if (stint) el.style.flexGrow = Math.max(stint.lengthMin, 1) * (isLive ? 1.6 : 1); // live card gets extra room for "ON TRACK"
       const dotEl = el.querySelector(".dot, .live-dot");
       if (dotEl){
         dotEl.className = isLive ? "live-dot" : "dot";
-        dotEl.style.background = isLive ? "var(--red)" : color;
+        dotEl.style.background = isLive ? ind.color : color;
       }
       const tmEl = el.querySelector(".tm");
       if (tmEl){
@@ -5199,7 +5219,7 @@ function updateLiveHighlights(){
           tmEl.style.whiteSpace = "normal";
           tmEl.style.overflow = "visible";
           tmEl.style.lineHeight = "1.1";
-          tmEl.innerHTML = `<span style="color:var(--red);font-weight:600;">ON TRACK</span>`;
+          tmEl.innerHTML = `<span style="color:${ind.color};font-weight:600;">${ind.label}</span>`;
         } else {
           tmEl.style.whiteSpace = "";
           tmEl.style.overflow = "";
@@ -5213,6 +5233,7 @@ function updateLiveHighlights(){
       const idx = +el.getAttribute("data-stint");
       const isLive = idx === liveIdx;
       el.classList.toggle("row-live", isLive);
+      el.classList.toggle("row-pit", isLive && ind.inPit);
     });
   });
 }
