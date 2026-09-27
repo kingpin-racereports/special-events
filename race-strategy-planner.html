@@ -1334,7 +1334,11 @@ let redmistChannel = null;
 const SESSION_FRESH_MS = 120_000;
 // Red Mist can report isLive=false with sessionId=0 during a running
 // session (seen in qualifying) — so an on-track flag also counts.
-const ACTIVE_FLAGS = new Set([1, 2, 3, 7]); // green, transition, red, yellow
+// Every on-track flag in Red Mist's enum — everything except 0 (pre-race /
+// unknown) and 5 (checkered). Previously {1,2,3,7} from the old mapping,
+// which meant a White, Code 60, Debris or Waving Yellow flag during an
+// is_live=false report could read as "session ended" and detach live data.
+const ACTIVE_FLAGS = new Set([1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12]);
 // MUST match classifySession() in redmist-live-poll. Only Qualifying and
 // Race sessions are reported; HPDE/test/practice (incl. "Race Practice N")
 // are Practice and never attach. Order matters for that reason.
@@ -1422,7 +1426,7 @@ async function refreshRedmistCar(race, carNumber, skipRender){
   // site does its own single render() once ALL cars have resolved, so the
   // car-plan tiles reach their final collapsed/expanded state in one paint
   // rather than settling in piecemeal as each car's query lands.
-  if (!skipRender) scheduleRender();
+  if (!skipRender) scheduleLiveRender();
 }
 
 // Resolves whether a WRL event is currently live and, if so, fetches
@@ -1478,13 +1482,17 @@ async function loadRedmistLiveState(raceId){
 // rendered once with correct data.
 function subscribeRedmistLiveChannel(raceId, race, carNumbers){
   if (!state.redmistEventId || !race || !carNumbers.length) return;
+  // Position rows for this team's cars now arrive through the full-field
+  // channel (mergeFullFieldPositionRow), same as every other car. This
+  // channel used to ALSO listen to redmist_live_positions — unfiltered,
+  // every event — and re-query + render each of our cars on its own
+  // schedule. Our car's tile then repainted a beat before the rows around
+  // it (Car Behind, Class Pace), so the two were never from the same
+  // tick, and every change was delivered twice. Laps still come here:
+  // they drive the stint stats / consistency queries.
   redmistChannel = supabase
     .channel(`redmist-live-${raceId}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'redmist_live_positions' }, payload => {
-      const num = payload.new?.car_number;
-      if (num && carNumbers.includes(num) && isCurrentSessionRow(payload.new)) refreshRedmistCar(race, num);
-    })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'redmist_live_laps' }, payload => {
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'redmist_live_laps', filter: `event_id=eq.${state.redmistEventId}` }, payload => {
       const num = payload.new?.car_number;
       if (num && carNumbers.includes(num) && isCurrentSessionRow(payload.new)) refreshRedmistCar(race, num);
     })
@@ -1537,16 +1545,23 @@ function mergeFullFieldPositionRow(race, row){
   const idx = arr.findIndex(r => r.car_number === row.car_number);
   if (idx >= 0) arr[idx] = row; else arr.push(row);
   race.redmistLive.fullField = arr;
-  // One poll rewrites every car whose position changed, but Realtime
-  // delivers those rows one event at a time. Rendering after each one
-  // showed the half-applied states in between — two cars both on P5, rows
-  // swapping and swapping back as the rest of the batch landed. Wait
-  // until the burst goes quiet and render the whole batch once.
-  clearTimeout(fullFieldRenderTimer);
-  fullFieldRenderTimer = setTimeout(scheduleRender, FULL_FIELD_SETTLE_MS);
+  // Our own cars' tiles read byCarNumber — keep it on the same row so the
+  // tile and its neighbours always come from the same poll.
+  if (race.cars.some(c => c.number === row.car_number)) race.redmistLive.byCarNumber[row.car_number] = row;
+  scheduleLiveRender();
 }
-let fullFieldRenderTimer = null;
-const FULL_FIELD_SETTLE_MS = 300;
+// One poll rewrites every car whose position changed, but Realtime
+// delivers those rows one event at a time. Rendering after each one
+// showed the half-applied states in between — two cars both on P5, rows
+// swapping and swapping back as the rest of the batch landed. All live
+// data paths render through this: wait until the burst goes quiet, then
+// render the whole batch once.
+let liveRenderTimer = null;
+const LIVE_SETTLE_MS = 300;
+function scheduleLiveRender(){
+  clearTimeout(liveRenderTimer);
+  liveRenderTimer = setTimeout(scheduleRender, LIVE_SETTLE_MS);
+}
 
 function subscribeFullFieldChannel(raceId, race, eventId){
   if (fullFieldChannel) return; // idempotent — toggling the panel open twice shouldn't double-subscribe
@@ -2261,6 +2276,48 @@ function scheduleRender(){
   });
 }
 
+// Minimal DOM patcher used for live-tick renders (see render()). Children
+// are matched by position; same tag -> sync attributes and recurse,
+// otherwise replace. Unchanged subtrees are skipped entirely, so their
+// images, animations, hover state and scroll positions are left alone.
+// A focused form field is never touched.
+function morphChildren(from, to){
+  const a = [...from.childNodes], b = [...to.childNodes];
+  for (let i = 0; i < b.length; i++){
+    if (i >= a.length) from.appendChild(b[i]);
+    else morphNode(a[i], b[i]);
+  }
+  for (let i = b.length; i < a.length; i++) a[i].remove();
+}
+function morphNode(a, b){
+  if (a.nodeType !== b.nodeType || a.nodeName !== b.nodeName){ a.replaceWith(b); return; }
+  if (a.nodeType === 3 || a.nodeType === 8){
+    if (a.nodeValue !== b.nodeValue) a.nodeValue = b.nodeValue;
+    return;
+  }
+  if (a.nodeType !== 1 || a.isEqualNode(b)) return;
+  if ((a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT") && a === document.activeElement) return;
+  for (const { name, value } of [...b.attributes]){
+    if (a.getAttribute(name) !== value) a.setAttribute(name, value);
+  }
+  for (const { name } of [...a.attributes]){
+    if (!b.hasAttribute(name)) a.removeAttribute(name);
+  }
+  if (a.tagName === "TEXTAREA"){ if (a.value !== b.value) a.value = b.value; return; }
+  morphChildren(a, b);
+}
+
+// bindEvents() now also runs after in-place patches, where most elements
+// already have their listeners — this binds each (element, event) once.
+const boundListeners = new WeakMap();
+function listenOnce(el, evt, fn){
+  let set = boundListeners.get(el);
+  if (!set){ set = new Set(); boundListeners.set(el, set); }
+  if (set.has(evt)) return;
+  set.add(evt);
+  el.addEventListener(evt, fn);
+}
+
 function render(opts){
   const app = document.getElementById("app");
   if (state.confirmDelete){
@@ -2304,6 +2361,23 @@ function render(opts){
   lastRenderedHtml = html;
 
   app.classList.toggle("same-page-render", !pageChanged);
+
+  // Live ticks (background renders on the same page) are patched into the
+  // existing DOM rather than replacing it. Rebuilding everything once a
+  // second was the visible glitch on the car tiles and standings: every
+  // element, image and animation was torn down and recreated even when
+  // only one number changed. Now only the nodes that actually differ are
+  // touched (scroll positions, hover and animations survive untouched).
+  // User-initiated renders still rebuild outright, since some flows rely
+  // on that to reset DOM-only state.
+  if (opts && opts.background && !pageChanged && app.firstChild){
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    morphChildren(app, tpl.content);
+    bindEvents(); // idempotent — only binds elements that are new
+    return;
+  }
+
   app.style.setProperty("--pulse-phase", `-${Math.round(performance.now() % 1200)}ms`); // 1200 = livePulse duration
   // Horizontally-scrollable tables (live standings, quali, MyLaps) are
   // rebuilt on every live tick like everything else, and innerHTML resets
@@ -3360,7 +3434,7 @@ function liveTimingBlock(car){
   const cv = (stdevSec!=null && cons?.clean_avg_lap_seconds) ? stdevSec / cons.clean_avg_lap_seconds : null;
   const consistencyLabel = stdevSec==null ? "—" : `±${Number(stdevSec).toFixed(3)}s`;
   const consistencyColor = cv==null ? null : cv>=0.02 ? T.red : cv>=0.01 ? T.amber : T.green;
-  const consistencySub = cons?.clean_lap_count ? `${cons.clean_lap_count} clean lap${cons.clean_lap_count===1?"":"s"}` : null;
+
 
   // ---- In-class neighbours, lap count, class pace (from the full-field rows) ----
   const field = race.redmistLive?.fullField || [];
@@ -3372,11 +3446,13 @@ function liveTimingBlock(car){
   // current_gap is Red Mist's InClassGap: time (or "N laps") to the next
   // car ahead in class. So the gap to the car ahead is OUR current_gap,
   // and the gap to the car behind is THEIR current_gap.
+  // Gap is the headline; car number + team (and any Inactive/DNS badge)
+  // go in the small line underneath.
   const neighbourTile = (label, r, gap) => {
     if (!r) return tile(label, "—", label === "Car Ahead" && pos.class_position === 1 ? "Class leader" : null);
     const st = liveCarStatus(r, leaderLaps);
-    const sub = [gap ? esc(gap) : null, esc(r.team_name || "")].filter(Boolean).join(" · ");
-    return tile(label, `#${esc(r.car_number)}${st ? liveStatusBadge(st) : ""}`, sub || null);
+    const sub = `#${esc(r.car_number)}${r.team_name ? ` · ${esc(r.team_name)}` : ""}${st ? liveStatusBadge(st) : ""}`;
+    return tile(label, gap ? esc(gap) : "—", sub);
   };
 
   // Class Pace = median last lap of class cars that are actually running
@@ -3408,23 +3484,20 @@ function liveTimingBlock(car){
       <div class="mylaps-carstat-grid live-carstat-grid">
         ${tile("In Seat", esc(pos.driver_name || "—"))}
         ${tile("Position", `P${pos.class_position ?? "—"}` + (gainedLabel ? ` <span style="font-size:13px;color:${gainedColor}">${gainedLabel}</span>` : ""))}
-        ${tile("Lap #", pos.last_lap_completed != null ? esc(String(pos.last_lap_completed)) : "—", pos.current_diff ? `${esc(pos.current_diff)} to class leader` : null)}
+        ${tile("Current Stint", stintLabel)}
 
+        ${tile("Current Lap", pos.last_lap_completed != null ? esc(String(pos.last_lap_completed)) : "—", pos.current_diff ? `${esc(pos.current_diff)} to class leader` : null)}
         ${tile("Last Lap", esc(trimLapTime(pos.last_lap_time)))}
         ${tile("Average Lap", stats ? fmtLapSeconds(stats.avg_lap_seconds) : "—")}
-        ${tile("Class Pace", classPace!=null ? fmtLapSeconds(classPace) : "—", paceSub)}
 
+        ${tile("Class Pace", classPace!=null ? fmtLapSeconds(classPace) : "—", paceSub)}
         ${neighbourTile("Car Ahead", ahead, pos.current_gap)}
         ${neighbourTile("Car Behind", behind, behind?.current_gap)}
-        ${tile("Consistency", consistencyColor ? `<span style="color:${consistencyColor}">${consistencyLabel}</span>` : consistencyLabel, consistencySub)}
 
-        ${tile("Stint", stintLabel)}
+        ${tile("Consistency", consistencyColor ? `<span style="color:${consistencyColor}">${consistencyLabel}</span>` : consistencyLabel)}
         ${tile("Last Pit", pos.last_lap_pitted!=null ? `Lap ${pos.last_lap_pitted}` : "—")}
         ${tile("Pit Time", pos.pit_duration_ms!=null ? `${(pos.pit_duration_ms/1000).toFixed(1)}s` : "—")}
       </div>
-      <p style="font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.5;color:var(--textFaint);margin:0 0 16px;">
-        Live from Red Mist Timing. Average Lap / Consistency reset with each driver change; Consistency counts green-flag laps only (no pit, out or caution laps). Class Pace = median last lap of running ${esc(pos.class || "class")} cars.
-      </p>
     </div>`;
 }
 
@@ -3748,9 +3821,10 @@ function bindEvents(){
   app.querySelectorAll("[data-act]").forEach(el=>{
     const act = el.getAttribute("data-act");
     if (["update-driver","update-start-pos","edit-stint-pos","edit-stint-driver","edit-stint-note","update-reserve-draft","stint-wheel","mylaps-draft"].includes(act)) return; // input/change events bound below
-    el.addEventListener("click", (e)=>{
+    // act read at click time — a patched element can change data-act.
+    listenOnce(el, "click", (e)=>{
       e.preventDefault();
-      handleAction(act, el, e);
+      handleAction(el.getAttribute("data-act"), el, e);
     });
   });
 
@@ -3760,7 +3834,7 @@ function bindEvents(){
   });
   const nameDraftEl = document.getElementById("nameDraft");
   if (nameDraftEl){
-    nameDraftEl.addEventListener("keydown", (e)=>{
+    listenOnce(nameDraftEl, "keydown", (e)=>{
       if (e.key === "Enter" && state.nameDraft.trim()){
         e.preventDefault();
         handleAction("confirmName");
@@ -3774,7 +3848,7 @@ function bindEvents(){
   });
   const loginEmailEl = document.getElementById("loginEmail");
   if (loginEmailEl){
-    loginEmailEl.addEventListener("keydown", (e)=>{
+    listenOnce(loginEmailEl, "keydown", (e)=>{
       if (e.key === "Enter" && state.loginEmail.trim()){
         e.preventDefault();
         handleAction("engineer-magiclink-login");
@@ -3796,7 +3870,7 @@ function bindEvents(){
   bindLiveInput("ncModel", v=> state.newCar.model=v);
 
   app.querySelectorAll('[data-act="update-driver"]').forEach(el=>{
-    el.addEventListener("input", ()=>{
+    listenOnce(el, "input", ()=>{
       const carId = el.getAttribute("data-car"), idx = +el.getAttribute("data-idx");
       const car = state.cars.find(c=>c.id===carId);
       if (car) car.drivers[idx] = el.value;
@@ -3810,7 +3884,7 @@ function bindEvents(){
   // just two ways into one setting. Updating the DOM in place (rather than
   // calling render()) keeps the page from jumping back to the top.
   app.querySelectorAll('[data-act="stint-wheel"]').forEach(el=>{
-    el.addEventListener("change", ()=>{
+    listenOnce(el, "change", ()=>{
       const carId = el.getAttribute("data-car"), idx = +el.getAttribute("data-idx");
       const car = state.cars.find(c=>c.id===carId);
       if (!car) return;
@@ -3836,11 +3910,11 @@ function bindEvents(){
     });
   });
   app.querySelectorAll('[data-act="update-reserve-draft"]').forEach(el=>{
-    el.addEventListener("input", ()=>{
+    listenOnce(el, "input", ()=>{
       const carId = el.getAttribute("data-car");
       state.reserveDraft[carId] = el.value;
     });
-    el.addEventListener("keydown", (e)=>{
+    listenOnce(el, "keydown", (e)=>{
       if (e.key === "Enter"){
         e.preventDefault();
         handleAction("confirm-add-reserve", el);
@@ -3848,27 +3922,27 @@ function bindEvents(){
     });
   });
   app.querySelectorAll('[data-act="update-start-pos"]').forEach(el=>{
-    el.addEventListener("input", ()=>{
+    listenOnce(el, "input", ()=>{
       const carId = el.getAttribute("data-car");
       const car = state.cars.find(c=>c.id===carId);
       if (car) car.startingPosition = el.value;
     });
   });
   app.querySelectorAll('[data-act="mylaps-draft"]').forEach(el=>{
-    el.addEventListener("input", ()=>{ state.mylapsSessionDraft = el.value; });
+    listenOnce(el, "input", ()=>{ state.mylapsSessionDraft = el.value; });
   });
   app.querySelectorAll('[data-act="edit-stint-pos"]').forEach(el=>{
-    el.addEventListener("change", ()=>{
+    listenOnce(el, "change", ()=>{
       updateStintPosition(el.getAttribute("data-car"), +el.getAttribute("data-stint"), el.value);
     });
   });
   app.querySelectorAll('[data-act="edit-stint-driver"]').forEach(el=>{
-    el.addEventListener("change", ()=>{
+    listenOnce(el, "change", ()=>{
       updateStintDriver(el.getAttribute("data-car"), +el.getAttribute("data-stint"), el.value);
     });
   });
   app.querySelectorAll('[data-act="edit-stint-note"]').forEach(el=>{
-    el.addEventListener("change", ()=>{
+    listenOnce(el, "change", ()=>{
       updateStintNote(el.getAttribute("data-car"), +el.getAttribute("data-stint"), el.value);
     });
   });
@@ -3877,7 +3951,7 @@ function bindEvents(){
 function bindLiveInput(id, onInput, onExtra, evt){
   const el = document.getElementById(id);
   if (!el) return;
-  el.addEventListener(evt || "input", ()=>{ onInput(el.value); if(onExtra) onExtra(); });
+  listenOnce(el, evt || "input", ()=>{ onInput(el.value); if(onExtra) onExtra(); });
 }
 
 function updateSetupButtonState(){
