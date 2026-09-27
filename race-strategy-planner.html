@@ -1220,6 +1220,263 @@ async function loadMylapsResultsFromSupabase(raceId){
   };
 }
 
+// =============== Red Mist race archive ===============
+// Builds the archived race's results from Red Mist data instead of a
+// MyLaps import. Produces the exact same object shape loadMylapsSession()
+// does (race.mylaps), so the Race Overview tiles, full-field standings,
+// per-car result tiles and finish positions all render unchanged.
+//
+// Sources:
+//   redmist_race_results  — final classification, written by the poller
+//                           at the checkered (one row per car)
+//   redmist_live_laps     — every lap, for laps led / stints / lap-based
+//                           caution + red-flag fallback
+//   redmist_flag_periods  — logged flag timeline; when present it is the
+//                           source for Total Cautions / Red Flags
+//   redmist_race_summary  — the computed overview, saved at archive time so
+//                           reopening an archived race doesn't re-read laps
+const RM_CAUTION_FLAGS = new Set([2, 7, 8, 11, 12]); // yellow, code 35, code 60, debris, waving yellow
+const RM_GREEN = 1, RM_RED = 3;
+
+// PostgREST caps a response at 1,000 rows; a race has ~7,000 laps.
+async function fetchAllRows(makeQuery, pageSize = 1000){
+  const out = [];
+  for (let from = 0; ; from += pageSize){
+    const { data, error } = await makeQuery().range(from, from + pageSize - 1);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < pageSize) break;
+  }
+  return out;
+}
+
+// The race plan's saved Red Mist results, grouped by session; latest race
+// session wins (matches loadRaceResults()).
+async function fetchRedmistResultRows(race){
+  let { data, error } = await supabase.from("redmist_race_results").select("*").eq("race_id", String(race.id));
+  if (error) throw error;
+  if (!data?.length && race.redmistEventId != null){
+    const res = await supabase.from("redmist_race_results").select("*").eq("event_id", race.redmistEventId).is("race_id", null);
+    if (res.error) throw res.error;
+    data = res.data;
+  }
+  if (!data?.length) return null;
+  const bySession = {};
+  data.forEach(r => {
+    const key = `${r.session_id}|${r.session_name}`;
+    const g = (bySession[key] ||= { rows: [], at: 0 });
+    g.rows.push(r);
+    g.at = Math.max(g.at, new Date(r.checkered_at || r.updated_at || 0).getTime());
+  });
+  return Object.values(bySession).sort((a, b) => b.at - a.at)[0].rows;
+}
+
+function rmResultStatus(s){
+  if (s === "DNS") return "DNS";
+  if (!s || s === "Running") return "Normal";
+  return "DNF"; // DNF, or a Red Mist status like Mechanical / Contact
+}
+
+// Final classification in MyLaps shape. Positions are re-numbered 1..n in
+// Red Mist's overall order so they're guaranteed unique (the lap-based
+// helpers key laps by position).
+function rmClassification(resultRows){
+  const rows = resultRows
+    .filter(r => String(r.car_number).toLowerCase() !== "53x")
+    .sort((a, b) => {
+      const ad = a.result_status === "DNS", bd = b.result_status === "DNS";
+      if (ad !== bd) return ad ? 1 : -1;
+      const ap = a.overall_position ?? 9999, bp = b.overall_position ?? 9999;
+      if (ap !== bp) return ap - bp;
+      return (b.laps || 0) - (a.laps || 0);
+    });
+  const winnerLaps = rows.reduce((m, r) => Math.max(m, r.laps || 0), 0);
+  const classPos = {};
+  return rows.map((r, i) => {
+    const cls = r.class || "";
+    classPos[cls] = (classPos[cls] || 0) + 1;
+    const best = rmTimeToSeconds(r.best_time);
+    return {
+      position: i + 1,
+      positionInClass: r.class_position ?? classPos[cls],
+      startNumber: String(r.car_number),
+      resultClass: cls,
+      name: r.team_name || "",
+      status: rmResultStatus(r.result_status),
+      numberOfLaps: r.laps || 0,
+      bestLap: r.best_lap || 0,
+      bestTime: best != null ? fmtLapTime(best) : "",
+      bestSpeed: 0,
+      totalTime: "", totalTimeSec: null,
+      lapsBehind: winnerLaps - (r.laps || 0),
+      timeDiffSec: 0,
+      _gap: r.overall_gap || "",
+      _pitStops: r.pit_stops ?? 0,
+    };
+  });
+}
+
+// Laps per car in the MyLaps lap shape: { lap, timeOfDay, lapTime, inPit, status }.
+// inPit covers the pit lap, the out-lap after it, and — as a fallback for
+// laps recorded before pit detection worked — any lap over 150% of that
+// car's median, so a stint never runs straight through an unflagged stop.
+function rmLapsByPos(classification, lapRows){
+  const byNum = {};
+  lapRows.forEach(l => (byNum[l.car_number] ||= []).push(l));
+  const lapsByPos = new Map();
+  classification.forEach(c => {
+    const laps = (byNum[c.startNumber] || []).sort((a, b) => a.lap_number - b.lap_number);
+    const times = laps.map(l => Number(l.lap_time_seconds)).filter(x => x > 0).sort((a, b) => a - b);
+    const median = times.length ? times[Math.floor(times.length / 2)] : null;
+    let prevPit = false;
+    lapsByPos.set(c.position, laps.map(l => {
+      const t = Number(l.lap_time_seconds) > 0 ? Number(l.lap_time_seconds) : null;
+      const slow = median != null && t != null && t > median * 1.5;
+      const inPit = l.is_pit_lap === true || prevPit || slow;
+      prevPit = l.is_pit_lap === true;
+      return { lap: l.lap_number, timeOfDay: new Date(l.captured_at).getTime(), lapTime: t, inPit, status: l.caution_lap === true ? "YELLOW" : "GREEN" };
+    }));
+  });
+  return lapsByPos;
+}
+
+// Cautions / red flags from the logged flag timeline. A caution runs from
+// the first caution flag until the next green (a Yellow that becomes a
+// Code 35 is one caution); consecutive red periods count once.
+function rmFlagSummary(periods){
+  const sorted = [...periods].sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
+  const cautions = [], redFlags = [];
+  let caution = null, red = null;
+  sorted.forEach(p => {
+    const f = Number(p.flag), start = new Date(p.started_at).getTime();
+    const end = p.ended_at ? new Date(p.ended_at).getTime() : start;
+    if (f === RM_GREEN || f === 5){ caution = null; }
+    else if (RM_CAUTION_FLAGS.has(f) || f === RM_RED){
+      if (!caution && RM_CAUTION_FLAGS.has(f)){ caution = { count: 1, start, end }; cautions.push(caution); }
+      else if (caution) caution.end = end;
+    }
+    if (f === RM_RED){
+      if (!red){ red = { count: 1, start, end }; redFlags.push(red); } else red.end = end;
+    } else red = null;
+  });
+  return { cautions, redFlags };
+}
+
+// Clean average lap per car across the whole race (no pit/out/caution
+// laps, nothing over 110% of the car's median) — replaces MyLaps' speed
+// tile, which Red Mist has no data for.
+function rmAvgLaps(classification, lapsByPos){
+  const out = {};
+  classification.forEach(c => {
+    const t = (lapsByPos.get(c.position) || []).filter(l => !l.inPit && l.status === "GREEN" && l.lapTime).map(l => l.lapTime).sort((a, b) => a - b);
+    if (!t.length) return;
+    const med = t[Math.floor(t.length / 2)];
+    const clean = t.filter(x => x <= med * 1.10);
+    if (clean.length) out[c.startNumber] = clean.reduce((a, b) => a + b, 0) / clean.length;
+  });
+  return out;
+}
+
+function rmAssemble(classification, sessionLabel, summary){
+  const pitStopsByNumber = Object.fromEntries(classification.map(c => [c.startNumber, c._pitStops]));
+  const intervals = {};
+  classification.forEach(c => {
+    intervals[c.startNumber] = c.status === "DNS" ? "—" : c.position === 1 ? "Leader" : (c._gap || (c.lapsBehind ? `${c.lapsBehind} lap${c.lapsBehind === 1 ? "" : "s"}` : "—"));
+  });
+  const running = classification.filter(r => r.status !== "DNS");
+  return {
+    source: "redmist",
+    sessionId: sessionLabel, fetchedAt: summary?.built_at || new Date().toISOString(),
+    classification, pitStopsByNumber, intervals,
+    overview: {
+      entries: classification.length,
+      finishers: classification.filter(r => r.status === "Normal").length,
+      dnf: classification.filter(r => r.status === "DNF").length,
+      dns: classification.filter(r => r.status === "DNS").length,
+      totalLaps: classification.length ? Math.max(...classification.map(r => r.numberOfLaps)) : 0,
+      totalPitStops: Object.values(pitStopsByNumber).reduce((a, b) => a + b, 0),
+      carsOnLeadLap: running.filter(r => r.lapsBehind === 0).length,
+    },
+    cautions: summary?.cautions || [],
+    redFlags: summary?.red_flags || [],
+    lapsLed: summary?.laps_led || null,
+    bestStint: summary?.best_stint || null,
+    longestStint: summary?.longest_stint || null,
+    avgLapByNumber: summary?.avg_laps || {},
+    raceClasses: ["GTO"],
+    reconstructedFromDb: false,
+  };
+}
+
+// Full build: reads laps + flag timeline, computes the overview, and (for
+// engineers) saves it to redmist_race_summary. Returns null if this race
+// has no Red Mist results.
+async function buildRedmistArchive(race, { save } = { save: false }){
+  const resultRows = await fetchRedmistResultRows(race);
+  if (!resultRows) return null;
+  const { event_id, session_id, session_name } = resultRows[0];
+  const classification = rmClassification(resultRows);
+
+  const [lapRows, periods] = await Promise.all([
+    fetchAllRows(() => supabase.from("redmist_live_laps")
+      .select("car_number, lap_number, lap_time_seconds, is_pit_lap, caution_lap, captured_at")
+      .eq("event_id", event_id).eq("session_id", session_id).eq("session_name", session_name)
+      .order("car_number").order("lap_number")),
+    fetchAllRows(() => supabase.from("redmist_flag_periods").select("flag, started_at, ended_at")
+      .eq("event_id", event_id).eq("session_id", session_id).eq("session_name", session_name)
+      .order("started_at")).catch(() => []), // table may not exist on older deploys
+  ]);
+
+  const lapsByPos = rmLapsByPos(classification, lapRows);
+  // Logged flag timeline when we have one; lap-based inference otherwise
+  // (races run before flag logging existed).
+  const flagSource = periods.length ? "flag_log" : "laps";
+  const { cautions, redFlags } = periods.length
+    ? rmFlagSummary(periods)
+    : { cautions: computeCautions(lapsByPos), redFlags: computeRedFlags(lapsByPos) };
+  const stints = computeStints(classification, lapsByPos, new Set(["GTO"]), 15);
+
+  const summary = {
+    race_id: String(race.id), event_id, session_id, session_name,
+    cautions, red_flags: redFlags,
+    laps_led: computeLapsLed(classification, lapsByPos),
+    best_stint: stints.best, longest_stint: stints.longest,
+    avg_laps: rmAvgLaps(classification, lapsByPos),
+    flag_source: flagSource,
+    built_at: new Date().toISOString(),
+  };
+  if (save){
+    const { error } = await supabase.from("redmist_race_summary").upsert(summary, { onConflict: "race_id" });
+    if (error) console.error("[rm-archive] saving summary failed:", error);
+  }
+  return rmAssemble(classification, session_name, summary);
+}
+
+// Opening an archived race: saved results + saved summary, no lap reads.
+// Falls back to a full build if the summary was never saved, and returns
+// null if there are no Red Mist results at all (MyLaps-era races).
+async function loadRedmistArchive(race){
+  const resultRows = await fetchRedmistResultRows(race);
+  if (!resultRows) return null;
+  const { data: summary, error } = await supabase.from("redmist_race_summary").select("*").eq("race_id", String(race.id)).maybeSingle();
+  if (error) console.error("[rm-archive] summary fetch failed:", error);
+  if (!summary) return buildRedmistArchive(race, { save: state.isEngineer });
+  return rmAssemble(rmClassification(resultRows), resultRows[0].session_name, summary);
+}
+
+// Archived race open: Red Mist first, MyLaps saved import as the fallback
+// for races archived before Red Mist results existed.
+async function loadArchiveResults(race){
+  try {
+    const rm = await loadRedmistArchive(race);
+    if (rm) return rm;
+  } catch (e){
+    console.error("[rm-archive] load failed, falling back to MyLaps:", e);
+  }
+  return loadMylapsResultsFromSupabase(race.id);
+}
+// =============== end Red Mist race archive ===============
+
 // Loads real pit-in/pit-out cycle data from Red Mist Timing for this race,
 // when available (see the redmist-backfill project: pulls Red Mist's
 // LoadCarLaps data, derives pit cycles, and upserts into redmist_pit_cycles
@@ -3003,8 +3260,10 @@ function renderMylapsPanel(race){
             Race results are not official.
           </p>
         ` : !state.mylapsImporting ? `
-          <div style="display:flex;justify-content:center;">
-            <button class="btn-gold" style="display:inline-flex;padding:10px 18px;" data-act="mylaps-open">${icon("timer",14)} Import MyLaps Results</button>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:10px;">
+            <button class="btn-gold" style="display:inline-flex;padding:10px 18px;" data-act="rm-archive-build">${icon("timer",14)} Build Results from Red Mist</button>
+            <button class="link-muted" style="font-size:11px;" data-act="mylaps-open">or import from MyLaps</button>
+            ${state.mylapsError ? `<p style="color:${T.red};font-size:12px;margin:0;">${esc(state.mylapsError)}</p>` : ""}
           </div>
         ` : `
           <div class="mylaps-import-box">
@@ -3060,7 +3319,9 @@ function renderMylapsPanel(race){
     <div class="mylaps-panel fade-in">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
         <span class="eyebrow" style="color:${T.gold};">Race Overview</span>
-        ${state.isEngineer ? `<button class="link-muted" data-act="mylaps-reimport" style="font-size:11px;">${icon("rotate",12)} Re-import</button>` : ""}
+        ${state.isEngineer ? (mylaps.source === "redmist"
+          ? `<button class="link-muted" data-act="rm-archive-build" style="font-size:11px;">${icon("rotate",12)} Rebuild</button>`
+          : `<button class="link-muted" data-act="mylaps-reimport" style="font-size:11px;">${icon("rotate",12)} Re-import</button>`) : ""}
       </div>
 
       <div class="mylaps-overview-grid">
@@ -3357,6 +3618,9 @@ function renderLiveStandingsPanel(race){
     // Not live: a finished race shows its saved results above qualifying.
     return savedResultsPanel(race) + renderQualifyingPanels(race);
   }
+  // Attached to a Race nobody has turned a lap in yet, but this plan
+  // already has saved results — show those rather than an empty table.
+  if (!liveLeaderLaps(race) && race.raceResults?.rows?.length) return savedResultsPanel(race);
   if (isCheckered()){
     return renderFinalResultsPanel(race, race.redmistLive?.fullField || [], race.redmistLive?.stopCountsByCarNumber || {}, state.liveSession?.name);
   }
@@ -3446,7 +3710,9 @@ function mylapsCarHeaderBlock(car){
         ${tile("Finish", `P${m.positionInClass || m.position}`, statusBadge || null)}
         ${tile("Overall Position", `P${m.position}`)}
         ${tile("Fastest Lap", m.bestTime && m.bestTime!=="00.000" ? esc(m.bestTime) : "—")}
-        ${tile("Highest Speed Avg", m.bestSpeed ? `${m.bestSpeed.toFixed(1)} mph` : "—")}
+        ${race.mylaps.source === "redmist"
+          ? tile("Average Lap", race.mylaps.avgLapByNumber?.[car.number] ? mylapsFmtTime(race.mylaps.avgLapByNumber[car.number]) : "—", "Green-flag laps")
+          : tile("Highest Speed Avg", m.bestSpeed ? `${m.bestSpeed.toFixed(1)} mph` : "—")}
         ${tile("Pit Stops", m.pitStops)}
         ${tile("Laps Completed", m.numberOfLaps)}
       </div>
@@ -4291,7 +4557,7 @@ async function handleAction(act, el){
         if (full.status === "archived") state.mylapsAutoLoading = true;
         navPush(); openRace(full);
         if (full.status === "archived"){
-          loadMylapsResultsFromSupabase(raceId).then(mylaps=>{
+          loadArchiveResults(state.races.find(r=>r.id===raceId) || full).then(mylaps=>{
             const r = state.races.find(r=>r.id===raceId);
             if (r && mylaps) r.mylaps = mylaps;
             state.mylapsAutoLoading = false;
@@ -4455,6 +4721,20 @@ async function handleAction(act, el){
     }
     case "archiveRace":
       await archiveRace(); break;
+    case "rm-archive-build": {
+      const race = state.races.find(r=>r.id===state.currentRaceId);
+      if (!race) break;
+      state.mylapsAutoLoading = true; state.mylapsError = null; render();
+      try {
+        const built = await buildRedmistArchive(race, { save: true });
+        if (built) race.mylaps = built;
+        else state.mylapsError = "No Red Mist results are saved for this race.";
+      } catch (e){
+        console.error("[rm-archive] rebuild failed:", e);
+        state.mylapsError = "Building results from Red Mist failed — check the console.";
+      }
+      state.mylapsAutoLoading = false; render(); break;
+    }
     case "mylaps-open":
       state.mylapsImporting = true; state.mylapsError = null; render(); break;
     case "mylaps-cancel":
@@ -5250,6 +5530,18 @@ async function archiveRace(){
     raceInList.status = "archived";
     raceInList.cars = state.plan.carPlans.map(cp=>({ ...cp.car }));
   }
+  // Results come straight from Red Mist — no MyLaps import step. Built and
+  // saved now so every viewer gets the same overview from here on.
+  state.mylapsAutoLoading = true;
+  render();
+  try {
+    const built = raceInList ? await buildRedmistArchive(raceInList, { save: true }) : null;
+    if (built) raceInList.mylaps = built;
+    else console.warn("archiveRace: no Red Mist results saved for this race — MyLaps import is still available");
+  } catch (e){
+    console.error("archiveRace: building Red Mist results failed:", e);
+  }
+  state.mylapsAutoLoading = false;
   render();
 }
 
