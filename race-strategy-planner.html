@@ -257,6 +257,13 @@
   .stint-table .row-live .dot{background:var(--red)!important;animation:livePulse 1.2s ease-in-out infinite;}
   .stint-table .row.row-live{position:relative;background:rgba(226,68,92,0.08);}
   .stint-table .row.row-live::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--red);}
+  /* Checkered variant of the live indicators — shown from the checkered
+     flag until the race is archived. Static (no pulse) checkered square. */
+  .chk-flag{display:inline-block;width:8px;height:8px;border-radius:1px;flex-shrink:0;background:repeating-conic-gradient(#fff 0 25%, #1b1f27 0 50%) 0 0/4px 4px;box-shadow:0 0 0 1px rgba(255,255,255,0.35);}
+  .timeline .seg.seg-checkered .live-dot{animation:none!important;border-radius:1px;background:repeating-conic-gradient(#fff 0 25%, #1b1f27 0 50%) 0 0/4px 4px!important;}
+  .stint-table .row-live.row-checkered .dot{animation:none!important;border-radius:1px;background:repeating-conic-gradient(#fff 0 25%, #1b1f27 0 50%) 0 0/4px 4px!important;}
+  .stint-table .row.row-live.row-checkered{background:rgba(255,255,255,0.05);}
+  .stint-table .row.row-live.row-checkered::before{background:var(--text);}
   /* In-pit variant of the live indicators — same shapes, blue accent */
   .timeline .seg.seg-pit .live-dot{background:var(--blue)!important;}
   .stint-table .row-live.row-pit .dot{background:var(--blue)!important;}
@@ -676,6 +683,7 @@ let state = {
   // Home's race tiles can show a pulsating LIVE badge on the matching
   // race even when no one has opened it. See subscribeHomeLiveWatch().
   homeLive: { eventId: null, watchEventId: null, flag: null, timeToGo: null, lapsToGo: null },
+  finishedRaceIds: new Set(), // plans with saved Red Mist final results (took the checkered) — see loadFinishedRaceIds()
   liveSession: null, // { id, name, type } of the attached Red Mist session — scopes every live query and drives header + standings mode // eventId = event whose SESSION is live (drives badge + data); watchEventId = event Red Mist lists as live (may be between sessions)
 };
 
@@ -1722,6 +1730,14 @@ async function loadRedmistLiveState(raceId){
   if (sessionErr){ console.error("[redmist-live] session lookup failed:", sessionErr); return { race, carNumbers }; }
   console.log("[redmist-live] redmist_live_session row:", session);
   if (!isSessionRowLive(session)){ console.log("[redmist-live] event", watchEventId, "is listed live but no session is running (is_live false or row stale) — not attaching yet"); return { race, carNumbers }; }
+  // This plan already has a finished race saved. Only re-attach to THAT
+  // session (still showing the checkered); any other session belongs to a
+  // different plan, and attaching would overwrite the final state.
+  const done = race.raceResults?.rows?.[0];
+  if (done && !(Number(session.session_id) === Number(done.session_id) && session.session_name === done.session_name)){
+    console.log("[redmist-live] plan already finished in", done.session_name, "— not attaching to live session", session.session_name);
+    return { race, carNumbers };
+  }
   state.redmistEventId = watchEventId;
   state.liveSession = sessionKeyOf(session);
   // Fresh per-session container — nothing from a previous session carries over.
@@ -2048,13 +2064,28 @@ function liveCarStatus(pos, leaderLaps){
   // shows as In Pit (blue, pulsing — same look as our own cars' IN PIT
   // indicator) rather than Inactive. Only cars stopped OUT on track, or
   // that Red Mist marks stale, fall through to Inactive.
-  if (pos.in_pit === true) return { label: "In Pit", tone: "pit" };
+  // After the checkered every car ends up in the pits, so In Pit means
+  // nothing there — skipped until the race is archived.
+  if (pos.in_pit === true && !isRaceFinished(state.races.find(r => r.id === state.currentRaceId))) return { label: "In Pit", tone: "pit" };
   if (pos.is_stale === true) return { label: "Inactive", tone: "dnf" };
   if (pos.last_lap_at && Number(state.homeLive.flag) !== 3){
-    const mins = (Date.now() - new Date(pos.last_lap_at).getTime()) / 60000;
+    const mins = (liveNowMs() - new Date(pos.last_lap_at).getTime()) / 60000;
     if (mins >= INACTIVE_AFTER_MIN) return { label: `Inactive ${Math.floor(mins)}m`, tone: "dnf" };
   }
   return null;
+}
+// "Now" for the no-lap timer. In the finished (post-checkered) view this is
+// the moment the session's data stopped, not the wall clock — otherwise,
+// hours later, every car would read Inactive.
+function liveNowMs(){
+  const r = state.races.find(r => r.id === state.currentRaceId);
+  return r?.redmistLive?.finishedAt || Date.now();
+}
+function isRaceFinished(race){
+  if (!race || race.status === "archived") return false;
+  return !!race.redmistLive?.finished || !!race.raceResults?.rows?.length
+    || state.finishedRaceIds.has(String(race.id))
+    || (isLiveAttached(race) && state.liveSession?.type === "Race" && isCheckered());
 }
 function liveLeaderLaps(race){
   const field = race?.redmistLive?.fullField || [];
@@ -2065,6 +2096,12 @@ function liveLeaderLaps(race){
 // header badge, the timeline card and the stint-table row (red ON TRACK /
 // blue IN PIT).
 function liveIndicator(race, carNumber){
+  // From the checkered until the race is archived every indicator reads
+  // CHECKERED — static, no pulse — whether the page is still attached to
+  // the finished session or showing its saved final state.
+  if (race?.redmistLive?.finished || (isLiveAttached(race) && state.liveSession?.type === "Race" && isCheckered())){
+    return { inPit: false, checkered: true, color: "var(--text)", wash: "rgba(255,255,255,0.08)", label: "CHECKERED" };
+  }
   const pos = race?.redmistLive?.byCarNumber?.[carNumber];
   const inPit = pos?.in_pit === true;
   return inPit
@@ -2088,14 +2125,15 @@ function liveStatusBadge(st, inline = true){
 // live. Built from data already loaded for the standings table
 // (fullField) plus the session row (flag / time to go) — no new queries.
 function renderLiveRaceSummary(race){
-  if (!(isLiveAttached(race) && state.liveSession?.type === "Race")) return "";
+  const finishedView = !!race.redmistLive?.finished;
+  if (!finishedView && !(isLiveAttached(race) && state.liveSession?.type === "Race")) return "";
   const field = race.redmistLive?.fullField || [];
   if (!field.length) return "";
 
   const leaderLaps = liveLeaderLaps(race);
   const leader = field.find(r => r.overall_position === 1)
     || field.find(r => (r.last_lap_completed || 0) === leaderLaps);
-  const flag = state.homeLive.flag;
+  const flag = finishedView ? 5 : state.homeLive.flag;
   const finished = Number(flag) === 5;
   // The lap the leader is ON, not the last one completed — except after
   // the checkered, where the final completed lap is the answer.
@@ -2128,10 +2166,10 @@ function renderLiveRaceSummary(race){
 
   return `
     <div class="live-summary-grid">
-      ${tile("Current Lap", esc(String(currentLap)), state.homeLive.timeToGo ? `${esc(String(state.homeLive.timeToGo))} to go` : null)}
+      ${tile(finished ? "Final Lap" : "Current Lap", esc(String(currentLap)), !finishedView && state.homeLive.timeToGo ? `${esc(String(state.homeLive.timeToGo))} to go` : null)}
       ${tile("Leader", leader ? `#${esc(leader.car_number)} <span style="font-size:13px;color:var(--textMuted);">${esc(leader.team_name || "")}</span>` : "—", classLeaders || null)}
       ${tile("Flag", `<span style="display:inline-flex;align-items:center;gap:7px;"><span style="width:9px;height:9px;border-radius:999px;background:${flagColor};flex-shrink:0;${finished ? "" : "animation:livePulse 1.2s ease-in-out infinite;"}"></span><span style="color:${flagColor}">${flagLabel(flag)}</span></span>`)}
-      ${tile("Cars on Track", `${onTrack}<span style="font-size:13px;color:var(--textMuted);"> / ${field.length}</span>`, countSub || null)}
+      ${tile(finished ? "Running at Finish" : "Cars on Track", `${onTrack}<span style="font-size:13px;color:var(--textMuted);"> / ${field.length}</span>`, countSub || null)}
     </div>`;
 }
 
@@ -2205,7 +2243,11 @@ async function loadHomeLiveStatus(){
     unsubscribeRedmistLive();
     unsubscribeFullFieldChannel();
     if (raceOpen) loadQualifyingResults(state.races.find(r => r.id === state.currentRaceId));
-    if (raceOpen) loadRaceResults(state.races.find(r => r.id === state.currentRaceId));
+    if (raceOpen){
+      const r = state.races.find(r => r.id === state.currentRaceId);
+      loadRaceResults(r).then(() => loadFinishedRaceState(r));
+    }
+    loadFinishedRaceIds();
   }
 
   scheduleRender();
@@ -2889,12 +2931,17 @@ function raceTile(race){
   const isLive = race.status!=="archived" && race.redmistEventId != null && state.homeLive.eventId != null
     && String(race.redmistEventId) === String(state.homeLive.eventId);
   if (race.status!=="archived") console.log("[home-live] tile check for", race.eventName, "— race.redmistEventId:", race.redmistEventId, typeof race.redmistEventId, "vs homeLive.eventId:", state.homeLive.eventId, typeof state.homeLive.eventId, "-> isLive:", isLive); // TEMP debug
+  const finished = isRaceFinished(race);
   const liveColor = isLive ? flagToLiveColor(state.homeLive.flag) : null;
   return `
     <div class="race-tile" data-act="open-race" data-id="${race.id}" role="button" tabindex="0" style="border-color:${accent};">
       <div class="strip" style="background:var(--panelRaised);">
         ${trackStripContent(race.track, accent)}
-        ${isLive ? `
+        ${finished ? `
+        <div class="live-badge" style="background:rgba(10,12,16,0.72);border:1px solid rgba(255,255,255,0.55);">
+          <span class="chk-flag"></span>
+          <span class="lbl" style="color:var(--text);">CHECKERED</span>
+        </div>` : isLive ? `
         <div class="live-badge" style="background:rgba(10,12,16,0.72);border:1px solid ${liveColor};">
           <span class="dot" style="background:${liveColor};"></span>
           <span class="lbl" style="color:${liveColor};">LIVE</span>
@@ -2904,7 +2951,7 @@ function raceTile(race){
       <div class="body">
         <div class="name">${esc(race.eventName)}</div>
         <div class="meta">${esc(race.track||"No track set")} · ${carsCount} car${carsCount!==1?"s":""}</div>
-        <div class="meta" style="margin-top:2px;color:${race.status==="archived"?T.gold:T.textFaint}">${race.status==="archived"?`Archived · ${formatDateCompact(race.eventDateISO)}`:"Planned"}</div>
+        <div class="meta" style="margin-top:2px;color:${race.status==="archived"?T.gold:T.textFaint}">${race.status==="archived"?`Archived · ${formatDateCompact(race.eventDateISO)}`:finished?"Finished · not yet archived":"Planned"}</div>
       </div>
       ${state.isEngineer ? `<button class="dup" data-act="duplicate-race" data-id="${race.id}" title="Duplicate this race" onclick="event.stopPropagation()">${icon("copy",12)}</button>` : ""}
     </div>`;
@@ -3187,6 +3234,7 @@ function renderPlan(){
       ${archived ? renderMylapsPanel(race) : ""}
 
       ${!archived ? renderLiveRaceSummary(race) : ""}
+      ${!archived ? renderFinalStandingsTop(race) : ""}
 
       <div style="display:flex;flex-direction:column;gap:40px;margin-top:24px;">
         ${sortedCarPlans.map(cp=>carPlanSection(cp, plan, archived)).join("")}
@@ -3450,6 +3498,44 @@ function pickResultSession(rows, race){
   return (dated.length ? dated : groups).sort((a, b) => b.at - a.at)[0];
 }
 
+// Which plans have saved final results — drives the CHECKERED badge on the
+// Home tiles without opening each race.
+async function loadFinishedRaceIds(){
+  const { data, error } = await supabase.from("redmist_race_results").select("race_id").not("race_id", "is", null);
+  if (error){ console.error("[race-results] finished-race lookup failed:", error); return; }
+  state.finishedRaceIds = new Set((data || []).map(r => String(r.race_id)));
+  scheduleRender();
+}
+
+// Post-checkered, pre-archive view. When the plan isn't attached to a
+// live session but has saved results, load that session's final rows so
+// the car tiles, summary strip and indicators stay exactly as they were
+// at the flag — until the race is archived.
+async function loadFinishedRaceState(race){
+  const rr = race?.raceResults;
+  if (!rr?.rows?.length || race.status === "archived" || isLiveAttached(race)) return;
+  const { event_id, session_id, session_name } = rr.rows[0];
+  const carNumbers = (race.cars || []).map(c => c.number).filter(Boolean);
+  const scope = q => q.eq("event_id", event_id).eq("session_id", session_id).eq("session_name", session_name);
+  const [pos, stats, cons, stops] = await Promise.all([
+    scope(supabase.from("redmist_live_positions").select("*")),
+    scope(supabase.from("redmist_current_stint_stats").select("*")).in("car_number", carNumbers),
+    scope(supabase.from("redmist_current_stint_consistency").select("*")).in("car_number", carNumbers),
+    scope(supabase.from("redmist_live_pit_stops").select("car_number")),
+  ]);
+  if (pos.error){ console.error("[finished] positions fetch failed:", pos.error); return; }
+  if (isLiveAttached(race)) return; // a live session attached while we were fetching — it wins
+  const fullField = pos.data || [];
+  const byCarNumber = {}, statsByCarNumber = {}, consistencyByCarNumber = {}, stopCountsByCarNumber = {};
+  fullField.forEach(r => { if (carNumbers.includes(r.car_number)) byCarNumber[r.car_number] = r; });
+  (stats.data || []).forEach(r => { statsByCarNumber[r.car_number] = r; });
+  (cons.data || []).forEach(r => { consistencyByCarNumber[r.car_number] = r; });
+  (stops.data || []).forEach(r => { stopCountsByCarNumber[r.car_number] = (stopCountsByCarNumber[r.car_number] || 0) + 1; });
+  const finishedAt = fullField.reduce((m, r) => Math.max(m, new Date(r.fetched_at || 0).getTime()), 0) || rr.checkeredAt || Date.now();
+  race.redmistLive = { byCarNumber, statsByCarNumber, consistencyByCarNumber, fullField, stopCountsByCarNumber, finished: true, finishedAt };
+  scheduleRender();
+}
+
 // Saved final results for this race plan (written by the poller at the
 // checkered — see redmist_race_results). Matched by race_id; falls back to
 // the linked event's Race session(s) for rows written before the plan was
@@ -3576,15 +3662,23 @@ function renderFinalResultsPanel(race, rows, stopCounts, subtitle){
     const isOurs = ourNumbers.has(r.car_number);
     const status = finalResultStatus(r, leaderLaps);
     const badge = status ? `<span class="mylaps-badge ${status === "DNS" ? "dns" : "dnf"}">${esc(status)}</span>` : "";
-    const gap = r.overall_position === 1 ? "Winner" : (r.overall_diff || r.overall_gap || "—");
+    // Class P1–P3 (cars that started) get a gold / silver / bronze trophy
+    // in the Class column — every class's winner and podium, not just the
+    // overall leader's.
+    const cp = Number(r.class_position);
+    const started = status !== "DNS" && (r.last_lap_completed || 0) > 0;
+    const podium = started && cp >= 1 && cp <= 3 ? podiumColor(cp) : null;
+    // Gap to the overall leader for every car, class winners included —
+    // the gold trophy in the Class column is what marks each class winner.
+    const gap = started ? esc(r.overall_diff || r.overall_gap || "—") : "—";
     return `<tr style="${isOurs?`background:${T.gold}17;border-left:2px solid ${T.gold};`:""}">
       <td class="num">P${r.overall_position ?? "—"}</td>
       <td><span class="num">#${esc(r.car_number)}</span> - <span style="font-weight:600;">${esc(r.team_name || "—")}</span></td>
       <td class="num">${badge || fmtLapTime(rmTimeToSeconds(r.best_time))}</td>
-      <td class="num">${esc(gap)}</td>
+      <td class="num">${gap}</td>
       <td class="num">${r.last_lap_completed ?? 0}</td>
       <td class="stops">${stopCounts[r.car_number] ?? 0}</td>
-      <td class="mylaps-cls">${esc(r.class || "—")}${r.class_position != null ? ` <span style="color:var(--textFaint);">P${r.class_position}</span>` : ""}</td>
+      <td class="mylaps-cls" style="white-space:nowrap;">${esc(r.class || "—")}${r.class_position ? ` <span style="color:${podium || "var(--textFaint)"};${podium ? "font-weight:700;" : ""}">${podium ? `<span style="display:inline-flex;vertical-align:-2px;margin-right:2px;">${icon("trophy",12)}</span>` : ""}P${r.class_position}</span>` : ""}</td>
     </tr>`;
   }).join("");
   return `
@@ -3609,7 +3703,25 @@ function savedResultsPanel(race){
   return renderFinalResultsPanel(race, rows, stops, rr.sessionName);
 }
 
+// Once the race has taken the checkered, Final Results move up under the
+// race summary tiles (above the first car tile) and the lower standings
+// slot — including the qualifying tables — is dropped. Source: the live
+// full field while still attached at the flag, otherwise the saved results.
+function renderFinalStandingsTop(race){
+  if (!isRaceFinished(race)) return "";
+  let panel = "";
+  if (isLiveAttached(race) && state.liveSession?.type === "Race" && isCheckered()){
+    panel = renderFinalResultsPanel(race, race.redmistLive?.fullField || [], race.redmistLive?.stopCountsByCarNumber || {}, state.liveSession?.name);
+  } else if (race.raceResults?.rows?.length){
+    panel = savedResultsPanel(race);
+  } else if (race.redmistLive?.finished && race.redmistLive.fullField?.length){
+    panel = renderFinalResultsPanel(race, race.redmistLive.fullField, race.redmistLive.stopCountsByCarNumber || {}, null);
+  }
+  return panel ? `<div style="margin-top:24px;">${panel}</div>` : "";
+}
+
 function renderLiveStandingsPanel(race){
+  if (isRaceFinished(race)) return ""; // shown at the top instead — see renderFinalStandingsTop()
   // Gate on whether this race has live timing AT ALL (same signal
   // carPlanSection uses for hasLiveTiming) — the full-field data itself
   // now loads automatically (see loadRedmistLiveState/subscribeRedmistLiveChannel),
@@ -3960,7 +4072,7 @@ function liveTimingBlock(car){
     <div class="mylaps-header-block">
       <div class="summary-driver" style="margin-bottom:6px;">
         <span></span>
-        <span class="fin-label" style="margin:0;">${icon("flag",12)} Live Timing</span>
+        <span class="fin-label" style="margin:0;">${liveIndicator(race, car.number).checkered ? `<span class="chk-flag" style="margin-right:4px;vertical-align:-1px;"></span> Final Timing` : `${icon("flag",12)} Live Timing`}</span>
       </div>
       <div class="mylaps-carstat-grid live-carstat-grid">
         ${tile("In Seat", esc(pos.driver_name || "—"))}
@@ -4045,10 +4157,12 @@ function carPlanSection(cp, plan, archived){
           <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;white-space:nowrap;">
             ${hasLiveTiming ? `
               <span style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;background:${liveInd.wash};">
-                <span style="width:6px;height:6px;border-radius:999px;background:${liveInd.color};animation:livePulse 1.2s ease-in-out infinite;"></span>
-                <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:0.05em;color:var(--text);">${liveInd.inPit ? `In Pit · P${livePos.class_position ?? "—"}` : `Currently P${livePos.class_position ?? "—"}`}</span>
+                ${liveInd.checkered
+                  ? `<span class="chk-flag"></span>`
+                  : `<span style="width:6px;height:6px;border-radius:999px;background:${liveInd.color};animation:livePulse 1.2s ease-in-out infinite;"></span>`}
+                <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:0.05em;color:var(--text);">${liveInd.checkered ? `Finished P${livePos.class_position ?? "—"}` : liveInd.inPit ? `In Pit · P${livePos.class_position ?? "—"}` : `Currently P${livePos.class_position ?? "—"}`}</span>
               </span>
-              ${(() => { const st = liveCarStatus(livePos, liveLeaderLaps(race)); return st && st.tone !== "pit" ? liveStatusBadge(st) : ""; })()}
+              ${(() => { const st = liveCarStatus(livePos, liveLeaderLaps(race)); return st && st.tone !== "pit" ? liveStatusBadge(liveInd.checkered && /^inactive/i.test(st.label) ? { label: "DNF", tone: "dnf" } : st) : ""; })()}
             ` : ""}
             ${(() => {
               // Positions-gained badge from Red Mist's own calc, once live
@@ -4103,7 +4217,7 @@ function carPlanSection(cp, plan, archived){
             ? `<span style="color:${liveInd.color};font-weight:600;">${liveInd.label}</span>`
             : (s.finished ? formatDuration(s.lengthMin) : formatTimeUltraCompact(s.start));
           const tmStyle = isLive ? `white-space:normal;overflow:visible;line-height:1.1;` : "";
-          return `<div class="seg ${isLive?'seg-live':''} ${isLive && liveInd.inPit?'seg-pit':''}" data-car="${car.id}" data-stint="${i}" data-color="${color}" data-start-iso="${s.start.toISOString()}" style="flex-grow:${grow};flex-basis:0;background:rgba(${r},${g},${b},0.14);border-top-color:${color};${liveStyle}">
+          return `<div class="seg ${isLive?'seg-live':''} ${isLive && liveInd.inPit?'seg-pit':''} ${isLive && liveInd.checkered?'seg-checkered':''}" data-car="${car.id}" data-stint="${i}" data-color="${color}" data-start-iso="${s.start.toISOString()}" style="flex-grow:${grow};flex-basis:0;background:rgba(${r},${g},${b},0.14);border-top-color:${color};${liveStyle}">
             <span class="drv" title="${esc(s.driver||'TBD')}">${esc(timelineAbbrev[s.driver]||s.driver||"TBD")}<span class="${isLive?'live-dot':'dot'}" style="background:${isLive?liveInd.color:color};"></span></span>
             <span class="tm" style="${tmStyle}">${tmContent}</span>
           </div>`;
@@ -4189,7 +4303,7 @@ function carPlanSection(cp, plan, archived){
             : `<span></span>`;
 
           return `
-          <div class="row ${isLiveRow?'row-live':''} ${isLiveRow && liveInd.inPit?'row-pit':''} ${isFinishedRow?'row-finished':''}" data-car="${car.id}" data-stint="${i}">
+          <div class="row ${isLiveRow?'row-live':''} ${isLiveRow && liveInd.inPit?'row-pit':''} ${isLiveRow && liveInd.checkered?'row-checkered':''} ${isFinishedRow?'row-finished':''}" data-car="${car.id}" data-stint="${i}">
             <span class="stint-ghost-num">${i+1}</span>
             ${driverCell}
             ${startCell}
@@ -4976,6 +5090,10 @@ async function openRace(race){
   // block anything, only the one-time data fetch does.
   let liveRace = null, liveCarNumbers = [];
   if (race.status !== "archived"){
+    // Saved results first: loadRedmistLiveState() uses them to refuse
+    // attaching a finished plan to some OTHER live session (e.g. Saturday's
+    // plan, still open, while Sunday's race is running).
+    await loadRaceResults(state.races.find(r => r.id === race.id) || race);
     const resolved = await loadRedmistLiveState(race.id);
     liveRace = resolved.race;
     liveCarNumbers = resolved.carNumbers;
@@ -5028,6 +5146,7 @@ async function openRace(race){
   else unsubscribeStintChanges();
 
   if (liveRace) subscribeRedmistLiveChannel(race.id, liveRace, liveCarNumbers);
+  if (race.status !== "archived" && !state.redmistEventId) loadFinishedRaceState(state.races.find(r => r.id === race.id) || race);
 }
 
 function addCarFromCatalog(def){
@@ -5530,6 +5649,7 @@ async function archiveRace(){
 
   state.currentStatus = "archived";
   const raceInList = state.races.find(r=>r.id===state.currentRaceId);
+  if (raceInList?.redmistLive?.finished) raceInList.redmistLive = null; // archived view takes over from here
   if (raceInList){
     raceInList.status = "archived";
     raceInList.cars = state.plan.carPlans.map(cp=>({ ...cp.car }));
@@ -5628,6 +5748,7 @@ function updateLiveHighlights(){
       const stint = cp.stints[idx];
       el.classList.toggle("seg-live", isLive);
       el.classList.toggle("seg-pit", isLive && ind.inPit);
+      el.classList.toggle("seg-checkered", isLive && !!ind.checkered);
       el.style.background = isLive ? ind.wash : `rgba(${r},${g},${b},0.14)`;
       el.style.borderColor = isLive ? ind.color : "transparent";
       if (!isLive) el.style.borderTopColor = color; // border-color shorthand above also reset the top accent stripe — reassert it
@@ -5659,6 +5780,7 @@ function updateLiveHighlights(){
       const isLive = idx === liveIdx;
       el.classList.toggle("row-live", isLive);
       el.classList.toggle("row-pit", isLive && ind.inPit);
+      el.classList.toggle("row-checkered", isLive && !!ind.checkered);
     });
   });
 }
@@ -5769,6 +5891,7 @@ async function bootIfAuthorized(){
   // life of the tab, independent of whether any race is currently open.
   loadHomeLiveStatus();
   subscribeHomeLiveWatch();
+  loadFinishedRaceIds();
 
   // Safety net / upgrade path: picks up a session that lands after the
   // initial render (e.g. a magic-link click that opened this same URL,
