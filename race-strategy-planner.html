@@ -336,6 +336,15 @@
   .mylaps-header-block{margin-top:0;}
   .mylaps-carstat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:16px;}
   .live-summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:24px;}
+  .live-carstat-grid{grid-template-columns:repeat(3,1fr);}
+  .live-carstat-grid .mylaps-carstat-tile{min-width:0;}
+  .live-carstat-grid .mylaps-carstat-value{overflow-wrap:anywhere;}
+  @media(max-width:480px){
+    .live-carstat-grid{gap:6px;}
+    .live-carstat-grid .mylaps-carstat-tile{padding:8px 7px 7px;}
+    .live-carstat-grid .mylaps-carstat-value{font-size:15px;}
+    .live-carstat-grid .mylaps-stat-sub{font-size:9px;}
+  }
   @media(max-width:640px){ .live-summary-grid{grid-template-columns:repeat(2,1fr);} }
   .mylaps-carstat-tile{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 10px 8px;}
   .mylaps-carstat-value{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:17px;line-height:1;color:var(--text);}
@@ -3316,6 +3325,13 @@ function liveTimingBlock(car){
   // zero (no positions gained or lost) is hidden too, same as the delta
   // badge elsewhere in the app — "+0"/"0" is just noise next to a plain
   // position number, worth showing only when something actually changed.
+  const tile = (label, value, sub) => `
+    <div class="mylaps-carstat-tile">
+      <div class="mylaps-stat-label">${label}</div>
+      <div class="mylaps-carstat-value">${value}</div>
+      ${sub ? `<div class="mylaps-stat-sub">${sub}</div>` : ""}
+    </div>`;
+
   const cpg = pos.class_positions_gained;
   const gainedLabel = (cpg==null || cpg===-999 || cpg===0) ? null : (cpg>0 ? `+${cpg}` : `${cpg}`);
   const gainedColor = cpg>0 ? T.green : cpg<0 ? T.red : T.textMuted;
@@ -3324,18 +3340,51 @@ function liveTimingBlock(car){
   // laps — scale-independent across tracks, unlike raw stdev. Thresholds
   // here are a starting assumption, not a validated figure the way the pit
   // duration fields are — worth revisiting once real session data is in.
+  // Shown as a standard deviation in seconds. The view exposes CV
+  // (stdev / mean), so stdev = CV × average lap — exact, no view change.
+  // Colour thresholds stay on CV so they hold across tracks of different
+  // lap lengths (1% / 2% ≈ 1.3s / 2.5s on a 2:06 lap).
   const cv = stats?.consistency_cv;
-  const consistencyLabel = cv==null ? "—" : `${(cv*100).toFixed(1)}%`;
+  const stdevSec = (cv!=null && stats?.avg_lap_seconds!=null) ? cv * stats.avg_lap_seconds : null;
+  const consistencyLabel = stdevSec==null ? "—" : `±${stdevSec.toFixed(3)}s`;
   const consistencyColor = cv==null ? null : cv>=0.02 ? T.red : cv>=0.01 ? T.amber : T.green;
 
-  const stintLabel = stats ? `${stats.stint_lap_count} lap${stats.stint_lap_count===1?"":"s"}` : "—";
+  // ---- In-class neighbours, lap count, class pace (from the full-field rows) ----
+  const field = race.redmistLive?.fullField || [];
+  const classCars = field.filter(r => r.class && r.class === pos.class);
+  const leaderLaps = liveLeaderLaps(race);
+  const neighbour = cp => cp==null ? null : classCars.find(r => r.class_position === cp);
+  const ahead = pos.class_position > 1 ? neighbour(pos.class_position - 1) : null;
+  const behind = neighbour((pos.class_position ?? 0) + 1);
+  // current_gap is Red Mist's InClassGap: time (or "N laps") to the next
+  // car ahead in class. So the gap to the car ahead is OUR current_gap,
+  // and the gap to the car behind is THEIR current_gap.
+  const neighbourTile = (label, r, gap) => {
+    if (!r) return tile(label, "—", label === "Car Ahead" && pos.class_position === 1 ? "Class leader" : null);
+    const st = liveCarStatus(r, leaderLaps);
+    const sub = [gap ? esc(gap) : null, esc(r.team_name || "")].filter(Boolean).join(" · ");
+    return tile(label, `#${esc(r.car_number)}${st ? liveStatusBadge(st) : ""}`, sub || null);
+  };
 
-  const tile = (label, value, sub) => `
-    <div class="mylaps-carstat-tile">
-      <div class="mylaps-stat-label">${label}</div>
-      <div class="mylaps-carstat-value">${value}</div>
-      ${sub ? `<div class="mylaps-stat-sub">${sub}</div>` : ""}
-    </div>`;
+  // Class Pace = median last lap of class cars that are actually running
+  // (not in the pit, not inactive), with laps over 115% of the class's
+  // best current lap dropped so pit-in/out laps don't drag it. Median
+  // rather than mean so one slow lap doesn't swing it. Sub-line compares
+  // this car's last lap to it.
+  const runningLaps = classCars
+    .filter(r => r.in_pit !== true && !liveCarStatus(r, leaderLaps))
+    .map(r => rmTimeToSeconds(r.last_lap_time)).filter(x => x != null);
+  const bestRunning = runningLaps.length ? Math.min(...runningLaps) : null;
+  const paceLaps = runningLaps.filter(x => x <= bestRunning * 1.15).sort((a,b)=>a-b);
+  const classPace = paceLaps.length >= 3
+    ? (paceLaps.length % 2 ? paceLaps[(paceLaps.length-1)/2] : (paceLaps[paceLaps.length/2-1] + paceLaps[paceLaps.length/2]) / 2)
+    : null;
+  const ourLast = rmTimeToSeconds(pos.last_lap_time);
+  const paceDelta = (classPace!=null && ourLast!=null && ourLast <= bestRunning * 1.15) ? ourLast - classPace : null;
+  const paceSub = paceDelta==null ? null
+    : `<span style="color:${paceDelta<=0?T.green:T.red}">${paceDelta<=0?"−":"+"}${Math.abs(paceDelta).toFixed(3)}s</span> this car`;
+
+  const stintLabel = stats ? `${stats.stint_lap_count} lap${stats.stint_lap_count===1?"":"s"}` : "—";
 
   return `
     <div class="mylaps-header-block">
@@ -3343,18 +3392,25 @@ function liveTimingBlock(car){
         <span></span>
         <span class="fin-label" style="margin:0;">${icon("flag",12)} Live Timing</span>
       </div>
-      <div class="mylaps-carstat-grid">
+      <div class="mylaps-carstat-grid live-carstat-grid">
         ${tile("In Seat", esc(pos.driver_name || "—"))}
         ${tile("Position", `P${pos.class_position ?? "—"}` + (gainedLabel ? ` <span style="font-size:13px;color:${gainedColor}">${gainedLabel}</span>` : ""))}
+        ${tile("Lap #", pos.last_lap_completed != null ? esc(String(pos.last_lap_completed)) : "—", pos.current_diff ? `${esc(pos.current_diff)} to class leader` : null)}
+
         ${tile("Last Lap", esc(trimLapTime(pos.last_lap_time)))}
         ${tile("Average Lap", stats ? fmtLapSeconds(stats.avg_lap_seconds) : "—")}
+        ${tile("Class Pace", classPace!=null ? fmtLapSeconds(classPace) : "—", paceSub)}
+
+        ${neighbourTile("Car Ahead", ahead, pos.current_gap)}
+        ${neighbourTile("Car Behind", behind, behind?.current_gap)}
         ${tile("Consistency", consistencyColor ? `<span style="color:${consistencyColor}">${consistencyLabel}</span>` : consistencyLabel)}
+
         ${tile("Stint", stintLabel)}
         ${tile("Last Pit", pos.last_lap_pitted!=null ? `Lap ${pos.last_lap_pitted}` : "—")}
         ${tile("Pit Time", pos.pit_duration_ms!=null ? `${(pos.pit_duration_ms/1000).toFixed(1)}s` : "—")}
       </div>
       <p style="font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.5;color:var(--textFaint);margin:0 0 16px;">
-        Live from Red Mist Timing. Average Lap / Consistency reset with each driver change.
+        Live from Red Mist Timing. Average Lap / Consistency reset with each driver change. Class Pace = median last lap of running ${esc(pos.class || "class")} cars.
       </p>
     </div>`;
 }
