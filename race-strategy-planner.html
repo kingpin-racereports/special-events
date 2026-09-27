@@ -1556,28 +1556,84 @@ function mergeFullFieldPositionRow(race, row){
 // swapping and swapping back as the rest of the batch landed. All live
 // data paths render through this: wait until the burst goes quiet, then
 // render the whole batch once.
-let liveRenderTimer = null;
-const LIVE_SETTLE_MS = 300;
+// Capped at LIVE_MAX_WAIT_MS so a steady stream of events (several
+// channels, one poll a second) can never keep pushing the render back.
+let liveRenderTimer = null, liveRenderFirstPending = 0;
+const LIVE_SETTLE_MS = 300, LIVE_MAX_WAIT_MS = 1000;
 function scheduleLiveRender(){
+  const now = Date.now();
+  if (!liveRenderFirstPending) liveRenderFirstPending = now;
   clearTimeout(liveRenderTimer);
-  liveRenderTimer = setTimeout(scheduleRender, LIVE_SETTLE_MS);
+  const wait = Math.max(0, Math.min(LIVE_SETTLE_MS, liveRenderFirstPending + LIVE_MAX_WAIT_MS - now));
+  liveRenderTimer = setTimeout(() => { liveRenderFirstPending = 0; scheduleRender(); }, wait);
 }
+
+// ---- Resync ----
+// Realtime only sends a row when it CHANGES. If the socket drops — most
+// often when the tab sits in the background (browsers throttle it until
+// the connection times out) — every change during the gap is lost, and a
+// car's row then stays stale until that car changes again. That's the
+// "1 lap" gap that a page refresh fixed. So re-fetch the full field (and
+// our cars' stats) whenever the channel (re)connects, when the tab comes
+// back into view, and every LIVE_RESYNC_MS as a backstop.
+const LIVE_RESYNC_MS = 20_000;
+let liveResyncTimer = null, liveResyncInFlight = false;
+async function resyncLiveData(reason){
+  const race = state.races.find(r => r.id === state.currentRaceId);
+  if (!race || !state.redmistEventId || liveResyncInFlight) return;
+  liveResyncInFlight = true;
+  try {
+    const carNumbers = (race.cars || []).map(c => c.number).filter(Boolean);
+    await Promise.all([
+      loadRedmistFullField(race, state.redmistEventId, /*skipRender=*/true),
+      ...carNumbers.map(n => refreshRedmistCar(race, n, /*skipRender=*/true)),
+    ]);
+    // Full-field rows are the fresher copy of our own cars' positions.
+    (race.redmistLive?.fullField || []).forEach(r => {
+      if (carNumbers.includes(r.car_number)) race.redmistLive.byCarNumber[r.car_number] = r;
+    });
+    scheduleLiveRender();
+  } catch (e){
+    console.error("[redmist-live] resync failed (" + reason + "):", e);
+  } finally {
+    liveResyncInFlight = false;
+  }
+}
+function startLiveResync(){
+  if (liveResyncTimer) return;
+  liveResyncTimer = setInterval(() => { if (!document.hidden) resyncLiveData("interval"); }, LIVE_RESYNC_MS);
+}
+function stopLiveResync(){
+  clearInterval(liveResyncTimer); liveResyncTimer = null;
+}
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && state.redmistEventId) resyncLiveData("tab visible");
+});
 
 function subscribeFullFieldChannel(raceId, race, eventId){
   if (fullFieldChannel) return; // idempotent — toggling the panel open twice shouldn't double-subscribe
   fullFieldChannel = supabase
     .channel(`redmist-fullfield-${raceId}`)
+    // Resolve the race at event time, not subscribe time — startApp()
+    // replaces the race objects on a tab-focus re-auth.
     .on('postgres_changes', { event: '*', schema: 'public', table: 'redmist_live_positions', filter: `event_id=eq.${eventId}` }, payload => {
-      mergeFullFieldPositionRow(race, payload.new);
+      mergeFullFieldPositionRow(state.races.find(r => r.id === raceId) || race, payload.new);
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'redmist_live_pit_stops', filter: `event_id=eq.${eventId}` }, () => {
-      refreshFullFieldStopCounts(race, eventId);
+      refreshFullFieldStopCounts(state.races.find(r => r.id === raceId) || race, eventId);
     })
-    .subscribe();
+    .subscribe((status) => {
+      // Fires on the first connect AND on every automatic reconnect —
+      // anything that changed while disconnected was never delivered.
+      if (status === "SUBSCRIBED") resyncLiveData("channel subscribed");
+      else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") console.warn("[redmist-live] full-field channel", status);
+    });
+  startLiveResync();
 }
 
 function unsubscribeFullFieldChannel(){
   if (fullFieldChannel){ supabase.removeChannel(fullFieldChannel); fullFieldChannel = null; }
+  stopLiveResync();
 }
 
 // ---- Live mirror of server-side stint automation (Phase 1) ----
@@ -2197,7 +2253,17 @@ function liveryDiv(accent){
 function trackSlug(name){
   return (name||"").toLowerCase().trim().replace(/[^a-z0-9]+/g,"-").replace(/(^-+|-+$)/g,"");
 }
+// Image paths that 404'd this session. The fallback used to happen only
+// in the DOM (onerror swaps the <img> for the placeholder), so the next
+// render emitted the <img> again, it failed again, and got swapped again
+// — on a live race that's once a second, which was the flickering car
+// image. Remembering the miss lets every later render emit the
+// placeholder directly, so the markup matches what's already on screen.
+const missingImages = new Set();
+function imgKnownMissing(src){ return missingImages.has(src); }
+
 function handleTrackImgError(img, accent){
+  missingImages.add(img.getAttribute("src"));
   const div = document.createElement("div");
   div.className = "livery";
   div.style.background = "var(--panelRaised)";
@@ -2205,7 +2271,7 @@ function handleTrackImgError(img, accent){
 }
 function trackStripContent(track, accent){
   const slug = trackSlug(track);
-  if (!slug) return liveryDiv(accent);
+  if (!slug || imgKnownMissing(`images/tracks/${slug}.png`)) return liveryDiv(accent);
   return `<img src="images/tracks/${slug}.png" alt="${esc(track)} track layout" class="track-layout-img" onerror="handleTrackImgError(this, '${accent}')" />`;
 }
 
@@ -2224,12 +2290,12 @@ function trackStripContent(track, accent){
 // something every track necessarily has a file for yet.
 function trackDetailSection(trackName){
   const slug = trackSlug(trackName);
-  if (!slug) return "";
+  if (!slug || imgKnownMissing(`images/tracks/${slug}-detail.png`)) return "";
   return `
     <div class="track-detail-box" id="trackDetailBox">
       <div class="track-detail-head">${icon("mapPin",13)} Track Map</div>
       <img src="images/tracks/${slug}-detail.png" alt="${esc(trackName)} detailed track map" class="track-detail-img"
-           onerror="this.closest('#trackDetailBox').style.display='none';" />
+           onerror="missingImages.add(this.getAttribute('src')); this.closest('#trackDetailBox').style.display='none';" />
     </div>`;
 }
 
@@ -2243,7 +2309,7 @@ function carSlug(number, team){
 }
 function carStripContent(number, team, accent){
   const slug = carSlug(number, team);
-  if (!slug) return liveryDiv(accent);
+  if (!slug || imgKnownMissing(`images/cars/${slug}.png`)) return liveryDiv(accent);
   return `<img src="images/cars/${slug}.png" alt="#${esc(number)} ${esc(team)}" class="track-layout-img" onerror="handleTrackImgError(this, '${accent}')" />`;
 }
 
@@ -2715,7 +2781,7 @@ function trackTile(trackName){
   const slug = trackSlug(trackName);
   const stripInner = isOther
     ? icon("plus",22)
-    : (slug ? `<img src="images/tracks/${slug}.png" alt="${esc(trackName)} track layout" onerror="handleTrackImgError(this, '${T.blue}')" />` : "");
+    : (slug && !imgKnownMissing(`images/tracks/${slug}.png`) ? `<img src="images/tracks/${slug}.png" alt="${esc(trackName)} track layout" onerror="handleTrackImgError(this, '${T.blue}')" />` : "");
   return `
     <div class="track-tile ${isSelected?'selected':''} ${isOther?'other-tile':''} ${isDimmed?'dimmed':''}" data-act="select-track" data-track="${esc(trackName)}" role="button" tabindex="0">
       <div class="strip">
@@ -3486,7 +3552,7 @@ function liveTimingBlock(car){
         ${tile("Position", `P${pos.class_position ?? "—"}` + (gainedLabel ? ` <span style="font-size:13px;color:${gainedColor}">${gainedLabel}</span>` : ""))}
         ${tile("Current Stint", stintLabel)}
 
-        ${tile("Current Lap", pos.last_lap_completed != null ? esc(String(pos.last_lap_completed)) : "—", pos.current_diff ? `${esc(pos.current_diff)} to class leader` : null)}
+        ${tile("Current Lap", pos.last_lap_completed != null ? esc(String(pos.last_lap_completed)) : "—")}
         ${tile("Last Lap", esc(trimLapTime(pos.last_lap_time)))}
         ${tile("Average Lap", stats ? fmtLapSeconds(stats.avg_lap_seconds) : "—")}
 
