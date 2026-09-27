@@ -1518,8 +1518,16 @@ function mergeFullFieldPositionRow(race, row){
   const idx = arr.findIndex(r => r.car_number === row.car_number);
   if (idx >= 0) arr[idx] = row; else arr.push(row);
   race.redmistLive.fullField = arr;
-  scheduleRender();
+  // One poll rewrites every car whose position changed, but Realtime
+  // delivers those rows one event at a time. Rendering after each one
+  // showed the half-applied states in between — two cars both on P5, rows
+  // swapping and swapping back as the rest of the batch landed. Wait
+  // until the burst goes quiet and render the whole batch once.
+  clearTimeout(fullFieldRenderTimer);
+  fullFieldRenderTimer = setTimeout(scheduleRender, FULL_FIELD_SETTLE_MS);
 }
+let fullFieldRenderTimer = null;
+const FULL_FIELD_SETTLE_MS = 300;
 
 function subscribeFullFieldChannel(raceId, race, eventId){
   if (fullFieldChannel) return; // idempotent — toggling the panel open twice shouldn't double-subscribe
@@ -2278,8 +2286,26 @@ function render(opts){
 
   app.classList.toggle("same-page-render", !pageChanged);
   app.style.setProperty("--pulse-phase", `-${Math.round(performance.now() % 1200)}ms`); // 1200 = livePulse duration
+  // Horizontally-scrollable tables (live standings, quali, MyLaps) are
+  // rebuilt on every live tick like everything else, and innerHTML resets
+  // their scrollLeft to 0 — on a phone that snapped the standings table
+  // back to the left edge every time any car's row changed. Same fix as
+  // the track picker: capture before, restore instantly after. Matched by
+  // order on the page, and only on same-page renders.
+  const tableScrolls = pageChanged ? [] : [...app.querySelectorAll(".mylaps-table-wrap")].map(el => el.scrollLeft);
+
   app.innerHTML = html;
   bindEvents();
+
+  if (tableScrolls.some(x => x > 0)){
+    app.querySelectorAll(".mylaps-table-wrap").forEach((el, i) => {
+      if (tableScrolls[i] == null) return;
+      const prev = el.style.scrollBehavior;
+      el.style.scrollBehavior = "auto";
+      el.scrollLeft = tableScrolls[i];
+      el.style.scrollBehavior = prev;
+    });
+  }
 
   if (pageChanged){
     window.scrollTo(0, 0);
@@ -3042,12 +3068,17 @@ function renderLiveStandingsPanel(race){
   // position alone would give every class its own P1/P2/P3, which reads
   // as duplicate positions across a mixed-class field. Class is still
   // shown as its own column for anyone who wants the in-class picture.
+  // Tie-breakers (laps, then car number) keep the order deterministic if
+  // two rows ever briefly share a position, instead of flipping between
+  // renders.
   const sorted = [...fullField].sort((a,b)=>{
     const ap = a.overall_position, bp = b.overall_position;
-    if (ap == null && bp == null) return 0;
-    if (ap == null) return 1;
-    if (bp == null) return -1;
-    return ap - bp;
+    if (ap == null && bp != null) return 1;
+    if (bp == null && ap != null) return -1;
+    if (ap != null && bp != null && ap !== bp) return ap - bp;
+    const lapDiff = (b.last_lap_completed || 0) - (a.last_lap_completed || 0);
+    if (lapDiff) return lapDiff;
+    return String(a.car_number).localeCompare(String(b.car_number), undefined, { numeric: true });
   });
 
   const leaderLaps = liveLeaderLaps(race);
