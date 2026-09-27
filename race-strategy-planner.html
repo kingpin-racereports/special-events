@@ -3651,6 +3651,8 @@ function finalResultStatus(row, leaderLaps){
 function renderFinalResultsPanel(race, rows, stopCounts, subtitle){
   const ourNumbers = new Set(race.cars.map(c => c.number));
   const leaderLaps = rows.reduce((m, r) => Math.max(m, r.last_lap_completed || 0), 0);
+  const classLeaderLaps = {};
+  rows.forEach(r => { classLeaderLaps[r.class] = Math.max(classLeaderLaps[r.class] || 0, r.last_lap_completed || 0); });
   const sorted = [...rows].sort((a, b) => {
     const ap = a.overall_position, bp = b.overall_position;
     if (ap == null && bp != null) return 1;
@@ -3670,7 +3672,15 @@ function renderFinalResultsPanel(race, rows, stopCounts, subtitle){
     const podium = started && cp >= 1 && cp <= 3 ? podiumColor(cp) : null;
     // Gap to the overall leader for every car, class winners included —
     // the gold trophy in the Class column is what marks each class winner.
-    const gap = started ? esc(r.overall_diff || r.overall_gap || "—") : "—";
+    // Class Gap: behind this car's CLASS winner (Red Mist's in-class
+    // difference — class_diff on saved rows, current_diff on live ones).
+    // Blank for each class winner. Falls back to the lap deficit against
+    // the class winner if Red Mist left it empty.
+    const classDiff = r.class_diff ?? r.current_diff;
+    const lapsDown = (classLeaderLaps[r.class] ?? 0) - (r.last_lap_completed || 0);
+    const gap = !started || cp === 1 ? "—"
+      : classDiff ? esc(classDiff)
+      : lapsDown > 0 ? `${lapsDown} lap${lapsDown === 1 ? "" : "s"}` : "—";
     return `<tr style="${isOurs?`background:${T.gold}17;border-left:2px solid ${T.gold};`:""}">
       <td class="num">P${r.overall_position ?? "—"}</td>
       <td><span class="num">#${esc(r.car_number)}</span> - <span style="font-weight:600;">${esc(r.team_name || "—")}</span></td>
@@ -3689,7 +3699,7 @@ function renderFinalResultsPanel(race, rows, stopCounts, subtitle){
       </div>
       <div class="mylaps-table-wrap">
       <table class="mylaps-table live-table">
-        <thead><tr><th>Pos</th><th>Car</th><th>Best Lap</th><th>Gap</th><th>Laps</th><th>Stops</th><th>Class</th></tr></thead>
+        <thead><tr><th>Pos</th><th>Car</th><th>Best Lap</th><th>Class Gap</th><th>Laps</th><th>Stops</th><th>Class</th></tr></thead>
         <tbody>${body}</tbody>
       </table>
       </div>
