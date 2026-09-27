@@ -1261,14 +1261,7 @@ async function fetchRedmistResultRows(race){
     data = res.data;
   }
   if (!data?.length) return null;
-  const bySession = {};
-  data.forEach(r => {
-    const key = `${r.session_id}|${r.session_name}`;
-    const g = (bySession[key] ||= { rows: [], at: 0 });
-    g.rows.push(r);
-    g.at = Math.max(g.at, new Date(r.checkered_at || r.updated_at || 0).getTime());
-  });
-  return Object.values(bySession).sort((a, b) => b.at - a.at)[0].rows;
+  return pickResultSession(data, race).rows;
 }
 
 function rmResultStatus(s){
@@ -3439,6 +3432,24 @@ async function loadQualifyingResults(race){
   scheduleRender();
 }
 
+// Several race sessions can end up tagged to one plan (one Red Mist event
+// spans the weekend). Prefer the session whose date matches this plan's
+// race date; only then fall back to the most recent.
+function pickResultSession(rows, race){
+  const bySession = {};
+  rows.forEach(r => {
+    const key = `${r.session_id}|${r.session_name}`;
+    const g = (bySession[key] ||= { key, name: r.session_name, rows: [], at: 0, date: r.session_date || null });
+    g.rows.push(r);
+    g.at = Math.max(g.at, new Date(r.checkered_at || r.updated_at || 0).getTime());
+  });
+  const groups = Object.values(bySession);
+  const raceDate = String(race?.eventDateISO || "").slice(0, 10);
+  const dated = groups.filter(g => g.date && String(g.date).slice(0, 10) === raceDate);
+  if (groups.length > 1) console.warn("[race-results]", groups.length, "sessions tagged to race", race?.id, "— using", (dated[0] || groups[0]).name, dated.length ? "(date match)" : "(most recent — no date match)");
+  return (dated.length ? dated : groups).sort((a, b) => b.at - a.at)[0];
+}
+
 // Saved final results for this race plan (written by the poller at the
 // checkered — see redmist_race_results). Matched by race_id; falls back to
 // the linked event's Race session(s) for rows written before the plan was
@@ -3452,14 +3463,7 @@ async function loadRaceResults(race){
     if (!res.error) data = res.data;
   }
   if (!data?.length){ race.raceResults = null; scheduleRender(); return; }
-  const bySession = {};
-  data.forEach(r => {
-    const key = `${r.session_id}|${r.session_name}`;
-    const g = (bySession[key] ||= { key, name: r.session_name, rows: [], at: 0 });
-    g.rows.push(r);
-    g.at = Math.max(g.at, new Date(r.checkered_at || r.updated_at || 0).getTime());
-  });
-  const latest = Object.values(bySession).sort((a, b) => b.at - a.at)[0];
+  const latest = pickResultSession(data, race);
   race.raceResults = { sessionName: latest.name, rows: latest.rows, checkeredAt: latest.at || null };
   scheduleRender();
 }
@@ -5704,9 +5708,9 @@ document.addEventListener("keydown", function(e){
 // Re-fetches races fresh from Supabase, but preserves any fields that only
 // live in memory and aren't part of the races/cars row shape itself -
 // currently `mylaps` (imported MyLaps results), `redmistPitCycles` (Red
-// Mist pit-cycle data), and `redmistLive` (live timing + the
-// driver-change debounce state), all attached separately from
-// loadRaces()'s own query.
+// Mist pit-cycle data), `redmistLive` (live timing + the driver-change
+// debounce state), `qualiResults` and `raceResults` (saved Red Mist final
+// results), all attached separately from loadRaces()'s own query.
 //
 // Needed because Supabase's auth client can fire a SIGNED_IN-equivalent
 // event on its own when a tab regains focus/visibility (routine token
@@ -5732,6 +5736,10 @@ async function startApp(isEngineer){
     if (prev.redmistPitCycles) preserved.redmistPitCycles = prev.redmistPitCycles;
     if (prev.redmistLive) preserved.redmistLive = prev.redmistLive;
     if (prev.qualiResults) preserved.qualiResults = prev.qualiResults;
+    // Saved Red Mist final results (loadRaceResults) — only fetched when a
+    // race is opened, so dropping it here made the Final Results table
+    // vanish on every tab switch until a full reload.
+    if (prev.raceResults) preserved.raceResults = prev.raceResults;
     return preserved;
   });
   state.catalog = await loadCatalog();
