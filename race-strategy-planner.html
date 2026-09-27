@@ -1364,8 +1364,15 @@ function sessionTypeOf(session){
 function isSessionActive(session){
   if (!session) return false;
   if (sessionTypeOf(session) === "Practice") return false;
+  // A Race that has taken the checkered stays attached, so its final
+  // standings and car tiles stay on screen instead of vanishing the moment
+  // the flag drops. It detaches when the next session replaces it or the
+  // event leaves the live list — and from then on the page shows the
+  // saved final results (redmist_race_results) instead.
+  if (sessionTypeOf(session) === "Race" && Number(session.current_flag) === 5) return true;
   return session.is_live === true || ACTIVE_FLAGS.has(Number(session.current_flag));
 }
+function isCheckered(){ return Number(state.homeLive.flag) === 5; }
 function isSessionRowLive(session){
   if (!session || !session.fetched_at || !isSessionActive(session)) return false;
   return Date.now() - new Date(session.fetched_at).getTime() < SESSION_FRESH_MS;
@@ -1396,7 +1403,9 @@ function isLiveAttached(race){
   return !!(state.redmistEventId && race);
 }
 function isRaceLiveAndLocked(race){
-  return isLiveAttached(race) && state.liveSession?.type === "Race";
+  // Unlocks at the checkered: the race is over, and the plan needs to be
+  // editable again to archive it.
+  return isLiveAttached(race) && state.liveSession?.type === "Race" && !isCheckered();
 }
 
 async function refreshRedmistCar(race, carNumber, skipRender){
@@ -1785,6 +1794,11 @@ function liveCarStatus(pos, leaderLaps){
   const mcs = (pos.car_status || "").trim();
   if (mcs && !/^(active|in pits?)$/i.test(mcs)) return { label: mcs, tone: "dnf" };
   if (!(pos.last_lap_completed > 0) && leaderLaps >= 3) return { label: "DNS", tone: "dns" };
+  // In the pit lane beats the no-lap timer: a car sitting in the pits
+  // shows as In Pit (blue, pulsing — same look as our own cars' IN PIT
+  // indicator) rather than Inactive. Only cars stopped OUT on track, or
+  // that Red Mist marks stale, fall through to Inactive.
+  if (pos.in_pit === true) return { label: "In Pit", tone: "pit" };
   if (pos.is_stale === true) return { label: "Inactive", tone: "dnf" };
   if (pos.last_lap_at && Number(state.homeLive.flag) !== 3){
     const mins = (Date.now() - new Date(pos.last_lap_at).getTime()) / 60000;
@@ -1808,8 +1822,16 @@ function liveIndicator(race, carNumber){
     : { inPit: false, color: "var(--red)",  wash: "rgba(226,68,92,0.10)", label: "ON TRACK" };
 }
 
-function liveStatusBadge(st){
-  return st ? `<span class="mylaps-badge ${st.tone}" style="margin-left:6px;">${esc(st.label)}</span>` : "";
+function liveStatusBadge(st, inline = true){
+  if (!st) return "";
+  const margin = inline ? "margin-left:6px;" : "";
+  if (st.tone === "pit"){
+    return `<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:999px;background:rgba(61,111,232,0.12);vertical-align:middle;${margin}">
+      <span style="width:6px;height:6px;border-radius:999px;background:var(--blue);animation:livePulse 1.2s ease-in-out infinite;"></span>
+      <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:0.05em;color:var(--text);">In Pit</span>
+    </span>`;
+  }
+  return `<span class="mylaps-badge ${st.tone}" style="${margin}">${esc(st.label)}</span>`;
 }
 
 // Race-wide summary above the first car tile while a race session is
@@ -1839,8 +1861,9 @@ function renderLiveRaceSummary(race){
 
   let onTrack = 0, inPit = 0, inactive = 0;
   field.forEach(r => {
-    if (liveCarStatus(r, leaderLaps)) inactive++;
-    else if (r.in_pit === true) inPit++;
+    const st = liveCarStatus(r, leaderLaps);
+    if (st?.tone === "pit") inPit++;
+    else if (st) inactive++;
     else onTrack++;
   });
   const countSub = [inPit ? `${inPit} in pit` : null, inactive ? `${inactive} inactive` : null].filter(Boolean).join(" · ");
@@ -1932,6 +1955,7 @@ async function loadHomeLiveStatus(){
     unsubscribeRedmistLive();
     unsubscribeFullFieldChannel();
     if (raceOpen) loadQualifyingResults(state.races.find(r => r.id === state.currentRaceId));
+    if (raceOpen) loadRaceResults(state.races.find(r => r.id === state.currentRaceId));
   }
 
   scheduleRender();
@@ -2840,7 +2864,15 @@ function getEffectiveFinishPosition(car, race){
       return m.positionInClass || m.position;
     }
   }
-  return (typeof car.finishPosition === "number" || car.finishPosition === "DNF") ? car.finishPosition : null;
+  if (typeof car.finishPosition === "number" || car.finishPosition === "DNF") return car.finishPosition;
+  // No MyLaps import and nothing entered: fall back to the Red Mist result
+  // saved at the checkered (class position, or its DNF/DNS status).
+  const rr = race?.raceResults?.rows?.find(r => r.car_number === car.number);
+  if (rr){
+    if (rr.result_status === "DNF" || rr.result_status === "DNS") return rr.result_status;
+    if (rr.class_position != null) return rr.class_position;
+  }
+  return null;
 }
 
 function renderPlan(){
@@ -2919,7 +2951,7 @@ function renderPlan(){
 
       ${trackDetailSection(plan.track)}
 
-      ${!archived ? renderLiveStandingsPanel(race) : ""}
+      ${!archived ? renderLiveStandingsPanel(race) : (race?.mylaps ? "" : savedResultsPanel(race))}
 
       ${!readOnly ? `
       <div class="archive-box fade-in">
@@ -3146,6 +3178,31 @@ async function loadQualifyingResults(race){
   scheduleRender();
 }
 
+// Saved final results for this race plan (written by the poller at the
+// checkered — see redmist_race_results). Matched by race_id; falls back to
+// the linked event's Race session(s) for rows written before the plan was
+// linked. If there's more than one Race session, the latest is used.
+async function loadRaceResults(race){
+  if (!race) return;
+  let { data, error } = await supabase.from("redmist_race_results").select("*").eq("race_id", String(race.id));
+  if (error){ console.error("[race-results] fetch failed:", error); return; }
+  if (!data?.length && race.redmistEventId != null){
+    const res = await supabase.from("redmist_race_results").select("*").eq("event_id", race.redmistEventId).is("race_id", null);
+    if (!res.error) data = res.data;
+  }
+  if (!data?.length){ race.raceResults = null; scheduleRender(); return; }
+  const bySession = {};
+  data.forEach(r => {
+    const key = `${r.session_id}|${r.session_name}`;
+    const g = (bySession[key] ||= { key, name: r.session_name, rows: [], at: 0 });
+    g.rows.push(r);
+    g.at = Math.max(g.at, new Date(r.checkered_at || r.updated_at || 0).getTime());
+  });
+  const latest = Object.values(bySession).sort((a, b) => b.at - a.at)[0];
+  race.raceResults = { sessionName: latest.name, rows: latest.rows, checkeredAt: latest.at || null };
+  scheduleRender();
+}
+
 function qualiSessionKey(ls){ return ls ? `${ls.id}|${ls.name}` : null; }
 
 // Rows ranked by best lap; untimed (null / 00:00:00.000) cars go last.
@@ -3226,6 +3283,67 @@ function renderQualifyingPanels(race){
 // Header says "Pos" rather than "Finish" since the race isn't over yet;
 // Status is omitted entirely (no live DNF/DNS source, and asked to drop
 // it) rather than shown as a column that never has anything in it.
+// Result status for the final table: the saved row's own status, or —
+// while still attached after the checkered — derived from the live row.
+function finalResultStatus(row, leaderLaps){
+  if (row.result_status) return row.result_status === "Running" ? null : row.result_status;
+  const st = liveCarStatus(row, leaderLaps);
+  if (!st || st.tone === "pit") return null;
+  if (st.tone === "dns") return "DNS";
+  return /^inactive/i.test(st.label) ? "DNF" : st.label;
+}
+
+// Final classification after the checkered. Same table styling as Live
+// Standings; Best Lap replaces Last Lap and Gap is to the overall leader.
+// Rows are either the live full field (still attached, flag 5) or the
+// saved redmist_race_results rows (normalised to the same field names).
+function renderFinalResultsPanel(race, rows, stopCounts, subtitle){
+  const ourNumbers = new Set(race.cars.map(c => c.number));
+  const leaderLaps = rows.reduce((m, r) => Math.max(m, r.last_lap_completed || 0), 0);
+  const sorted = [...rows].sort((a, b) => {
+    const ap = a.overall_position, bp = b.overall_position;
+    if (ap == null && bp != null) return 1;
+    if (bp == null && ap != null) return -1;
+    if (ap != null && bp != null && ap !== bp) return ap - bp;
+    return (b.last_lap_completed || 0) - (a.last_lap_completed || 0);
+  });
+  const body = sorted.map(r => {
+    const isOurs = ourNumbers.has(r.car_number);
+    const status = finalResultStatus(r, leaderLaps);
+    const badge = status ? `<span class="mylaps-badge ${status === "DNS" ? "dns" : "dnf"}">${esc(status)}</span>` : "";
+    const gap = r.overall_position === 1 ? "Winner" : (r.overall_diff || r.overall_gap || "—");
+    return `<tr style="${isOurs?`background:${T.gold}17;border-left:2px solid ${T.gold};`:""}">
+      <td class="num">P${r.overall_position ?? "—"}</td>
+      <td><span class="num">#${esc(r.car_number)}</span> - <span style="font-weight:600;">${esc(r.team_name || "—")}</span></td>
+      <td class="num">${badge || fmtLapTime(rmTimeToSeconds(r.best_time))}</td>
+      <td class="num">${esc(gap)}</td>
+      <td class="num">${r.last_lap_completed ?? 0}</td>
+      <td class="stops">${stopCounts[r.car_number] ?? 0}</td>
+      <td class="mylaps-cls">${esc(r.class || "—")}${r.class_position != null ? ` <span style="color:var(--textFaint);">P${r.class_position}</span>` : ""}</td>
+    </tr>`;
+  }).join("");
+  return `
+    <div class="mylaps-panel live-panel fade-in">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+        <span class="eyebrow" style="color:var(--text);">🏁 Final Results</span>
+        ${subtitle ? `<span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--textFaint);">${esc(subtitle)}</span>` : ""}
+      </div>
+      <div class="mylaps-table-wrap">
+      <table class="mylaps-table live-table">
+        <thead><tr><th>Pos</th><th>Car</th><th>Best Lap</th><th>Gap</th><th>Laps</th><th>Stops</th><th>Class</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+      </div>
+    </div>`;
+}
+function savedResultsPanel(race){
+  const rr = race?.raceResults;
+  if (!rr?.rows?.length) return "";
+  const rows = rr.rows.map(r => ({ ...r, last_lap_completed: r.laps }));
+  const stops = Object.fromEntries(rr.rows.map(r => [r.car_number, r.pit_stops ?? 0]));
+  return renderFinalResultsPanel(race, rows, stops, rr.sessionName);
+}
+
 function renderLiveStandingsPanel(race){
   // Gate on whether this race has live timing AT ALL (same signal
   // carPlanSection uses for hasLiveTiming) — the full-field data itself
@@ -3235,7 +3353,13 @@ function renderLiveStandingsPanel(race){
   // (qualifying live, or nothing live) -> every qualifying session so far.
   // No longer gated on this team's cars being in the session: another
   // class's qualifying still shows, badged Live.
-  if (!(isLiveAttached(race) && state.liveSession?.type === "Race")) return renderQualifyingPanels(race);
+  if (!(isLiveAttached(race) && state.liveSession?.type === "Race")){
+    // Not live: a finished race shows its saved results above qualifying.
+    return savedResultsPanel(race) + renderQualifyingPanels(race);
+  }
+  if (isCheckered()){
+    return renderFinalResultsPanel(race, race.redmistLive?.fullField || [], race.redmistLive?.stopCountsByCarNumber || {}, state.liveSession?.name);
+  }
 
   const fullField = race.redmistLive?.fullField || [];
   const stopCounts = race.redmistLive?.stopCountsByCarNumber || {};
@@ -3269,7 +3393,7 @@ function renderLiveStandingsPanel(race){
     return `<tr style="${isOurs?`background:${T.gold}17;border-left:2px solid ${T.gold};`:""}">
       <td class="num">P${pos.overall_position ?? "—"}</td>
       <td><span class="num">#${esc(pos.car_number)}</span> - <span style="font-weight:600;">${esc(pos.team_name || "—")}</span></td>
-      <td class="num">${carStatus ? liveStatusBadge(carStatus).replace("margin-left:6px;", "") : fmtLapTime(rmTimeToSeconds(pos.last_lap_time))}</td>
+      <td class="num">${carStatus ? liveStatusBadge(carStatus, false) : fmtLapTime(rmTimeToSeconds(pos.last_lap_time))}</td>
       <td class="num">${esc(gapLabel)}</td>
       <td class="num">${pos.last_lap_completed ?? 0}</td>
       <td class="stops">${stopCounts[pos.car_number] ?? 0}</td>
@@ -3654,7 +3778,7 @@ function carPlanSection(cp, plan, archived){
                 <span style="width:6px;height:6px;border-radius:999px;background:${liveInd.color};animation:livePulse 1.2s ease-in-out infinite;"></span>
                 <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:0.05em;color:var(--text);">${liveInd.inPit ? `In Pit · P${livePos.class_position ?? "—"}` : `Currently P${livePos.class_position ?? "—"}`}</span>
               </span>
-              ${liveStatusBadge(liveCarStatus(livePos, liveLeaderLaps(race)))}
+              ${(() => { const st = liveCarStatus(livePos, liveLeaderLaps(race)); return st && st.tone !== "pit" ? liveStatusBadge(st) : ""; })()}
             ` : ""}
             ${(() => {
               // Positions-gained badge from Red Mist's own calc, once live
@@ -4608,6 +4732,7 @@ async function openRace(race){
   // fresh object from fetchFullRace(), but renderPlan()/startPosFor() read
   // from state.races — results stored on `race` were never seen.
   if (race.status !== "archived") loadQualifyingResults(state.races.find(r => r.id === race.id) || race);
+  loadRaceResults(state.races.find(r => r.id === race.id) || race);
 
   // Mirrors any stints/cars/races changes for this race's cars — this is
   // what makes the Edge Function's server-side stint automation (and any
