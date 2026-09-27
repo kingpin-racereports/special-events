@@ -1393,16 +1393,26 @@ function isRaceLiveAndLocked(race){
 async function refreshRedmistCar(race, carNumber, skipRender){
   const eventId = state.redmistEventId;
   if (!eventId) return;
-  const [{ data: pos, error: posErr }, { data: stats, error: statsErr }] = await Promise.all([
+  const [{ data: pos, error: posErr }, { data: stats, error: statsErr }, { data: cons, error: consErr }] = await Promise.all([
     scopeToLiveSession(supabase.from("redmist_live_positions").select("*").eq("event_id", eventId).eq("car_number", carNumber)).maybeSingle(),
     scopeToLiveSession(supabase.from("redmist_current_stint_stats").select("*").eq("event_id", eventId).eq("car_number", carNumber)).maybeSingle(),
+    // Clean-lap consistency (pit, out, caution laps excluded) — see
+    // add_consistency_clean_laps.sql.
+    scopeToLiveSession(supabase.from("redmist_current_stint_consistency").select("*").eq("event_id", eventId).eq("car_number", carNumber)).maybeSingle(),
   ]);
+  if (consErr) console.error("[redmist-live] refreshRedmistCar consistency failed for car", carNumber, ":", consErr);
   if (posErr) console.error("[redmist-live] refreshRedmistCar positions failed for car", carNumber, ":", posErr);
   if (statsErr) console.error("[redmist-live] refreshRedmistCar stats failed for car", carNumber, ":", statsErr);
   console.log(`[redmist-live] car ${carNumber}: position row ${pos ? "found" : "NOT FOUND"}, stint stats ${stats ? "found" : "not found"}`);
   if (!race.redmistLive) race.redmistLive = { byCarNumber:{}, statsByCarNumber:{} };
   if (pos) race.redmistLive.byCarNumber[carNumber] = pos;
   if (stats) race.redmistLive.statsByCarNumber[carNumber] = stats;
+  // Cleared (not kept) when the view returns nothing — a new stint with
+  // no clean laps yet should read "—", not the previous driver's figure.
+  if (!consErr){
+    if (!race.redmistLive.consistencyByCarNumber) race.redmistLive.consistencyByCarNumber = {};
+    race.redmistLive.consistencyByCarNumber[carNumber] = cons || null;
+  }
   // handleRedmistDriverChange() previously ran here client-side. As of
   // Phase 1 of the server-side stint automation, that logic now lives in
   // the redmist-live-poll Edge Function itself (runs on the service-role
@@ -3340,14 +3350,17 @@ function liveTimingBlock(car){
   // laps — scale-independent across tracks, unlike raw stdev. Thresholds
   // here are a starting assumption, not a validated figure the way the pit
   // duration fields are — worth revisiting once real session data is in.
-  // Shown as a standard deviation in seconds. The view exposes CV
-  // (stdev / mean), so stdev = CV × average lap — exact, no view change.
-  // Colour thresholds stay on CV so they hold across tracks of different
-  // lap lengths (1% / 2% ≈ 1.3s / 2.5s on a 2:06 lap).
-  const cv = stats?.consistency_cv;
-  const stdevSec = (cv!=null && stats?.avg_lap_seconds!=null) ? cv * stats.avg_lap_seconds : null;
-  const consistencyLabel = stdevSec==null ? "—" : `±${stdevSec.toFixed(3)}s`;
+  // Standard deviation (seconds) of this stint's CLEAN laps only — pit
+  // laps, pit out-laps and any lap that saw a caution flag are excluded
+  // (redmist_current_stint_consistency). Colour thresholds are on
+  // stdev / mean so they hold across tracks of different lap lengths
+  // (1% / 2% ≈ 1.3s / 2.5s on a 2:06 lap).
+  const cons = race.redmistLive.consistencyByCarNumber?.[car.number];
+  const stdevSec = cons?.stdev_lap_seconds ?? null;
+  const cv = (stdevSec!=null && cons?.clean_avg_lap_seconds) ? stdevSec / cons.clean_avg_lap_seconds : null;
+  const consistencyLabel = stdevSec==null ? "—" : `±${Number(stdevSec).toFixed(3)}s`;
   const consistencyColor = cv==null ? null : cv>=0.02 ? T.red : cv>=0.01 ? T.amber : T.green;
+  const consistencySub = cons?.clean_lap_count ? `${cons.clean_lap_count} clean lap${cons.clean_lap_count===1?"":"s"}` : null;
 
   // ---- In-class neighbours, lap count, class pace (from the full-field rows) ----
   const field = race.redmistLive?.fullField || [];
@@ -3403,14 +3416,14 @@ function liveTimingBlock(car){
 
         ${neighbourTile("Car Ahead", ahead, pos.current_gap)}
         ${neighbourTile("Car Behind", behind, behind?.current_gap)}
-        ${tile("Consistency", consistencyColor ? `<span style="color:${consistencyColor}">${consistencyLabel}</span>` : consistencyLabel)}
+        ${tile("Consistency", consistencyColor ? `<span style="color:${consistencyColor}">${consistencyLabel}</span>` : consistencyLabel, consistencySub)}
 
         ${tile("Stint", stintLabel)}
         ${tile("Last Pit", pos.last_lap_pitted!=null ? `Lap ${pos.last_lap_pitted}` : "—")}
         ${tile("Pit Time", pos.pit_duration_ms!=null ? `${(pos.pit_duration_ms/1000).toFixed(1)}s` : "—")}
       </div>
       <p style="font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.5;color:var(--textFaint);margin:0 0 16px;">
-        Live from Red Mist Timing. Average Lap / Consistency reset with each driver change. Class Pace = median last lap of running ${esc(pos.class || "class")} cars.
+        Live from Red Mist Timing. Average Lap / Consistency reset with each driver change; Consistency counts green-flag laps only (no pit, out or caution laps). Class Pace = median last lap of running ${esc(pos.class || "class")} cars.
       </p>
     </div>`;
 }
