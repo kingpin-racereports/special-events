@@ -3261,7 +3261,11 @@ function renderLiveStandingsPanel(race){
   const fieldRows = sorted.map(pos => {
     const isOurs = race.cars.some(c=>c.number===pos.car_number);
     const carStatus = liveCarStatus(pos, leaderLaps);
-    const gapLabel = pos.overall_position === 1 ? "Leader" : (pos.current_gap || "—");
+    // Overall gap (Red Mist `og`) — this table is in overall order. It
+    // used to show current_gap, which is the IN-CLASS gap: blank for every
+    // class leader (#118 GP1, #83 GP2) and measured to the wrong car for
+    // everyone else in a multi-class field.
+    const gapLabel = pos.overall_position === 1 ? "Leader" : (pos.overall_gap || "—");
     return `<tr style="${isOurs?`background:${T.gold}17;border-left:2px solid ${T.gold};`:""}">
       <td class="num">P${pos.overall_position ?? "—"}</td>
       <td><span class="num">#${esc(pos.car_number)}</span> - <span style="font-weight:600;">${esc(pos.team_name || "—")}</span></td>
