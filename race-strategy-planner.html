@@ -3487,6 +3487,12 @@ function competitorPitTimesPanel(race){
     </div>`;
 }
 
+// "Johan Schwartz" -> "Schwartz" (keeps the Fastest Driver Chg tile to one line of names).
+function driverSurname(name){
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : "?";
+}
+
 function renderMylapsPanel(race){
   if (!race) return "";
   const mylaps = race.mylaps;
@@ -3533,12 +3539,12 @@ function renderMylapsPanel(race){
     const statusBadge = r.status === "DNF" ? `<span class="mylaps-badge dnf">DNF</span>`
                        : r.status === "DNS" ? `<span class="mylaps-badge dns">DNS</span>` : "";
     return `<tr style="${isOurs?`background:${T.gold}17;border-left:2px solid ${T.gold};`:""}">
-      <td class="num">P${i+1}</td>
+      <td class="num" style="white-space:nowrap;">P${i+1}${classPodiumTrophy(r.positionInClass, r.status !== "DNS" && r.numberOfLaps > 0)}</td>
       <td><span class="num">#${esc(r.startNumber)}</span> - <span style="font-weight:600;">${esc(r.name)}</span></td>
       <td class="num">${esc(mylaps.intervals[r.startNumber] ?? "—")}</td>
       <td class="num col-laps">${r.numberOfLaps}</td>
       <td class="stops col-stops">${mylaps.pitStopsByNumber[r.startNumber] ?? 0}</td>
-      <td class="mylaps-cls" style="white-space:nowrap;">${classPosCell(r.resultClass, r.positionInClass, r.status !== "DNS" && r.numberOfLaps > 0)}</td>
+      <td class="mylaps-cls" style="white-space:nowrap;">${classPosCell(r.resultClass, r.positionInClass, r.status !== "DNS" && r.numberOfLaps > 0, false)}</td>
       <td>${statusBadge}</td>
     </tr>`;
   }).join("") : "";
@@ -3584,7 +3590,7 @@ function renderMylapsPanel(race){
         ${mylaps.source === "redmist" ? `
           ${overviewTile(`Fastest Lap${mylaps.fastestLap?.cls ? ` - ${esc(mylaps.fastestLap.cls)}` : ""}`, mylaps.fastestLap ? mylapsFmtTime(mylaps.fastestLap.seconds) : "—", mylaps.fastestLap ? `#${esc(mylaps.fastestLap.num)} ${esc(mylaps.fastestLap.name)}` : "")}
           ${overviewTile("Fastest Pit Stop - GTO", mylaps.fastestStop ? `${mylaps.fastestStop.seconds.toFixed(1)}s` : "—", mylaps.fastestStop ? `#${esc(mylaps.fastestStop.num)} ${esc(mylaps.fastestStop.name)}` : "")}
-          ${overviewTile("Fastest Driver Change - GTO", mylaps.fastestStopDc ? `${mylaps.fastestStopDc.seconds.toFixed(1)}s` : "—", mylaps.fastestStopDc ? `#${esc(mylaps.fastestStopDc.num)} ${esc(mylaps.fastestStopDc.name)}${(mylaps.fastestStopDc.driverOut || mylaps.fastestStopDc.driverIn) ? `<br>${esc(mylaps.fastestStopDc.driverOut || "?")} → ${esc(mylaps.fastestStopDc.driverIn || "?")}` : ""}` : "")}
+          ${overviewTile("Fastest Driver Chg - GTO", mylaps.fastestStopDc ? `${mylaps.fastestStopDc.seconds.toFixed(1)}s` : "—", mylaps.fastestStopDc ? `#${esc(mylaps.fastestStopDc.num)} ${esc(mylaps.fastestStopDc.name)}${(mylaps.fastestStopDc.driverOut || mylaps.fastestStopDc.driverIn) ? `<br>${esc(driverSurname(mylaps.fastestStopDc.driverOut))} → ${esc(driverSurname(mylaps.fastestStopDc.driverIn))}` : ""}` : "")}
         ` : ""}
       </div>
       ${mylaps.reconstructedFromDb ? `
@@ -3858,10 +3864,18 @@ function finalResultStatus(row, leaderLaps){
 // saved redmist_race_results rows (normalised to the same field names).
 // Class + class position, with a gold / silver / bronze trophy for class
 // P1–P3. Shared by Final Results and the archive's full-field standings.
-function classPosCell(cls, classPos, started = true){
+function classPosCell(cls, classPos, started = true, withTrophy = true){
   const cp = Number(classPos);
   const podium = started && cp >= 1 && cp <= 3 ? podiumColor(cp) : null;
-  return `${esc(cls || "—")}${cp ? ` <span style="color:${podium || "var(--textFaint)"};${podium ? "font-weight:700;" : ""}">${podium ? `<span style="display:inline-flex;vertical-align:-2px;margin-right:2px;">${icon("trophy",12)}</span>` : ""}P${cp}</span>` : ""}`;
+  return `${esc(cls || "—")}${cp ? ` <span style="color:${podium || "var(--textFaint)"};${podium ? "font-weight:700;" : ""}">${podium && withTrophy ? `<span style="display:inline-flex;vertical-align:-2px;margin-right:2px;">${icon("trophy",12)}</span>` : ""}P${cp}</span>` : ""}`;
+}
+// Trophy only (gold / silver / bronze) for a class P1–P3 — sits next to
+// the overall finish position in the archive's full-field standings, so
+// class podiums stand out while the overall order stays as it is.
+function classPodiumTrophy(classPos, started = true){
+  const cp = Number(classPos);
+  if (!started || cp < 1 || cp > 3) return "";
+  return `<span style="display:inline-flex;vertical-align:-2px;margin-left:5px;color:${podiumColor(cp)};" title="Class P${cp}">${icon("trophy",13)}</span>`;
 }
 
 function renderFinalResultsPanel(race, rows, stopCounts, subtitle){
