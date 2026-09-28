@@ -348,6 +348,28 @@
   .mylaps-header-block{margin-top:0;}
   .mylaps-carstat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:16px;}
   .live-summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:24px;}
+  /* Competitors Pit Times (archive) */
+  .pit-times-row{display:grid;grid-template-columns:minmax(0,1fr) 64px 92px 210px;gap:14px;align-items:center;padding:9px 10px;border-bottom:1px solid var(--border);}
+  .pit-times-row:last-child{border-bottom:none;}
+  .pit-times-row.ours{background:rgba(224,184,75,0.09);box-shadow:inset 2px 0 0 var(--gold);}
+  .pit-times-head{padding-top:0;padding-bottom:8px;}
+  .pit-times-name{font-size:13.5px;min-width:0;}
+  .pit-times-num{font-family:'JetBrains Mono',monospace;font-size:13px;text-align:right;}
+  .pit-times-time{display:flex;align-items:center;justify-content:flex-end;gap:8px;font-size:13px;}
+  .pit-times-time .font-mono{min-width:48px;text-align:right;}
+  .pit-times-bar{flex:1;max-width:130px;height:5px;border-radius:3px;background:var(--border);}
+  .pit-times-bar > span{display:block;height:5px;border-radius:3px;}
+  .pit-times-head .lbl-short{display:none;}
+  @media(max-width:560px){
+    .pit-times-row{grid-template-columns:minmax(0,1fr) 34px 34px 50px;gap:8px;padding:8px 6px;}
+    .pit-times-head{padding-top:0;}
+    .pit-times-name{font-size:13px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+    .pit-times-num,.pit-times-time{font-size:12.5px;}
+    .pit-times-time .font-mono{min-width:0;}
+    .pit-times-bar{display:none;}
+    .pit-times-head .lbl-full{display:none;}
+    .pit-times-head .lbl-short{display:inline;}
+  }
   .live-carstat-grid{grid-template-columns:repeat(3,1fr);}
   .live-carstat-grid .mylaps-carstat-tile{min-width:0;}
   .live-carstat-grid .mylaps-carstat-value{overflow-wrap:anywhere;}
@@ -3433,32 +3455,32 @@ function competitorPitTimesPanel(race){
     return `rgb(${a.map((x, k) => Math.round(x + (b[k] - x) * u)).join(",")})`;
   };
   const fmt = s => { const m = Math.floor(s / 60), r = Math.round(s % 60); return r === 60 ? `${m + 1}:00` : `${m}:${String(r).padStart(2, "0")}`; };
-  const cols = "minmax(0,1fr) 64px 92px 210px";
+  // Layout lives in CSS (.pit-times-*) so phones get their own column
+  // widths: no bar, short headers, team name wraps to at most two lines —
+  // the whole table fits the screen with no sideways scroll.
   const body = rows.map((r, i) => {
     const c = rankColor(i), isOurs = ours.has(r.num);
     return `
-      <div style="display:grid;grid-template-columns:${cols};gap:14px;align-items:center;padding:9px 10px;${isOurs ? `background:${T.gold}17;box-shadow:inset 2px 0 0 ${T.gold};` : ""}${i < rows.length - 1 ? "border-bottom:1px solid var(--border);" : ""}">
-        <span style="font-size:13.5px;min-width:0;"><span class="num" style="color:var(--textMuted);">#${esc(r.num)}</span> - <span style="font-weight:600;">${esc(r.name)}</span></span>
-        <span class="font-mono" style="text-align:right;font-size:13px;">${r.stops}</span>
-        <span class="font-mono" style="text-align:right;font-size:13px;">${r.driverChanges}</span>
-        <span style="display:flex;align-items:center;justify-content:flex-end;gap:8px;">
-          <span style="flex:1;max-width:130px;height:5px;border-radius:3px;background:var(--border);"><span style="display:block;height:5px;border-radius:3px;width:${Math.max(4, Math.round(r.seconds / maxS * 100))}%;background:${c};"></span></span>
-          <span class="font-mono" style="font-size:13px;font-weight:700;color:${c};min-width:48px;text-align:right;">${fmt(r.seconds)}</span>
+      <div class="pit-times-row ${isOurs ? "ours" : ""}">
+        <span class="pit-times-name"><span class="num" style="color:var(--textMuted);">#${esc(r.num)}</span> <span style="font-weight:600;">${esc(r.name)}</span></span>
+        <span class="pit-times-num">${r.stops}</span>
+        <span class="pit-times-num">${r.driverChanges}</span>
+        <span class="pit-times-time">
+          <span class="pit-times-bar"><span style="width:${Math.max(4, Math.round(r.seconds / maxS * 100))}%;background:${c};"></span></span>
+          <span class="font-mono" style="font-weight:700;color:${c};">${fmt(r.seconds)}</span>
         </span>
       </div>`;
   }).join("");
   return `
     <div class="mylaps-panel fade-in">
       <div style="margin-bottom:12px;"><span class="eyebrow" style="color:${T.gold};">Competitors Pit Times - GTO</span></div>
-      <div class="mylaps-table-wrap" style="margin-top:0;"><div style="min-width:480px;">
-        <div style="display:grid;grid-template-columns:${cols};gap:14px;padding:0 10px 8px;border-bottom:1px solid var(--border);">
-          <span class="fin-label" style="margin:0;">Competitor</span>
-          <span class="fin-label" style="margin:0;justify-content:flex-end;">Stops</span>
-          <span class="fin-label" style="margin:0;justify-content:flex-end;">Driver Chg</span>
-          <span class="fin-label" style="margin:0;justify-content:flex-end;">Time in Pits</span>
-        </div>
-        ${body}
-      </div></div>
+      <div class="pit-times-row pit-times-head">
+        <span class="fin-label" style="margin:0;">Competitor</span>
+        <span class="fin-label" style="margin:0;justify-content:flex-end;">Stops</span>
+        <span class="fin-label" style="margin:0;justify-content:flex-end;"><span class="lbl-full">Driver Chg</span><span class="lbl-short">Chg</span></span>
+        <span class="fin-label" style="margin:0;justify-content:flex-end;"><span class="lbl-full">Time in Pits</span><span class="lbl-short">Time</span></span>
+      </div>
+      ${body}
     </div>`;
 }
 
