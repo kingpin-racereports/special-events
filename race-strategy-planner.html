@@ -334,6 +334,8 @@
   /* ---- MyLaps import panel ---- */
   .mylaps-panel{margin-top:24px;padding:18px 12px;border:1px solid var(--gold);border-radius:14px;background:rgba(224,184,75,0.04);}
   @media(max-width:560px){ .mylaps-panel{padding:16px 10px;} }
+  /* Archive full-field standings: Laps and Stops dropped on phones */
+  @media(max-width:560px){ .archive-field .col-laps, .archive-field .col-stops{display:none;} }
   .mylaps-import-box{background:var(--panelRaised);border:1px solid var(--borderLight);border-radius:10px;padding:14px 16px;}
   .mylaps-overview-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
   .mylaps-stat-tile{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 12px 10px;}
@@ -3534,8 +3536,8 @@ function renderMylapsPanel(race){
       <td class="num">P${i+1}</td>
       <td><span class="num">#${esc(r.startNumber)}</span> - <span style="font-weight:600;">${esc(r.name)}</span></td>
       <td class="num">${esc(mylaps.intervals[r.startNumber] ?? "—")}</td>
-      <td class="num">${r.numberOfLaps}</td>
-      <td class="stops">${mylaps.pitStopsByNumber[r.startNumber] ?? 0}</td>
+      <td class="num col-laps">${r.numberOfLaps}</td>
+      <td class="stops col-stops">${mylaps.pitStopsByNumber[r.startNumber] ?? 0}</td>
       <td class="mylaps-cls" style="white-space:nowrap;">${classPosCell(r.resultClass, r.positionInClass, r.status !== "DNS" && r.numberOfLaps > 0)}</td>
       <td>${statusBadge}</td>
     </tr>`;
@@ -3596,8 +3598,8 @@ function renderMylapsPanel(race){
 
       ${state.mylapsShowFullField ? `
       <div class="mylaps-table-wrap">
-      <table class="mylaps-table">
-        <thead><tr><th>Finish</th><th>Car</th><th>Gap</th><th>Laps</th><th>Stops</th><th>Class</th><th>Status</th></tr></thead>
+      <table class="mylaps-table archive-field">
+        <thead><tr><th>Finish</th><th>Car</th><th>Gap</th><th class="col-laps">Laps</th><th class="col-stops">Stops</th><th>Class</th><th>Status</th></tr></thead>
         <tbody>${fieldRows}</tbody>
       </table>
       </div>
