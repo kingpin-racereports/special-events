@@ -3589,8 +3589,8 @@ function renderMylapsPanel(race){
         ${overviewTile("Longest Stint - GTO", mylaps.longestStint ? `${mylaps.longestStint.lapCount} laps` : "—", longestStintSub(mylaps.longestStint))}
         ${mylaps.source === "redmist" ? `
           ${overviewTile(`Fastest Lap${mylaps.fastestLap?.cls ? ` - ${esc(mylaps.fastestLap.cls)}` : ""}`, mylaps.fastestLap ? mylapsFmtTime(mylaps.fastestLap.seconds) : "—", mylaps.fastestLap ? `#${esc(mylaps.fastestLap.num)} ${esc(mylaps.fastestLap.name)}` : "")}
-          ${overviewTile("Fastest Pit Stop - GTO", mylaps.fastestStop ? `${mylaps.fastestStop.seconds.toFixed(1)}s` : "—", mylaps.fastestStop ? `#${esc(mylaps.fastestStop.num)} ${esc(mylaps.fastestStop.name)}` : "")}
-          ${overviewTile("Fastest Driver Chg - GTO", mylaps.fastestStopDc ? `${mylaps.fastestStopDc.seconds.toFixed(1)}s` : "—", mylaps.fastestStopDc ? `#${esc(mylaps.fastestStopDc.num)} ${esc(mylaps.fastestStopDc.name)}${(mylaps.fastestStopDc.driverOut || mylaps.fastestStopDc.driverIn) ? `<br>${esc(driverSurname(mylaps.fastestStopDc.driverOut))} → ${esc(driverSurname(mylaps.fastestStopDc.driverIn))}` : ""}` : "")}
+          ${overviewTile("Fastest Pit Stop", mylaps.fastestStop ? `${mylaps.fastestStop.seconds.toFixed(1)}s` : "—", mylaps.fastestStop ? `#${esc(mylaps.fastestStop.num)} ${esc(mylaps.fastestStop.name)}` : "")}
+          ${overviewTile("Fastest Driver Change", mylaps.fastestStopDc ? `${mylaps.fastestStopDc.seconds.toFixed(1)}s` : "—", mylaps.fastestStopDc ? `#${esc(mylaps.fastestStopDc.num)} ${esc(mylaps.fastestStopDc.name)}${(mylaps.fastestStopDc.driverOut || mylaps.fastestStopDc.driverIn) ? `<br>${esc(driverSurname(mylaps.fastestStopDc.driverOut))} → ${esc(driverSurname(mylaps.fastestStopDc.driverIn))}` : ""}` : "")}
         ` : ""}
       </div>
       ${mylaps.reconstructedFromDb ? `
