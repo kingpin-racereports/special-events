@@ -331,25 +331,24 @@
   .fin-label{font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.04em;color:var(--textFaint);display:flex;align-items:center;gap:6px;margin-bottom:4px;}
   .btn-gold{border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;padding:10px 0;display:flex;align-items:center;justify-content:center;gap:6px;border:none;background:var(--gold);color:#0A0C10;}
 
-  /* ---- MyLaps import panel ---- */
-  .mylaps-panel{margin-top:24px;padding:18px 12px;border:1px solid var(--gold);border-radius:14px;background:rgba(224,184,75,0.04);}
-  @media(max-width:560px){ .mylaps-panel{padding:16px 10px;} }
+  /* ---- Results panels (archive overview + live standings) ---- */
+  .results-panel{margin-top:24px;padding:18px 12px;border:1px solid var(--gold);border-radius:14px;background:rgba(224,184,75,0.04);}
+  @media(max-width:560px){ .results-panel{padding:16px 10px;} }
   /* Archive full-field standings: Laps and Stops dropped on phones */
   @media(max-width:560px){ .archive-field .col-laps, .archive-field .col-stops{display:none;} }
-  .mylaps-import-box{background:var(--panelRaised);border:1px solid var(--borderLight);border-radius:10px;padding:14px 16px;}
-  .mylaps-overview-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
-  .mylaps-stat-tile{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 12px 10px;}
-  .mylaps-stat-label{font-family:'JetBrains Mono',monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:0.07em;color:var(--textFaint);margin-bottom:5px;}
-  .mylaps-stat-value{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:22px;line-height:1;color:var(--text);}
-  .mylaps-stat-sub{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--textMuted);margin-top:5px;}
-  @media(max-width:480px){ .mylaps-overview-grid{grid-template-columns:repeat(2,1fr);} }
-  .mylaps-stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px 16px;margin-top:10px;}
-  .mylaps-stat{display:flex;justify-content:space-between;font-size:13px;}
-  .mylaps-stat .lbl{color:var(--textFaint);}
+  .results-overview-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
+  .results-stat-tile{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 12px 10px;}
+  .results-stat-label{font-family:'JetBrains Mono',monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:0.07em;color:var(--textFaint);margin-bottom:5px;}
+  .results-stat-value{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:22px;line-height:1;color:var(--text);}
+  .results-stat-sub{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--textMuted);margin-top:5px;}
+  @media(max-width:480px){ .results-overview-grid{grid-template-columns:repeat(2,1fr);} }
+  .results-stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px 16px;margin-top:10px;}
+  .results-stat{display:flex;justify-content:space-between;font-size:13px;}
+  .results-stat .lbl{color:var(--textFaint);}
 
-  /* ---- MyLaps per-car stat tiles (inside collapsible body) ---- */
-  .mylaps-header-block{margin-top:0;}
-  .mylaps-carstat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:16px;}
+  /* ---- Per-car stat tiles ---- */
+  .results-header-block{margin-top:0;}
+  .results-carstat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:16px;}
   .live-summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:24px;}
   /* Competitors Pit Times (archive) */
   .pit-times-row{display:grid;grid-template-columns:minmax(0,1fr) 64px 92px 210px;gap:14px;align-items:center;padding:9px 10px;border-bottom:1px solid var(--border);}
@@ -374,31 +373,31 @@
     .pit-times-head .lbl-short{display:inline;}
   }
   .live-carstat-grid{grid-template-columns:repeat(3,1fr);}
-  .live-carstat-grid .mylaps-carstat-tile{min-width:0;}
-  .live-carstat-grid .mylaps-carstat-value{overflow-wrap:anywhere;}
+  .live-carstat-grid .results-carstat-tile{min-width:0;}
+  .live-carstat-grid .results-carstat-value{overflow-wrap:anywhere;}
   @media(max-width:480px){
     .live-carstat-grid{gap:6px;}
-    .live-carstat-grid .mylaps-carstat-tile{padding:8px 7px 7px;}
-    .live-carstat-grid .mylaps-carstat-value{font-size:15px;}
-    .live-carstat-grid .mylaps-stat-sub{font-size:9px;}
+    .live-carstat-grid .results-carstat-tile{padding:8px 7px 7px;}
+    .live-carstat-grid .results-carstat-value{font-size:15px;}
+    .live-carstat-grid .results-stat-sub{font-size:9px;}
   }
   @media(max-width:640px){ .live-summary-grid{grid-template-columns:repeat(2,1fr);} }
-  .mylaps-carstat-tile{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 10px 8px;}
-  .mylaps-carstat-value{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:17px;line-height:1;color:var(--text);}
-  .mylaps-stat .val{font-family:'JetBrains Mono',monospace;color:var(--text);}
-  .mylaps-table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:12px;}
-  .mylaps-table{width:100%;min-width:480px;border-collapse:collapse;}
-  .mylaps-table thead th{text-align:left;font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--textFaint);padding:0 8px 6px;border-bottom:1px solid var(--border);font-weight:500;white-space:nowrap;}
-  .mylaps-table tbody td{padding:7px 8px;font-size:12.5px;border-bottom:1px solid rgba(42,52,104,0.5);white-space:nowrap;}
-  .mylaps-table thead th:nth-child(1), .mylaps-table tbody td:nth-child(1),
-  .mylaps-table thead th:nth-child(2), .mylaps-table tbody td:nth-child(2){padding-left:6px;padding-right:6px;}
-  .mylaps-table .num{font-family:'JetBrains Mono',monospace;color:var(--textMuted);}
-  .mylaps-table .stops{font-family:'JetBrains Mono',monospace;font-weight:600;}
-  .mylaps-table .mylaps-cls{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);}
+  .results-carstat-tile{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 10px 8px;}
+  .results-carstat-value{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:17px;line-height:1;color:var(--text);}
+  .results-stat .val{font-family:'JetBrains Mono',monospace;color:var(--text);}
+  .results-table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:12px;}
+  .results-table{width:100%;min-width:480px;border-collapse:collapse;}
+  .results-table thead th{text-align:left;font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.07em;color:var(--textFaint);padding:0 8px 6px;border-bottom:1px solid var(--border);font-weight:500;white-space:nowrap;}
+  .results-table tbody td{padding:7px 8px;font-size:12.5px;border-bottom:1px solid rgba(42,52,104,0.5);white-space:nowrap;}
+  .results-table thead th:nth-child(1), .results-table tbody td:nth-child(1),
+  .results-table thead th:nth-child(2), .results-table tbody td:nth-child(2){padding-left:6px;padding-right:6px;}
+  .results-table .num{font-family:'JetBrains Mono',monospace;color:var(--textMuted);}
+  .results-table .stops{font-family:'JetBrains Mono',monospace;font-weight:600;}
+  .results-table .results-cls{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);}
   @media(max-width:480px){
-    .mylaps-table thead th:nth-child(6), .mylaps-table tbody td:nth-child(6){display:none;}
-    .mylaps-table thead th:nth-child(7), .mylaps-table tbody td:nth-child(7){display:none;}
-    .mylaps-table{min-width:0;}
+    .results-table thead th:nth-child(6), .results-table tbody td:nth-child(6){display:none;}
+    .results-table thead th:nth-child(7), .results-table tbody td:nth-child(7){display:none;}
+    .results-table{min-width:0;}
     /* Live quali/race standings: tighter on phones so every column fits
        without sideways scrolling. The team name absorbs the squeeze and
        truncates with an ellipsis instead of pushing Laps/Class off-screen. */
@@ -408,17 +407,17 @@
     .live-table thead th:nth-child(1), .live-table tbody td:nth-child(1),
     .live-table thead th:nth-child(2), .live-table tbody td:nth-child(2){padding-left:4px;padding-right:4px;}
     .live-table tbody td:nth-child(2){width:100%;max-width:0;overflow:hidden;text-overflow:ellipsis;}
-    .live-table .mylaps-cls{font-size:10px;}
+    .live-table .results-cls{font-size:10px;}
   }
-  .mylaps-badge{font-family:'JetBrains Mono',monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:0.07em;padding:2px 6px;border-radius:5px;}
-  .mylaps-badge.dnf{background:rgba(226,68,92,0.15);color:var(--red);}
-  .mylaps-badge.dns{background:#000;color:#7A7F8C;}
-  .mylaps-spinner{
+  .results-badge{font-family:'JetBrains Mono',monospace;font-size:9.5px;text-transform:uppercase;letter-spacing:0.07em;padding:2px 6px;border-radius:5px;}
+  .results-badge.dnf{background:rgba(226,68,92,0.15);color:var(--red);}
+  .results-badge.dns{background:#000;color:#7A7F8C;}
+  .results-spinner{
     width:28px;height:28px;border-radius:50%;
     border:3px solid rgba(224,184,75,0.18);border-top-color:var(--gold);
-    animation:mylaps-spin 0.8s linear infinite;
+    animation:results-spin 0.8s linear infinite;
   }
-  @keyframes mylaps-spin{ to{ transform:rotate(360deg); } }
+  @keyframes results-spin{ to{ transform:rotate(360deg); } }
   .btn-gold:disabled{background:var(--panelRaised);color:var(--textFaint);cursor:not-allowed;}
 
   .top-actions{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;}
@@ -696,12 +695,9 @@ let state = {
   addingReserve: new Set(), // UI-only: which cars currently have the "Add Reserve Driver" input open
   reserveDraft: {}, // UI-only: in-progress reserve driver name per car id, keyed by car.id
 
-  mylapsImporting: false,   // UI-only: import panel expanded
-  mylapsSessionDraft: "",   // UI-only: session id input value
-  mylapsLoading: false,     // UI-only: fetch in progress
-  mylapsError: null,        // UI-only: last fetch/parse error message
-  mylapsShowFullField: false, // UI-only: full standings table expanded
-  mylapsAutoLoading: false, // UI-only: fetching saved results from Supabase after opening an archived race
+  archiveError: null,       // UI-only: last Build Results from Red Mist error
+  showFullField: false,     // UI-only: archive full-field standings expanded
+  archiveLoading: false,    // UI-only: loading/building archived results after opening an archived race
 
   redmistEventId: null, // Red Mist event id currently being polled — set by subscribeRedmistLive(), null when nothing's live
   // Whichever WRL event is currently live, tracked independently of any
@@ -819,142 +815,8 @@ async function deleteCatalogEntry(id){
 }
 
 // ---- helpers ----
-// ================= MyLaps Speedhive import =================
-// Fetches + parses a session's classification and lap-time data directly
-// from api2.mylaps.com (confirmed to allow cross-origin browser fetch —
-// CORS-tested against this app's deployed origin) and computes the same
-// race-detail metrics validated in the standalone archive prototype.
-
-function mylapsTimeToSec(s){
-  if (s == null || s === "") return null;
-  const parts = s.split(":");
-  if (parts.length === 1) return parseFloat(parts[0]);
-  if (parts.length === 2) return parseInt(parts[0],10)*60 + parseFloat(parts[1]);
-  return parseInt(parts[0],10)*3600 + parseInt(parts[1],10)*60 + parseFloat(parts[2]);
-}
-
-// Fetches session XML (classification or alllaptimes) via our Supabase
-// Edge Function proxy (supabase/functions/mylaps-proxy) rather than
-// fetching api2.mylaps.com directly from the browser. Confirmed via
-// browser console that MyLaps rejects cross-origin requests from this
-// app's domain with a 403 (no Access-Control-Allow-Origin header) —
-// almost certainly an origin allowlist, which no client-side fix can get
-// around. The Edge Function fetches server-side instead, where no browser
-// Origin restriction applies, and hands back { xml: "<...>" }.
-async function fetchMylapsXML(sessionId, type){
-  const { data, error } = await supabase.functions.invoke("mylaps-proxy", {
-    body: { sessionId, type },
-  });
-  if (error){
-    throw new Error(`MyLaps proxy request failed for session ${sessionId} (${type}): ${error.message || error}`);
-  }
-  if (!data || typeof data.xml !== "string"){
-    const detail = data && data.error ? data.error : "no xml field in response";
-    throw new Error(`MyLaps proxy returned an unexpected response for session ${sessionId} (${type}): ${detail}`);
-  }
-
-  const text = data.xml;
-  const xmlStart = text.indexOf("<");
-  if (xmlStart === -1){
-    throw new Error(`MyLaps returned no XML for session ${sessionId} (${type}). First 200 chars: ${text.slice(0,200)}`);
-  }
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(text.slice(xmlStart), "text/xml");
-  const errNode = doc.querySelector("parsererror");
-  if (errNode){
-    throw new Error(`Could not parse MyLaps XML response for session ${sessionId} (${type}). First 300 chars: ${text.slice(0,300)}`);
-  }
-  return doc;
-}
-
-function parseMylapsClassification(doc){
-  const rows = [];
-  doc.querySelectorAll("rows > rows").forEach(row => {
-    const get = tag => row.querySelector(`:scope > ${tag}`)?.textContent ?? "";
-    const diff = row.querySelector(":scope > difference");
-    rows.push({
-      position: parseInt(get("position"),10),
-      positionInClass: parseInt(get("positionInClass"),10),
-      startNumber: get("startNumber"),
-      resultClass: get("resultClass"),
-      name: get("name"),
-      status: get("status"),
-      numberOfLaps: parseInt(get("numberOfLaps"),10) || 0,
-      bestLap: parseInt(get("bestLap"),10) || 0,
-      bestTime: get("bestTime"),
-      bestSpeed: parseFloat(get("bestSpeed")) || 0,
-      totalTime: get("totalTime"),
-      totalTimeSec: mylapsTimeToSec(get("totalTime")),
-      lapsBehind: diff ? parseInt(diff.querySelector("lapsBehind")?.textContent,10) : 0,
-      timeDiffSec: diff ? mylapsTimeToSec(diff.querySelector("timeDifference")?.textContent) : 0,
-    });
-  });
-  rows.sort((a,b)=>a.position-b.position);
-  return rows;
-}
-
-function parseMylapsLapTimes(doc){
-  // returns Map<position, Array<{lap, timeOfDay, lapTime, inPit, status}>>
-  const byPos = new Map();
-  doc.querySelectorAll("item").forEach(item => {
-    const pos = parseInt(item.querySelector(":scope > position")?.textContent, 10);
-    const laps = [];
-    item.querySelectorAll(":scope > laps > laps").forEach(lap => {
-      const lapTimeStr = lap.querySelector("lapTime")?.textContent ?? "";
-      // MyLaps documents lap status as an ARRAY (a lap can carry more than
-      // one flag color at once, e.g. during a yellow-to-red transition) —
-      // .querySelector only ever returns the first, silently dropping a
-      // RED that happens to be listed after a YELLOW. Check every status
-      // child and take the most severe one present.
-      const statusValues = Array.from(lap.querySelectorAll("status status")).map(s => s.textContent);
-      const status = statusValues.includes("RED") ? "RED"
-                    : statusValues.includes("YELLOW") ? "YELLOW"
-                    : "GREEN";
-      laps.push({
-        lap: parseInt(lap.querySelector("lap")?.textContent,10),
-        timeOfDay: parseInt(lap.querySelector("timeOfDay")?.textContent,10),
-        lapTime: mylapsTimeToSec(lapTimeStr),
-        inPit: lap.querySelector("inPit")?.textContent === "true",
-        status,
-      });
-    });
-    byPos.set(pos, laps);
-  });
-  return byPos;
-}
-
-// Consecutive inPit=true laps count as a single stop.
-function countPitStops(laps){
-  let stops = 0, prevInPit = false;
-  for (const l of laps){
-    if (l.inPit && !prevInPit) stops++;
-    prevInPit = l.inPit;
-  }
-  return stops;
-}
-
-// True interval to the car directly ahead (by finish order), truncated to
-// one decimal. Only meaningful when both cars share the same lap count —
-// otherwise falls back to the lap deficit, since a raw time subtraction
-// across different distances isn't a real gap.
-function computeIntervals(classification){
-  const running = classification.filter(r => r.startNumber.toLowerCase() !== "53x" && r.status !== "DNS");
-  let prev = null;
-  const intervals = {};
-  running.forEach(r => {
-    if (r.position === 1) { intervals[r.startNumber] = "Leader"; }
-    else if (!prev) { intervals[r.startNumber] = "—"; }
-    else if (prev.numberOfLaps === r.numberOfLaps){
-      const gap = Math.floor((r.totalTimeSec - prev.totalTimeSec)*10)/10;
-      intervals[r.startNumber] = `+${gap.toFixed(1)}s`;
-    } else {
-      const lapDiff = prev.numberOfLaps - r.numberOfLaps;
-      intervals[r.startNumber] = `+${lapDiff} Lap${lapDiff===1?"":"s"}`;
-    }
-    prev = r;
-  });
-  return intervals;
-}
+// ================= Race results: shared lap computations =================
+// Classification + per-lap helpers used by the Red Mist archive build.
 
 // Clusters YELLOW-flagged laps by time gap (>10min = separate caution
 // periods) across the whole field. Mirrors the caution-period reconstruction
@@ -998,7 +860,7 @@ function computeCautions(lapsByPos){
 //
 // Deliberately does NOT exclude inPit=true laps here (unlike other gap-
 // based logic in this file) — during a red flag the field is commonly
-// directed to stop IN PIT LANE, which MyLaps still tags inPit=true even
+// directed to stop IN PIT LANE, which timing still tags as in-pit even
 // though it's not a real pit stop. Excluding those laps was confirmed
 // (against real data) to silently drop the leaders — and sometimes most
 // of the field — from red flag events entirely, since they're often the
@@ -1110,155 +972,10 @@ function computeLapsLed(classification, lapsByPos){
   return row ? { num: row.startNumber, name: row.name, laps: topLaps } : null;
 }
 
-function mylapsFmtTime(sec){
-  const m = Math.floor(sec/60), s = sec - m*60;
-  return `${m}:${s.toFixed(3).padStart(6,"0")}`;
-}
-
-// Top-level: given a session id, fetch + parse + compute everything needed
-// for the archive panel. Excludes non-running "x" entries throughout.
-async function loadMylapsSession(sessionId, race){
-  const [classDoc, lapsDoc] = await Promise.all([
-    fetchMylapsXML(sessionId, "classification"),
-    fetchMylapsXML(sessionId, "alllaptimes"),
-  ]);
-  const classification = parseMylapsClassification(classDoc).filter(r => r.startNumber.toLowerCase() !== "53x");
-  const lapsByPos = parseMylapsLapTimes(lapsDoc);
-
-  const redFlagWindows = computeRedFlags(lapsByPos);
-
-  const pitStopsByNumber = {};
-  classification.forEach(r => {
-    const laps = lapsByPos.get(r.position) || [];
-    pitStopsByNumber[r.startNumber] = countPitStops(laps);
-  });
-
-  const intervals = computeIntervals(classification);
-
-  // Best Stint Pace / Longest Stint are hardcoded to GTO — Kingpin's own
-  // class — rather than derived from whatever class(es) happen to be in
-  // this race's car list, so the label is always accurate and stable.
-  const raceClasses = new Set(["GTO"]);
-
-  const running = classification.filter(r => r.status !== "DNS");
-  const entries = classification.length;
-  const finishers = classification.filter(r => r.status === "Normal").length;
-  const dnf = classification.filter(r => r.status === "DNF").length;
-  const dns = classification.filter(r => r.status === "DNS").length;
-  const totalLaps = Math.max(...classification.map(r=>r.numberOfLaps));
-  const totalPitStops = Object.values(pitStopsByNumber).reduce((a,b)=>a+b,0);
-  const carsOnLeadLap = running.filter(r => r.lapsBehind === 0).length;
-  const cautions = computeCautions(lapsByPos);
-  const redFlags = redFlagWindows;   // computed above, reused here
-  const stints = computeStints(classification, lapsByPos, raceClasses, 15);
-  const lapsLed = computeLapsLed(classification, lapsByPos);
-
-  return {
-    sessionId, fetchedAt: new Date().toISOString(),
-    classification, pitStopsByNumber, intervals,
-    overview: { entries, finishers, dnf, dns, totalLaps, totalPitStops, carsOnLeadLap },
-    cautions, redFlags, bestStint: stints.best, longestStint: stints.longest, lapsLed,
-    raceClasses: [...raceClasses],
-  };
-}
-
-// Persists the classification-level summary (NOT lap-by-lap data — that's
-// intentionally not stored, see mylaps_results_migration.sql) so the
-// import is visible to every engineer/driver, on any device, without
-// needing to re-fetch from MyLaps. Upserts one row per car, keyed on
-// (race_id, start_number), so re-importing updates in place.
-async function saveMylapsResultsToSupabase(raceId, mylaps){
-  const rows = mylaps.classification.map(r => ({
-    race_id: raceId, session_id: mylaps.sessionId,
-    start_number: r.startNumber, team_name: r.name, result_class: r.resultClass, status: r.status,
-    position: r.position, position_in_class: r.positionInClass, laps_behind: r.lapsBehind,
-    total_time: r.totalTime, best_time: r.bestTime, best_lap: r.bestLap, best_speed: r.bestSpeed,
-    number_of_laps: r.numberOfLaps, pit_stops: mylaps.pitStopsByNumber[r.startNumber] ?? 0,
-    fetched_at: mylaps.fetchedAt,
-  }));
-  const { error: resultsErr } = await supabase.from("mylaps_results").upsert(rows, { onConflict: "race_id,start_number" });
-  if (resultsErr) console.error("saveMylapsResultsToSupabase (mylaps_results) failed:", resultsErr);
-
-  // Cautions/laps-led/best-stint/longest-stint are already-computed plain
-  // objects (see loadMylapsSession) — saved as-is, not recomputed here.
-  const { error: summaryErr } = await supabase.from("mylaps_race_summary").upsert({
-    race_id: raceId, session_id: mylaps.sessionId,
-    cautions: mylaps.cautions || [],
-    red_flags: mylaps.redFlags || [],
-    laps_led: mylaps.lapsLed || null,
-    best_stint: mylaps.bestStint || null,
-    longest_stint: mylaps.longestStint || null,
-    fetched_at: mylaps.fetchedAt,
-  }, { onConflict: "race_id" });
-  if (summaryErr) console.error("saveMylapsResultsToSupabase (mylaps_race_summary) failed:", summaryErr);
-
-  return !resultsErr && !summaryErr;
-}
-
-// Reconstructs a mylaps-shaped object from mylaps_results +
-// mylaps_race_summary, for reopening an archived race without re-fetching
-// from MyLaps. Everything the fresh-import view shows comes back fully,
-// including Total Cautions/Most Laps Led/Best Stint Pace/Longest Stint —
-// those are read back from mylaps_race_summary rather than recomputed,
-// since the raw lap-by-lap data itself isn't stored.
-//
-// `reconstructedFromDb: true` only when mylaps_race_summary has no row
-// for this race — meaning it was imported before this table existed.
-// That's the one case those four tiles still need a fresh Re-import.
-async function loadMylapsResultsFromSupabase(raceId){
-  const [{ data, error }, { data: summaryData, error: summaryErr }] = await Promise.all([
-    supabase.from("mylaps_results").select("*").eq("race_id", raceId),
-    supabase.from("mylaps_race_summary").select("*").eq("race_id", raceId).maybeSingle(),
-  ]);
-  if (error){ console.error("loadMylapsResultsFromSupabase (mylaps_results) failed:", error); return null; }
-  if (summaryErr) console.error("loadMylapsResultsFromSupabase (mylaps_race_summary) failed:", summaryErr);
-  if (!data || !data.length) return null;
-
-  const classification = data.map(row => ({
-    position: row.position, positionInClass: row.position_in_class,
-    startNumber: row.start_number, resultClass: row.result_class,
-    name: row.team_name, status: row.status,
-    numberOfLaps: row.number_of_laps, bestLap: row.best_lap,
-    bestTime: row.best_time, bestSpeed: row.best_speed != null ? Number(row.best_speed) : 0,
-    totalTime: row.total_time, totalTimeSec: mylapsTimeToSec(row.total_time),
-    lapsBehind: row.laps_behind ?? 0, timeDiffSec: 0,
-  })).sort((a,b)=>a.position-b.position);
-
-  const pitStopsByNumber = {};
-  data.forEach(row => {
-    pitStopsByNumber[row.start_number] = row.pit_stops ?? 0;
-  });
-
-  const intervals = computeIntervals(classification);
-
-  const running = classification.filter(r => r.status !== "DNS");
-  const entries = classification.length;
-  const finishers = classification.filter(r => r.status === "Normal").length;
-  const dnf = classification.filter(r => r.status === "DNF").length;
-  const dns = classification.filter(r => r.status === "DNS").length;
-  const totalLaps = classification.length ? Math.max(...classification.map(r=>r.numberOfLaps)) : 0;
-  const totalPitStops = Object.values(pitStopsByNumber).reduce((a,b)=>a+b,0);
-  const carsOnLeadLap = running.filter(r => r.lapsBehind === 0).length;
-
-  return {
-    sessionId: data[0].session_id, fetchedAt: data[0].fetched_at,
-    classification, pitStopsByNumber, intervals,
-    overview: { entries, finishers, dnf, dns, totalLaps, totalPitStops, carsOnLeadLap },
-    cautions: summaryData ? (summaryData.cautions || []) : [],
-    redFlags: summaryData ? (summaryData.red_flags || []) : [],
-    lapsLed: summaryData ? summaryData.laps_led : null,
-    bestStint: summaryData ? summaryData.best_stint : null,
-    longestStint: summaryData ? summaryData.longest_stint : null,
-    raceClasses: [...new Set(classification.map(r=>r.resultClass).filter(Boolean))],
-    reconstructedFromDb: !summaryData,
-  };
-}
-
 // =============== Red Mist race archive ===============
-// Builds the archived race's results from Red Mist data instead of a
-// MyLaps import. Produces the exact same object shape loadMylapsSession()
-// does (race.mylaps), so the Race Overview tiles, full-field standings,
-// per-car result tiles and finish positions all render unchanged.
+// Builds the archived race's results (race.archiveResults) from Red Mist
+// data — the Race Overview tiles, full-field standings, per-car result
+// tiles and finish positions all render from this one object.
 //
 // Sources:
 //   redmist_race_results  — final classification, written by the poller
@@ -1304,7 +1021,7 @@ function rmResultStatus(s){
   return "DNF"; // DNF, or a Red Mist status like Mechanical / Contact
 }
 
-// Final classification in MyLaps shape. Positions are re-numbered 1..n in
+// Final classification, one row per car. Positions are re-numbered 1..n in
 // Red Mist's overall order so they're guaranteed unique (the lap-based
 // helpers key laps by position).
 function rmClassification(resultRows){
@@ -1333,7 +1050,6 @@ function rmClassification(resultRows){
       numberOfLaps: r.laps || 0,
       bestLap: r.best_lap || 0,
       bestTime: best != null ? fmtLapTime(best) : "",
-      bestSpeed: 0,
       totalTime: "", totalTimeSec: null,
       lapsBehind: winnerLaps - (r.laps || 0),
       timeDiffSec: 0,
@@ -1343,7 +1059,7 @@ function rmClassification(resultRows){
   });
 }
 
-// Laps per car in the MyLaps lap shape: { lap, timeOfDay, lapTime, inPit, status }.
+// Laps per car: { lap, timeOfDay, lapTime, inPit, status }.
 // inPit covers the pit lap, the out-lap after it, and — as a fallback for
 // laps recorded before pit detection worked — any lap over 150% of that
 // car's median, so a stint never runs straight through an unflagged stop.
@@ -1390,8 +1106,7 @@ function rmFlagSummary(periods){
 }
 
 // Clean average lap per car across the whole race (no pit/out/caution
-// laps, nothing over 110% of the car's median) — replaces MyLaps' speed
-// tile, which Red Mist has no data for.
+// laps, nothing over 110% of the car's median).
 function rmAvgLaps(classification, lapsByPos){
   const out = {};
   classification.forEach(c => {
@@ -1411,7 +1126,7 @@ const RM_MIN_PIT_MS = 15000; // shorter "stops" are drive-throughs / timing nois
 function rmFastestLap(classification){
   let best = null;
   classification.forEach(c => {
-    const t = mylapsTimeToSec(c.bestTime);
+    const t = rmTimeToSeconds(c.bestTime);
     if (!t || c.status === "DNS") return;
     if (!best || t < best.seconds) best = { num: c.startNumber, name: c.name, cls: c.resultClass, seconds: t, lap: c.bestLap || null };
   });
@@ -2043,8 +1758,8 @@ function debriefScaleColor(t){
 
 // One bar across the driver's longest Saturday stint, colored by pace vs.
 // the stint's opening (green held, amber drifting, red fading), with the
-// drop-off and Sunday's stint length marked on it.
-function debriefFadeBar(p, sundayMin){
+// drop-off marked when there is one.
+function debriefFadeBar(p){
   const total = p.longestMin;
   if (!(total > 0)) return "";
   const pos = m => Math.max(0, Math.min(100, m / total * 100));
@@ -2056,48 +1771,17 @@ function debriefFadeBar(p, sundayMin){
   if (grad.length === 1) grad.push(grad[0].replace(/[\d.]+%$/, "100%"));
   const marks = [];
   if (p.fadeMin != null) marks.push({ at: p.fadeMin, label: `Drop-off ${p.fadeMin}m`, color: T.red });
-  if (sundayMin){
-    const near = marks.find(m => Math.abs(pos(m.at) - pos(sundayMin)) < 4);
-    if (near) near.label += ` · Sunday ${sundayMin}m`;
-    else marks.push({ at: sundayMin, label: `Sunday ${sundayMin}m`, color: "var(--text)" });
-  }
-  // Labels closer than ~30% of the bar would overlap — sort by position
-  // and drop each clashing label to the next row.
-  marks.sort((a, b) => a.at - b.at);
-  marks.forEach((m, k) => { m.row = k > 0 && pos(m.at) - pos(marks[k - 1].at) < 30 ? 1 - marks[k - 1].row : 0; });
-  const rows = marks.some(m => m.row === 1) ? 2 : 1;
   const tick = m => `<span style="position:absolute;left:${pos(m.at)}%;top:-3px;width:2px;height:14px;margin-left:-1px;border-radius:1px;background:var(--text);"></span>`;
   const label = m => {
     const x = pos(m.at), align = x > 80 ? "translateX(-100%)" : x < 20 ? "none" : "translateX(-50%)";
-    return `<span style="position:absolute;left:${x}%;top:${m.row * 16}px;transform:${align};white-space:nowrap;color:${m.color};font-weight:600;">${m.label}</span>`;
+    return `<span style="position:absolute;left:${x}%;top:0;transform:${align};white-space:nowrap;color:${m.color};font-weight:600;">${m.label}</span>`;
   };
+  // No drop-off: just the bar, no labels.
   return `
-    <div style="margin:10px 0 4px;">
+    <div style="margin:10px 0 ${marks.length ? 4 : 10}px;">
       <div style="position:relative;height:8px;border-radius:4px;background:linear-gradient(90deg, ${grad.join(", ")});">${marks.map(tick).join("")}</div>
-      <div style="position:relative;height:${rows * 16}px;margin-top:4px;font-size:11px;color:var(--textFaint);">
-        ${marks.length ? marks.map(label).join("") : `<span style="position:absolute;left:0;">0m</span><span style="position:absolute;right:0;">${Math.round(total)}m</span>`}
-      </div>
+      ${marks.length ? `<div style="position:relative;height:16px;margin-top:4px;font-size:11px;">${marks.map(label).join("")}</div>` : ""}
     </div>`;
-}
-
-function debriefDecisionLine(d){
-  const dec = d.decision, p = d.profile;
-  if (!dec) return "";
-  const fmtPct = x => `+${(x * 100).toFixed(1)}%`;
-  switch (dec.kind){
-    case "shorten":
-      return `Shortened ${dec.from} → ${dec.to} min: pace ${fmtPct(p.fadePct)} vs. stint opening from minute ${p.fadeMin}`;
-    case "lengthen":
-      return `Lengthened ${dec.from} → ${dec.to} min: held opening pace through ${Math.round(p.fadeMin ?? p.heldThrough)} min on Saturday`;
-    case "hold":
-      return p.fadeMin != null
-        ? `Kept at ${dec.from} min: drop-off starts at minute ${p.fadeMin}, past the planned length`
-        : `Kept at ${dec.from} min: pace held through ${Math.round(p.heldThrough)} min`;
-    case "low":
-      return `Kept at ${dec.from} min: not enough clean Saturday laps to change it`;
-    default:
-      return `Kept at ${dec.from} min: no Saturday laps found for this driver`;
-  }
 }
 
 function renderDebriefPanel(){
@@ -2109,7 +1793,6 @@ function renderDebriefPanel(){
   }
   const fmtS = s => s == null ? "—" : `${s.toFixed(1)}s`;
   const fmtN = (n, d = 1) => n == null ? "—" : n.toFixed(d);
-  const fmtLoss = s => s >= 60 ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}` : `${Math.round(s)}s`;
   const line = t => `<div style="font-size:13px;line-height:1.5;color:var(--textMuted);margin:3px 0;">${t}</div>`;
   const stat = (label, value) => `<span style="white-space:nowrap;"><span style="color:var(--textFaint);">${label}</span> ${value}</span>`;
 
@@ -2117,20 +1800,18 @@ function renderDebriefPanel(){
     const p = d.profile;
     const dot = `<span style="width:8px;height:8px;border-radius:999px;background:${debriefPaceColor(c.drivers, d.effective)};display:inline-block;"></span>`;
     const head = `<div style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;">${dot}${esc(d.name)}${d.name === c.closer && c.closerPlaced ? ` <span style="color:var(--textFaint);font-weight:400;">· closer</span>` : ""}</div>`;
-    if (!p) return `<div style="padding:10px 0;border-top:1px solid var(--border);">${head}${line(esc(debriefDecisionLine(d)))}</div>`;
+    if (!p) return `<div style="padding:10px 0;border-top:1px solid var(--border);">${head}</div>`;
     const stats = [
       stat("Clean lap", fmtLapTime(p.adjBase)),
       stat("Race pace", fmtLapTime(p.effective)),
       stat("Consistency", p.stdev != null ? `±${p.stdev.toFixed(2)}s` : "—"),
       stat("Lost off-pace", `${p.lossPerHour.toFixed(1)}s/hr`),
     ].join(`<span style="color:var(--border);margin:0 6px;">|</span>`);
-    const sunday = d.decision && d.decision.kind !== "none" ? (d.decision.to ?? d.decision.from) : null;
     return `
       <div style="padding:10px 0;border-top:1px solid var(--border);">
         ${head}
         <div style="font-size:12px;color:var(--textMuted);display:flex;flex-wrap:wrap;gap:4px 0;margin-top:4px;">${stats}</div>
-        ${debriefFadeBar(p, sunday)}
-        ${line(esc(debriefDecisionLine(d)))}
+        ${debriefFadeBar(p)}
       </div>`;
   };
 
@@ -2257,7 +1938,6 @@ function rmAssemble(classification, sessionLabel, summary){
   });
   const running = classification.filter(r => r.status !== "DNS");
   return {
-    source: "redmist",
     sessionId: sessionLabel, fetchedAt: summary?.built_at || new Date().toISOString(),
     classification, pitStopsByNumber, intervals,
     overview: {
@@ -2281,7 +1961,6 @@ function rmAssemble(classification, sessionLabel, summary){
     driverConsistency: summary?.driver_consistency || {},
     pitTimes: summary?.pit_times || null,
     raceClasses: ["GTO"],
-    reconstructedFromDb: false,
   };
 }
 
@@ -2353,7 +2032,7 @@ async function buildRedmistArchive(race, { save } = { save: false }){
 
 // Opening an archived race: saved results + saved summary, no lap reads.
 // Falls back to a full build if the summary was never saved, and returns
-// null if there are no Red Mist results at all (MyLaps-era races).
+// null if there are no Red Mist results at all.
 async function loadRedmistArchive(race){
   const resultRows = await fetchRedmistResultRows(race);
   if (!resultRows) return null;
@@ -2366,16 +2045,13 @@ async function loadRedmistArchive(race){
   return rmAssemble(rmClassification(resultRows), resultRows[0].session_name, summary);
 }
 
-// Archived race open: Red Mist first, MyLaps saved import as the fallback
-// for races archived before Red Mist results existed.
 async function loadArchiveResults(race){
   try {
-    const rm = await loadRedmistArchive(race);
-    if (rm) return rm;
+    return await loadRedmistArchive(race);
   } catch (e){
-    console.error("[rm-archive] load failed, falling back to MyLaps:", e);
+    console.error("[rm-archive] load failed:", e);
+    return null;
   }
-  return loadMylapsResultsFromSupabase(race.id);
 }
 // =============== end Red Mist race archive ===============
 
@@ -3019,7 +2695,7 @@ function liveStatusBadge(st, inline = true){
       <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:0.05em;color:var(--text);">In Pit</span>
     </span>`;
   }
-  return `<span class="mylaps-badge ${st.tone}" style="${margin}">${esc(st.label)}</span>`;
+  return `<span class="results-badge ${st.tone}" style="${margin}">${esc(st.label)}</span>`;
 }
 
 // Race-wide summary above the first car tile while a race session is
@@ -3059,10 +2735,10 @@ function renderLiveRaceSummary(race){
 
   const flagColor = flagToLiveColor(flag);
   const tile = (label, value, sub) => `
-    <div class="mylaps-carstat-tile">
-      <div class="mylaps-stat-label">${label}</div>
-      <div class="mylaps-carstat-value">${value}</div>
-      ${sub ? `<div class="mylaps-stat-sub">${sub}</div>` : ""}
+    <div class="results-carstat-tile">
+      <div class="results-stat-label">${label}</div>
+      <div class="results-carstat-value">${value}</div>
+      ${sub ? `<div class="results-stat-sub">${sub}</div>` : ""}
     </div>`;
 
   return `
@@ -3182,24 +2858,24 @@ function subscribeHomeLiveWatch(){
     .subscribe();
 }
 
-// Matches this race's own cars (by car number) against imported MyLaps
-// classification rows, for the compact "By Car" summary.
-function matchMylapsToRaceCars(race, mylaps){
-  if (!mylaps) return [];
+// Matches this race's own cars (by car number) against the archived
+// classification rows, for the per-car result tiles and finish position.
+function matchArchiveToRaceCars(race, results){
+  if (!results) return [];
   return race.cars.map(car => {
-    const row = mylaps.classification.find(r => r.startNumber === car.number);
+    const row = results.classification.find(r => r.startNumber === car.number);
     if (!row) return { car, found: false };
     return {
       car, found: true,
       position: row.position, positionInClass: row.positionInClass,
       status: row.status, resultClass: row.resultClass,
-      bestTime: row.bestTime, bestLap: row.bestLap, bestSpeed: row.bestSpeed,
+      bestTime: row.bestTime, bestLap: row.bestLap,
       numberOfLaps: row.numberOfLaps,
-      pitStops: mylaps.pitStopsByNumber[car.number] ?? 0,
+      pitStops: results.pitStopsByNumber[car.number] ?? 0,
     };
   });
 }
-// =============== end MyLaps Speedhive import ===============
+// =============== end race results ===============
 
 function uid(prefix){ return prefix + "_" + Math.random().toString(36).slice(2,9); }
 function formatDate(iso){
@@ -3679,19 +3355,19 @@ function render(opts){
   }
 
   app.style.setProperty("--pulse-phase", `-${Math.round(performance.now() % 1200)}ms`); // 1200 = livePulse duration
-  // Horizontally-scrollable tables (live standings, quali, MyLaps) are
+  // Horizontally-scrollable tables (live standings, quali, archive) are
   // rebuilt on every live tick like everything else, and innerHTML resets
   // their scrollLeft to 0 — on a phone that snapped the standings table
   // back to the left edge every time any car's row changed. Same fix as
   // the track picker: capture before, restore instantly after. Matched by
   // order on the page, and only on same-page renders.
-  const tableScrolls = pageChanged ? [] : [...app.querySelectorAll(".mylaps-table-wrap")].map(el => el.scrollLeft);
+  const tableScrolls = pageChanged ? [] : [...app.querySelectorAll(".results-table-wrap")].map(el => el.scrollLeft);
 
   app.innerHTML = html;
   bindEvents();
 
   if (tableScrolls.some(x => x > 0)){
-    app.querySelectorAll(".mylaps-table-wrap").forEach((el, i) => {
+    app.querySelectorAll(".results-table-wrap").forEach((el, i) => {
       if (tableScrolls[i] == null) return;
       const prev = el.style.scrollBehavior;
       el.style.scrollBehavior = "auto";
@@ -4048,16 +3724,15 @@ function carCard(car){
     </div>`;
 }
 
-// Effective finish position for a car: MyLaps-derived (class position,
-// falling back to overall; DNF/DNS status takes priority over a numeric
-// position) once imported, since it's authoritative and requires no
-// manual entry. Falls back to the optionally-entered `car.finishPosition`
-// (still written to Supabase pre-archive, per the RLS note in
-// archiveRace()) when MyLaps hasn't been imported for this race yet.
+// Effective finish position for a car: from the archived Red Mist results
+// (class position, falling back to overall; DNF/DNS status takes priority
+// over a numeric position) once built. Falls back to the optionally-
+// entered `car.finishPosition` (still written to Supabase pre-archive, per
+// the RLS note in archiveRace()) when there are no archived results yet.
 // Returns a number, "DNF", "DNS", or null.
 function getEffectiveFinishPosition(car, race){
-  if (race && race.mylaps){
-    const m = matchMylapsToRaceCars({ cars:[car] }, race.mylaps)[0];
+  if (race && race.archiveResults){
+    const m = matchArchiveToRaceCars({ cars:[car] }, race.archiveResults)[0];
     if (m && m.found){
       if (m.status === "DNF") return "DNF";
       if (m.status === "DNS") return "DNS";
@@ -4065,7 +3740,7 @@ function getEffectiveFinishPosition(car, race){
     }
   }
   if (typeof car.finishPosition === "number" || car.finishPosition === "DNF") return car.finishPosition;
-  // No MyLaps import and nothing entered: fall back to the Red Mist result
+  // No archived results and nothing entered: fall back to the Red Mist result
   // saved at the checkered (class position, or its DNF/DNS status).
   const rr = race?.raceResults?.rows?.find(r => r.car_number === car.number);
   if (rr){
@@ -4134,7 +3809,7 @@ function renderPlan(){
         <span style="color:${bannerColor}">Archived — results below by car</span>
       </div>` : ""}
 
-      ${archived ? renderMylapsPanel(race) + competitorPitTimesPanel(race) : ""}
+      ${archived ? renderArchiveResultsPanel(race) + competitorPitTimesPanel(race) : ""}
 
       ${!archived ? renderLiveRaceSummary(race) : ""}
       ${!archived ? renderFinalStandingsTop(race) : ""}
@@ -4152,12 +3827,12 @@ function renderPlan(){
 
       ${trackDetailSection(plan.track)}
 
-      ${!archived ? renderLiveStandingsPanel(race) : (race?.mylaps ? "" : savedResultsPanel(race))}
+      ${!archived ? renderLiveStandingsPanel(race) : (race?.archiveResults ? "" : savedResultsPanel(race))}
 
       ${!readOnly ? `
       <div class="archive-box fade-in">
         <div class="head">${icon("archive",15)} Race Complete?</div>
-        <p>Archive this race, then import MyLaps results to pull in each car's finish position, fastest lap, pit stops, and more.</p>
+        <p>Archive this race to pull in each car's finish position, fastest lap, pit stops, and more from Red Mist.</p>
         <button class="btn-gold" id="archiveRace" data-act="archiveRace">${icon("trophy",14)} Archive Race</button>
       </div>` : ""}
     </div>`;
@@ -4167,31 +3842,13 @@ function infoChip(iconName,label,value){
   return `<div class="chip"><span class="ico">${icon(iconName,13)}</span><div><div class="lbl">${label}</div><div class="val">${esc(value)}</div></div></div>`;
 }
 
-// Shown once a race is archived — starting/finish position plus each
-// driver's total time behind the wheel (summed across their non-removed
-// stints only, so anything absorbed or dropped from a retirement doesn't
-// count toward drive time).
-// MyLaps Speedhive import panel — shown for archived races, engineers
-// only. Either an "Import" prompt (session id input) or, once
-// race.mylaps is populated, a compact by-car summary plus a collapsible
-// full-field standings table.
-// MyLaps Speedhive import panel — visible to EVERYONE for archived races
-// (engineers and read-only viewers alike), since it's just showing race
-// results once they exist. Only the actual import controls (the "Import"
-// button, the session-id form, "Re-import") are engineer-gated — those
-// are the only things that write data. Three states: a centered loading
-// spinner while state.mylapsAutoLoading is true (the brief window while
-// loadMylapsResultsFromSupabase() runs after opening the race), a
-// "results not available" message for non-engineers (or the Import
-// prompt for engineers) once that resolves with nothing, or the full
-// results view once race.mylaps is populated.
 // Competitors Pit Times (archive, Red Mist results only): each GTO
 // finisher's stops, driver changes and total time in the pits, least
 // first. Colour is by rank (green -> red) so one long stop doesn't flatten
 // everyone else's colour; the bar is actual time.
 function competitorPitTimesPanel(race){
-  const rows = race?.mylaps?.source === "redmist" ? race.mylaps.pitTimes : null;
-  if (state.mylapsAutoLoading || !rows?.length) return "";
+  const rows = race?.archiveResults?.pitTimes;
+  if (state.archiveLoading || !rows?.length) return "";
   const ours = new Set(race.cars.map(c => c.number));
   const maxS = Math.max(...rows.map(r => r.seconds), 1);
   const stops = [[63,178,127],[242,166,62],[226,68,92]]; // T.green -> T.amber -> T.red
@@ -4218,7 +3875,7 @@ function competitorPitTimesPanel(race){
       </div>`;
   }).join("");
   return `
-    <div class="mylaps-panel fade-in">
+    <div class="results-panel fade-in">
       <div style="margin-bottom:12px;"><span class="eyebrow" style="color:${T.gold};">Competitors Pit Times - GTO</span></div>
       <div class="pit-times-row pit-times-head">
         <span class="fin-label" style="margin:0;">Competitor</span>
@@ -4236,68 +3893,56 @@ function driverSurname(name){
   return parts.length ? parts[parts.length - 1] : "?";
 }
 
-function renderMylapsPanel(race){
+// Race Overview for an archived race, built from Red Mist. Visible to
+// everyone; only the Build / Rebuild controls are engineer-gated.
+function renderArchiveResultsPanel(race){
   if (!race) return "";
-  const mylaps = race.mylaps;
+  const res = race.archiveResults;
 
-  if (state.mylapsAutoLoading){
+  if (state.archiveLoading){
     return `
-      <div class="mylaps-panel fade-in" style="display:flex;justify-content:center;padding:32px 20px;">
-        <div class="mylaps-spinner"></div>
+      <div class="results-panel fade-in" style="display:flex;justify-content:center;padding:32px 20px;">
+        <div class="results-spinner"></div>
       </div>`;
   }
 
-  if (!mylaps){
+  if (!res){
     return `
-      <div class="mylaps-panel fade-in">
+      <div class="results-panel fade-in">
         ${!state.isEngineer ? `
           <p style="text-align:center;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--textFaint);margin:8px 0;">
             Race results are not official.
           </p>
-        ` : !state.mylapsImporting ? `
+        ` : `
           <div style="display:flex;flex-direction:column;align-items:center;gap:10px;">
             <button class="btn-gold" style="display:inline-flex;padding:10px 18px;" data-act="rm-archive-build">${icon("timer",14)} Build Results from Red Mist</button>
-            <button class="link-muted" style="font-size:11px;" data-act="mylaps-open">or import from MyLaps</button>
-            ${state.mylapsError ? `<p style="color:${T.red};font-size:12px;margin:0;">${esc(state.mylapsError)}</p>` : ""}
-          </div>
-        ` : `
-          <div class="mylaps-import-box">
-            <span class="eyebrow">MyLaps Speedhive Session ID</span>
-            <div style="display:flex;gap:8px;margin-top:8px;">
-              <input class="field font-mono" style="padding:8px 10px;font-size:13px;" placeholder="e.g. 12719160"
-                value="${esc(state.mylapsSessionDraft)}" data-act="mylaps-draft" ${state.mylapsLoading?"disabled":""} />
-              <button class="btn-primary" style="padding:8px 16px;font-size:13px;white-space:nowrap;" data-act="mylaps-run" ${state.mylapsLoading?"disabled":""}>
-                ${state.mylapsLoading ? "Fetching…" : "Fetch"}
-              </button>
-              <button class="link-muted" data-act="mylaps-cancel" ${state.mylapsLoading?"disabled":""}>${icon("x",14)}</button>
-            </div>
-            ${state.mylapsError ? `<p style="color:${T.red};font-size:12px;margin-top:8px;">${esc(state.mylapsError)}</p>` : ""}
+            ${state.archiveError ? `<p style="color:${T.red};font-size:12px;margin:0;">${esc(state.archiveError)}</p>` : ""}
           </div>
         `}
       </div>`;
   }
 
-  const fieldRows = state.mylapsShowFullField ? mylaps.classification.map((r,i) => {
+  const fieldRows = state.showFullField ? res.classification.map((r,i) => {
     const isOurs = race.cars.some(c=>c.number===r.startNumber);
-    const statusBadge = r.status === "DNF" ? `<span class="mylaps-badge dnf">DNF</span>`
-                       : r.status === "DNS" ? `<span class="mylaps-badge dns">DNS</span>` : "";
+    const statusBadge = r.status === "DNF" ? `<span class="results-badge dnf">DNF</span>`
+                       : r.status === "DNS" ? `<span class="results-badge dns">DNS</span>` : "";
     return `<tr style="${isOurs?`background:${T.gold}17;border-left:2px solid ${T.gold};`:""}">
       <td class="num" style="white-space:nowrap;">P${i+1}${classPodiumTrophy(r.positionInClass, r.status !== "DNS" && r.numberOfLaps > 0)}</td>
       <td><span class="num">#${esc(r.startNumber)}</span> - <span style="font-weight:600;">${esc(r.name)}</span></td>
-      <td class="num">${esc(mylaps.intervals[r.startNumber] ?? "—")}</td>
+      <td class="num">${esc(res.intervals[r.startNumber] ?? "—")}</td>
       <td class="num col-laps">${r.numberOfLaps}</td>
-      <td class="stops col-stops">${mylaps.pitStopsByNumber[r.startNumber] ?? 0}</td>
-      <td class="mylaps-cls" style="white-space:nowrap;">${classPosCell(r.resultClass, r.positionInClass)}</td>
+      <td class="stops col-stops">${res.pitStopsByNumber[r.startNumber] ?? 0}</td>
+      <td class="results-cls" style="white-space:nowrap;">${classPosCell(r.resultClass, r.positionInClass)}</td>
       <td>${statusBadge}</td>
     </tr>`;
   }).join("") : "";
 
-  const ov = mylaps.overview;
+  const ov = res.overview;
   const overviewTile = (label, value, sub) => `
-    <div class="mylaps-stat-tile">
-      <div class="mylaps-stat-label">${label}</div>
-      <div class="mylaps-stat-value">${value}</div>
-      ${sub ? `<div class="mylaps-stat-sub">${sub}</div>` : ""}
+    <div class="results-stat-tile">
+      <div class="results-stat-label">${label}</div>
+      <div class="results-stat-value">${value}</div>
+      ${sub ? `<div class="results-stat-sub">${sub}</div>` : ""}
     </div>`;
 
   // One outright winner gets the full "#num Team Name" treatment (matches
@@ -4311,43 +3956,35 @@ function renderMylapsPanel(race){
   };
 
   return `
-    <div class="mylaps-panel fade-in">
+    <div class="results-panel fade-in">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
         <span class="eyebrow" style="color:${T.gold};">Race Overview</span>
-        ${state.isEngineer ? (mylaps.source === "redmist"
-          ? `<button class="link-muted" data-act="rm-archive-build" style="font-size:11px;">${icon("rotate",12)} Rebuild</button>`
-          : `<button class="link-muted" data-act="mylaps-reimport" style="font-size:11px;">${icon("rotate",12)} Re-import</button>`) : ""}
+        ${state.isEngineer ? `<button class="link-muted" data-act="rm-archive-build" style="font-size:11px;">${icon("rotate",12)} Rebuild</button>` : ""}
       </div>
 
-      <div class="mylaps-overview-grid">
+      <div class="results-overview-grid">
         ${overviewTile("Total Laps", ov.totalLaps)}
         ${overviewTile("Total Pit Stops", ov.totalPitStops)}
         ${overviewTile("Entries", ov.entries)}
         ${overviewTile("Finishers", ov.finishers, `${ov.dnf} DNF`)}
-        ${overviewTile("Total Cautions", mylaps.cautions.length)}
-        ${mylaps.redFlags && mylaps.redFlags.length ? overviewTile("Red Flags", mylaps.redFlags.length) : ""}
+        ${overviewTile("Total Cautions", res.cautions.length)}
+        ${res.redFlags && res.redFlags.length ? overviewTile("Red Flags", res.redFlags.length) : ""}
         ${overviewTile("Cars on Lead Lap", ov.carsOnLeadLap)}
-        ${overviewTile("Most Laps Led", mylaps.lapsLed ? `${mylaps.lapsLed.laps} laps` : "—", mylaps.lapsLed ? `#${esc(mylaps.lapsLed.num)} ${esc(mylaps.lapsLed.name)}` : "")}
-        ${overviewTile("Best Stint Pace - GTO", mylaps.bestStint ? mylapsFmtTime(mylaps.bestStint.avg) : "—", mylaps.bestStint ? `#${esc(mylaps.bestStint.num)} ${esc(mylaps.bestStint.name)}` : "")}
-        ${overviewTile("Longest Stint - GTO", mylaps.longestStint ? `${mylaps.longestStint.lapCount} laps` : "—", longestStintSub(mylaps.longestStint))}
-        ${mylaps.source === "redmist" ? `
-          ${overviewTile(`Fastest Lap${mylaps.fastestLap?.cls ? ` - ${esc(mylaps.fastestLap.cls)}` : ""}`, mylaps.fastestLap ? mylapsFmtTime(mylaps.fastestLap.seconds) : "—", mylaps.fastestLap ? `#${esc(mylaps.fastestLap.num)} ${esc(mylaps.fastestLap.name)}` : "")}
-          ${overviewTile("Fastest Pit Stop", mylaps.fastestStop ? `${mylaps.fastestStop.seconds.toFixed(1)}s` : "—", mylaps.fastestStop ? `#${esc(mylaps.fastestStop.num)} ${esc(mylaps.fastestStop.name)}` : "")}
-          ${overviewTile("Fastest Driver Change", mylaps.fastestStopDc ? `${mylaps.fastestStopDc.seconds.toFixed(1)}s` : "—", mylaps.fastestStopDc ? `#${esc(mylaps.fastestStopDc.num)} ${esc(mylaps.fastestStopDc.name)}${(mylaps.fastestStopDc.driverOut || mylaps.fastestStopDc.driverIn) ? `<br>${esc(driverSurname(mylaps.fastestStopDc.driverOut))} → ${esc(driverSurname(mylaps.fastestStopDc.driverIn))}` : ""}` : "")}
-        ` : ""}
+        ${overviewTile("Most Laps Led", res.lapsLed ? `${res.lapsLed.laps} laps` : "—", res.lapsLed ? `#${esc(res.lapsLed.num)} ${esc(res.lapsLed.name)}` : "")}
+        ${overviewTile("Best Stint Pace - GTO", res.bestStint ? fmtLapTime(res.bestStint.avg) : "—", res.bestStint ? `#${esc(res.bestStint.num)} ${esc(res.bestStint.name)}` : "")}
+        ${overviewTile("Longest Stint - GTO", res.longestStint ? `${res.longestStint.lapCount} laps` : "—", longestStintSub(res.longestStint))}
+        ${overviewTile(`Fastest Lap${res.fastestLap?.cls ? ` - ${esc(res.fastestLap.cls)}` : ""}`, res.fastestLap ? fmtLapTime(res.fastestLap.seconds) : "—", res.fastestLap ? `#${esc(res.fastestLap.num)} ${esc(res.fastestLap.name)}` : "")}
+        ${overviewTile("Fastest Pit Stop", res.fastestStop ? `${res.fastestStop.seconds.toFixed(1)}s` : "—", res.fastestStop ? `#${esc(res.fastestStop.num)} ${esc(res.fastestStop.name)}` : "")}
+        ${overviewTile("Fastest Driver Change", res.fastestStopDc ? `${res.fastestStopDc.seconds.toFixed(1)}s` : "—", res.fastestStopDc ? `#${esc(res.fastestStopDc.num)} ${esc(res.fastestStopDc.name)}${(res.fastestStopDc.driverOut || res.fastestStopDc.driverIn) ? `<br>${esc(driverSurname(res.fastestStopDc.driverOut))} → ${esc(driverSurname(res.fastestStopDc.driverIn))}` : ""}` : "")}
       </div>
-      ${mylaps.reconstructedFromDb ? `
-      <p style="font-family:'JetBrains Mono',monospace;font-size:11px;color:${T.textFaint};margin-top:10px;">
-        This race was imported before caution/stint/laps-led tracking was added — Re-import to fill those four in.
-      </p>` : ""}
 
-      <button class="link-muted" data-act="mylaps-toggle-field" style="margin-top:16px;font-size:12px;">
-        ${state.mylapsShowFullField ? "Hide" : "Show"} full-field standings ${icon(state.mylapsShowFullField?"chevronUp":"chevronDown",12)}
+      <button class="link-muted" data-act="toggle-full-field" style="margin-top:16px;font-size:12px;">
+        ${state.showFullField ? "Hide" : "Show"} full-field standings ${icon(state.showFullField?"chevronUp":"chevronDown",12)}
       </button>
 
-      ${state.mylapsShowFullField ? `
-      <div class="mylaps-table-wrap">
-      <table class="mylaps-table archive-field">
+      ${state.showFullField ? `
+      <div class="results-table-wrap">
+      <table class="results-table archive-field">
         <thead><tr><th>Finish</th><th>Car</th><th>Gap</th><th class="col-laps">Laps</th><th class="col-stops">Stops</th><th>Class</th><th>Status</th></tr></thead>
         <tbody>${fieldRows}</tbody>
       </table>
@@ -4385,12 +4022,12 @@ function renderLiveQualifyingTable(race, fullField, opts = {}){
       <td><span class="num">#${esc(pos.car_number)}</span> - <span style="font-weight:600;">${esc(pos.team_name || "—")}</span></td>
       <td class="num" style="font-weight:600;">${fmtLapTime(r.best)}</td>
       <td class="num">${pos.last_lap_completed ?? 0}</td>
-      <td class="mylaps-cls">${esc(pos.class || "—")}</td>
+      <td class="results-cls">${esc(pos.class || "—")}</td>
     </tr>`;
   }).join("");
 
   return `
-    <div class="mylaps-panel live-panel fade-in">
+    <div class="results-panel live-panel fade-in">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;">
         <span class="eyebrow" style="color:${isLive ? T.red : T.gold};">${esc(title)} — Fastest Lap</span>
         ${opts.status ? `
@@ -4399,8 +4036,8 @@ function renderLiveQualifyingTable(race, fullField, opts = {}){
           <span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:10px;letter-spacing:0.05em;color:${isLive ? "var(--text)" : "var(--textFaint)"};">${isLive ? "LIVE" : "FINISHED"}</span>
         </span>` : ""}
       </div>
-      <div class="mylaps-table-wrap">
-      <table class="mylaps-table live-table">
+      <div class="results-table-wrap">
+      <table class="results-table live-table">
         <thead><tr><th>Pos</th><th>Car</th><th>Best Lap</th><th>Laps</th><th>Class</th></tr></thead>
         <tbody>${fieldRows}</tbody>
       </table>
@@ -4583,8 +4220,8 @@ function renderQualifyingPanels(race){
   return panels.join("");
 }
 
-// Live counterpart to renderMylapsPanel() above — same table markup/CSS
-// (.mylaps-table), reused deliberately so the two look identical, but
+// Live counterpart to renderArchiveResultsPanel() above — same table markup/CSS
+// (.results-table), reused deliberately so the two look identical, but
 // sourced from redmist_live_positions/redmist_live_pit_stops for every
 // car in the event (not just this team's own cars, and not just the
 // class either — same "full field" scope as the archived version).
@@ -4635,7 +4272,7 @@ function renderFinalResultsPanel(race, rows, stopCounts, subtitle){
   const body = sorted.map(r => {
     const isOurs = ourNumbers.has(r.car_number);
     const status = finalResultStatus(r, leaderLaps);
-    const badge = status ? `<span class="mylaps-badge ${status === "DNS" ? "dns" : "dnf"}">${esc(status)}</span>` : "";
+    const badge = status ? `<span class="results-badge ${status === "DNS" ? "dns" : "dnf"}">${esc(status)}</span>` : "";
     // Class P1–P3 (cars that started) get a gold / silver / bronze trophy
     // in the Class column — every class's winner and podium, not just the
     // overall leader's.
@@ -4660,17 +4297,17 @@ function renderFinalResultsPanel(race, rows, stopCounts, subtitle){
       <td class="num">${gap}</td>
       <td class="num">${r.last_lap_completed ?? 0}</td>
       <td class="stops">${stopCounts[r.car_number] ?? 0}</td>
-      <td class="mylaps-cls" style="white-space:nowrap;">${esc(r.class || "—")}${r.class_position ? ` <span style="color:${podium || "var(--textFaint)"};${podium ? "font-weight:700;" : ""}">${podium ? `<span style="display:inline-flex;vertical-align:-2px;margin-right:2px;">${icon("trophy",12)}</span>` : ""}P${r.class_position}</span>` : ""}</td>
+      <td class="results-cls" style="white-space:nowrap;">${esc(r.class || "—")}${r.class_position ? ` <span style="color:${podium || "var(--textFaint)"};${podium ? "font-weight:700;" : ""}">${podium ? `<span style="display:inline-flex;vertical-align:-2px;margin-right:2px;">${icon("trophy",12)}</span>` : ""}P${r.class_position}</span>` : ""}</td>
     </tr>`;
   }).join("");
   return `
-    <div class="mylaps-panel live-panel fade-in">
+    <div class="results-panel live-panel fade-in">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
         <span class="eyebrow" style="color:var(--text);">🏁 Final Results</span>
         ${subtitle ? `<span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--textFaint);">${esc(subtitle)}</span>` : ""}
       </div>
-      <div class="mylaps-table-wrap">
-      <table class="mylaps-table live-table">
+      <div class="results-table-wrap">
+      <table class="results-table live-table">
         <thead><tr><th>Pos</th><th>Car</th><th>Best Lap</th><th>Class Gap</th><th>Laps</th><th>Stops</th><th>Class</th></tr></thead>
         <tbody>${body}</tbody>
       </table>
@@ -4759,17 +4396,17 @@ function renderLiveStandingsPanel(race){
       <td class="num">${esc(gapLabel)}</td>
       <td class="num">${pos.last_lap_completed ?? 0}</td>
       <td class="stops">${stopCounts[pos.car_number] ?? 0}</td>
-      <td class="mylaps-cls">${esc(pos.class || "—")}</td>
+      <td class="results-cls">${esc(pos.class || "—")}</td>
     </tr>`;
   }).join("");
 
   return `
-    <div class="mylaps-panel live-panel fade-in">
+    <div class="results-panel live-panel fade-in">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
         <span class="eyebrow" style="color:${T.red};">Live Standings</span>
       </div>
-      <div class="mylaps-table-wrap">
-      <table class="mylaps-table live-table">
+      <div class="results-table-wrap">
+      <table class="results-table live-table">
         <thead><tr><th>Pos</th><th>Car</th><th>Last Lap</th><th>Gap</th><th>Laps</th><th>Stops</th><th>Class</th></tr></thead>
         <tbody>${fieldRows}</tbody>
       </table>
@@ -4777,40 +4414,33 @@ function renderLiveStandingsPanel(race){
     </div>`;
 }
 
-// Shown once a race is archived — starting/finish position plus each
-// driver's total time behind the wheel (summed across their non-removed
-// stints only, so anything absorbed or dropped from a retirement doesn't
-// count toward drive time).
-// MyLaps result summary for a single car, shown directly in that car's
+// Archived result summary for a single car, shown directly in that car's
 // always-visible tile header (not gated behind expand/collapse). Omits the
 // car number and "Normal" status badge since those are already shown in
 // the tile's own header — a DNF/DNS badge is still shown since that's
 // context not duplicated elsewhere. Each stat gets its own line.
-
-function mylapsCarHeaderBlock(car){
+function archiveCarHeaderBlock(car){
   const race = state.races.find(r=>r.id===state.currentRaceId);
-  if (!race || !race.mylaps) return "";
-  const m = matchMylapsToRaceCars({ cars:[car] }, race.mylaps)[0];
+  if (!race || !race.archiveResults) return "";
+  const m = matchArchiveToRaceCars({ cars:[car] }, race.archiveResults)[0];
   if (!m || !m.found) return "";
 
-  const statusBadge = m.status === "DNF" ? `<span class="mylaps-badge dnf">DNF</span>`
-                     : m.status === "DNS" ? `<span class="mylaps-badge dns">DNS</span>` : "";
+  const statusBadge = m.status === "DNF" ? `<span class="results-badge dnf">DNF</span>`
+                     : m.status === "DNS" ? `<span class="results-badge dns">DNS</span>` : "";
   const tile = (label, value, sub) => `
-    <div class="mylaps-carstat-tile">
-      <div class="mylaps-stat-label">${label}</div>
-      <div class="mylaps-carstat-value">${value}</div>
-      ${sub ? `<div class="mylaps-stat-sub">${sub}</div>` : ""}
+    <div class="results-carstat-tile">
+      <div class="results-stat-label">${label}</div>
+      <div class="results-carstat-value">${value}</div>
+      ${sub ? `<div class="results-stat-sub">${sub}</div>` : ""}
     </div>`;
 
   return `
-    <div class="mylaps-header-block">
-      <div class="mylaps-carstat-grid">
+    <div class="results-header-block">
+      <div class="results-carstat-grid">
         ${tile("Finish", `P${m.positionInClass || m.position}`, statusBadge || null)}
         ${tile("Overall Position", `P${m.position}`)}
         ${tile("Fastest Lap", m.bestTime && m.bestTime!=="00.000" ? esc(m.bestTime) : "—")}
-        ${race.mylaps.source === "redmist"
-          ? tile("Average Lap", race.mylaps.avgLapByNumber?.[car.number] ? mylapsFmtTime(race.mylaps.avgLapByNumber[car.number]) : "—")
-          : tile("Highest Speed Avg", m.bestSpeed ? `${m.bestSpeed.toFixed(1)} mph` : "—")}
+        ${tile("Average Lap", race.archiveResults.avgLapByNumber?.[car.number] ? fmtLapTime(race.archiveResults.avgLapByNumber[car.number]) : "—")}
         ${tile("Pit Stops", m.pitStops)}
         ${tile("Laps Completed", m.numberOfLaps)}
       </div>
@@ -4846,7 +4476,7 @@ function raceSummaryBlock(cp){
   });
   const totalMin = Object.values(totals).reduce((a,b)=>a+b, 0) || 1;
   const race = state.races.find(r=>r.id===state.currentRaceId);
-  const cons = race?.mylaps?.source === "redmist" ? (race.mylaps.driverConsistency?.[cp.car.number] || []) : null;
+  const cons = race?.archiveResults ? (race.archiveResults.driverConsistency?.[cp.car.number] || []) : null;
   const consFor = d => cons ? cons.find(x => sameDriverName(x.driver, d)) : null;
   const rangesText = c => c?.ranges?.length
     ? "Laps " + c.ranges.map(([a,b]) => a === b ? `${a}` : `${a}–${b}`).join(", ")
@@ -5042,10 +4672,10 @@ function liveTimingBlock(car){
   // badge elsewhere in the app — "+0"/"0" is just noise next to a plain
   // position number, worth showing only when something actually changed.
   const tile = (label, value, sub) => `
-    <div class="mylaps-carstat-tile">
-      <div class="mylaps-stat-label">${label}</div>
-      <div class="mylaps-carstat-value">${value}</div>
-      ${sub ? `<div class="mylaps-stat-sub">${sub}</div>` : ""}
+    <div class="results-carstat-tile">
+      <div class="results-stat-label">${label}</div>
+      <div class="results-carstat-value">${value}</div>
+      ${sub ? `<div class="results-stat-sub">${sub}</div>` : ""}
     </div>`;
 
   const cpg = pos.class_positions_gained;
@@ -5108,12 +4738,12 @@ function liveTimingBlock(car){
   const stintLabel = stats ? `${stats.stint_lap_count} lap${stats.stint_lap_count===1?"":"s"}` : "—";
 
   return `
-    <div class="mylaps-header-block">
+    <div class="results-header-block">
       <div class="summary-driver" style="margin-bottom:6px;">
         <span></span>
         <span class="fin-label" style="margin:0;">${liveIndicator(race, car.number).checkered ? `<span class="chk-flag" style="margin-right:4px;vertical-align:-1px;"></span> Final Timing` : `${icon("flag",12)} Live Timing`}</span>
       </div>
-      <div class="mylaps-carstat-grid live-carstat-grid">
+      <div class="results-carstat-grid live-carstat-grid">
         ${tile("In Seat", esc(pos.driver_name || "—"))}
         ${tile("Position", `P${pos.class_position ?? "—"}` + (gainedLabel ? ` <span style="font-size:13px;color:${gainedColor}">${gainedLabel}</span>` : ""))}
         ${tile("Current Stint", stintLabel)}
@@ -5233,7 +4863,7 @@ function carPlanSection(cp, plan, archived){
 
       ${isCollapsed ? "" : `
       <div class="car-plan-body fade-in">
-      ${archived ? mylapsCarHeaderBlock(car) + pitCycleBlock(car) + raceSummaryBlock(cp) : ""}
+      ${archived ? archiveCarHeaderBlock(car) + pitCycleBlock(car) + raceSummaryBlock(cp) : ""}
       ${hasLiveTiming ? liveTimingBlock(car) : ""}
 
       <div class="timeline">
@@ -5455,7 +5085,7 @@ function bindEvents(){
 
   app.querySelectorAll("[data-act]").forEach(el=>{
     const act = el.getAttribute("data-act");
-    if (["update-driver","update-start-pos","edit-stint-pos","edit-stint-driver","edit-stint-note","update-reserve-draft","stint-wheel","mylaps-draft"].includes(act)) return; // input/change events bound below
+    if (["update-driver","update-start-pos","edit-stint-pos","edit-stint-driver","edit-stint-note","update-reserve-draft","stint-wheel"].includes(act)) return; // input/change events bound below
     // act read at click time — a patched element can change data-act.
     listenOnce(el, "click", (e)=>{
       e.preventDefault();
@@ -5565,9 +5195,6 @@ function bindEvents(){
       const car = state.cars.find(c=>c.id===carId);
       if (car) car.startingPosition = el.value;
     });
-  });
-  app.querySelectorAll('[data-act="mylaps-draft"]').forEach(el=>{
-    listenOnce(el, "input", ()=>{ state.mylapsSessionDraft = el.value; });
   });
   app.querySelectorAll('[data-act="edit-stint-pos"]').forEach(el=>{
     listenOnce(el, "change", ()=>{
@@ -5719,13 +5346,13 @@ async function handleAction(act, el){
       // Record where we came from (Home or Archive) so Back returns there
       // rather than always dumping the user on Home.
       if (full){
-        if (full.status === "archived") state.mylapsAutoLoading = true;
+        if (full.status === "archived") state.archiveLoading = true;
         navPush(); openRace(full);
         if (full.status === "archived"){
-          loadArchiveResults(state.races.find(r=>r.id===raceId) || full).then(mylaps=>{
+          loadArchiveResults(state.races.find(r=>r.id===raceId) || full).then(results=>{
             const r = state.races.find(r=>r.id===raceId);
-            if (r && mylaps) r.mylaps = mylaps;
-            state.mylapsAutoLoading = false;
+            if (r && results) r.archiveResults = results;
+            state.archiveLoading = false;
             render();
           });
           loadRedmistPitCyclesFromSupabase(raceId).then(redmist=>{
@@ -5891,54 +5518,19 @@ async function handleAction(act, el){
     case "rm-archive-build": {
       const race = state.races.find(r=>r.id===state.currentRaceId);
       if (!race) break;
-      state.mylapsAutoLoading = true; state.mylapsError = null; render();
+      state.archiveLoading = true; state.archiveError = null; render();
       try {
         const built = await buildRedmistArchive(race, { save: true });
-        if (built) race.mylaps = built;
-        else state.mylapsError = "No Red Mist results are saved for this race.";
+        if (built) race.archiveResults = built;
+        else state.archiveError = "No Red Mist results are saved for this race.";
       } catch (e){
         console.error("[rm-archive] rebuild failed:", e);
-        state.mylapsError = "Building results from Red Mist failed — check the console.";
+        state.archiveError = "Building results from Red Mist failed — check the console.";
       }
-      state.mylapsAutoLoading = false; render(); break;
+      state.archiveLoading = false; render(); break;
     }
-    case "mylaps-open":
-      state.mylapsImporting = true; state.mylapsError = null; render(); break;
-    case "mylaps-cancel":
-      state.mylapsImporting = false; state.mylapsError = null; render(); break;
-    case "mylaps-reimport":
-      state.mylapsImporting = true; state.mylapsError = null;
-      state.mylapsSessionDraft = (state.races.find(r=>r.id===state.currentRaceId)?.mylaps?.sessionId) || "";
-      { const race = state.races.find(r=>r.id===state.currentRaceId); if (race) race.mylaps = null; }
-      render(); break;
-    case "mylaps-toggle-field":
-      state.mylapsShowFullField = !state.mylapsShowFullField; render(); break;
-    case "mylaps-run": {
-      const sessionId = state.mylapsSessionDraft.trim();
-      if (!sessionId){ state.mylapsError = "Enter a session ID."; render(); break; }
-      state.mylapsLoading = true; state.mylapsError = null; render();
-      try {
-        const race = state.races.find(r=>r.id===state.currentRaceId);
-        const mylaps = await loadMylapsSession(sessionId, race);
-        if (race){
-          race.mylaps = mylaps;
-          const saved = await saveMylapsResultsToSupabase(race.id, mylaps);
-          // Data is visible for the rest of this session either way — the
-          // failure mode here is just "didn't make it to Supabase", not
-          // "nothing loaded". Logged to console by saveMylapsResultsToSupabase;
-          // left as a residual state.mylapsError too in case Re-import is
-          // opened again this session.
-          if (!saved) state.mylapsError = "Results loaded, but saving to the archive failed — check the console, then try Re-import.";
-        }
-        state.mylapsImporting = false; state.mylapsLoading = false;
-      } catch (err) {
-        state.mylapsLoading = false;
-        state.mylapsError = err.message.includes("Failed to fetch")
-          ? "Couldn't reach MyLaps — check your connection or the session ID."
-          : err.message;
-      }
-      render(); break;
-    }
+    case "toggle-full-field":
+      state.showFullField = !state.showFullField; render(); break;
     case "clear-stint-log": {
       const cp = state.plan.carPlans.find(cp=>cp.car.id===el.getAttribute("data-car"));
       if (cp){
@@ -6696,8 +6288,8 @@ async function retireCarAction(carId, stintIdx){
 }
 
 async function archiveRace(){
-  // Finish position is no longer entered here — MyLaps import supplies it
-  // post-archive (see getEffectiveFinishPosition()). The `finish_position`
+  // Finish position is no longer entered here — the Red Mist results
+  // built below supply it (see getEffectiveFinishPosition()). The `finish_position`
   // column on `cars` is left untouched going forward; RLS blocks writing
   // it once the race is archived anyway, so there's nothing to backfill.
   //
@@ -6717,18 +6309,18 @@ async function archiveRace(){
     raceInList.status = "archived";
     raceInList.cars = state.plan.carPlans.map(cp=>({ ...cp.car }));
   }
-  // Results come straight from Red Mist — no MyLaps import step. Built and
-  // saved now so every viewer gets the same overview from here on.
-  state.mylapsAutoLoading = true;
+  // Results come straight from Red Mist. Built and saved now so every
+  // viewer gets the same overview from here on.
+  state.archiveLoading = true;
   render();
   try {
     const built = raceInList ? await buildRedmistArchive(raceInList, { save: true }) : null;
-    if (built) raceInList.mylaps = built;
-    else console.warn("archiveRace: no Red Mist results saved for this race — MyLaps import is still available");
+    if (built) raceInList.archiveResults = built;
+    else console.warn("archiveRace: no Red Mist results saved for this race — use Build Results from Red Mist once they are");
   } catch (e){
     console.error("archiveRace: building Red Mist results failed:", e);
   }
-  state.mylapsAutoLoading = false;
+  state.archiveLoading = false;
   render();
 }
 
@@ -6878,21 +6470,7 @@ document.addEventListener("keydown", function(e){
 
 // Re-fetches races fresh from Supabase, but preserves any fields that only
 // live in memory and aren't part of the races/cars row shape itself -
-// currently just `mylaps` (imported MyLaps results, attached separately by
-// the open-race handler, not part of loadRaces()'s own query).
-//
-// Needed because Supabase's auth client can fire a SIGNED_IN-equivalent
-// event on its own when a tab regains focus/visibility (routine token
-// refresh behavior, not something this app triggers) - see
-// onAuthStateChange below. That re-runs startApp(), which used to blindly
-// replace state.races wholesale, silently wiping any currently-open race's
-// loaded mylaps data even though nothing the person did should have
-// discarded it. A full page reload masked this (it re-opens the race
-// properly and re-fetches mylaps), which is why the bug only showed up on
-// tab-switch, not on refresh.
-// Re-fetches races fresh from Supabase, but preserves any fields that only
-// live in memory and aren't part of the races/cars row shape itself -
-// currently `mylaps` (imported MyLaps results), `redmistPitCycles` (Red
+// currently `archiveResults` (archived Red Mist overview), `redmistPitCycles` (Red
 // Mist pit-cycle data), `redmistLive` (live timing + the driver-change
 // debounce state), `qualiResults` and `raceResults` (saved Red Mist final
 // results), all attached separately from loadRaces()'s own query.
@@ -6917,7 +6495,7 @@ async function startApp(isEngineer){
     const prev = prevById.get(r.id);
     if (!prev) return r;
     const preserved = { ...r };
-    if (prev.mylaps) preserved.mylaps = prev.mylaps;
+    if (prev.archiveResults) preserved.archiveResults = prev.archiveResults;
     if (prev.redmistPitCycles) preserved.redmistPitCycles = prev.redmistPitCycles;
     if (prev.redmistLive) preserved.redmistLive = prev.redmistLive;
     if (prev.qualiResults) preserved.qualiResults = prev.qualiResults;
