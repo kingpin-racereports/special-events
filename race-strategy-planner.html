@@ -1529,6 +1529,8 @@ const DEBRIEF = {
   HIGH_CONF_LAPS: 40,
   MED_CONF_LAPS: 20,
   FULL_STINT_MIN: 20,  // stints shorter than this (splash, final sliver) are left out of stint-length averages
+  FACTOR_WINDOW_MIN: 5, // track-condition factor looks this many minutes either side of a lap
+  SUITED_GAP_S: 0.3,   // teammate must be this much quicker per lap to be flagged for a stint
 };
 
 function debriefMedian(xs){
@@ -1555,7 +1557,7 @@ function debriefCarStints(car, lapsByPos, lapRows, pitStops, finalDriver){
       cur = { driver: d, laps: [], minutes: 0 };
       stints.push(cur);
     }
-    cur.laps.push({ lap: l.lap, t: l.lapTime, min: cur.minutes, clean: !l.inPit && l.status === "GREEN" && !!l.lapTime });
+    cur.laps.push({ lap: l.lap, t: l.lapTime, ts: l.timeOfDay || null, min: cur.minutes, clean: !l.inPit && l.status === "GREEN" && !!l.lapTime });
     cur.minutes += (l.lapTime || 0) / 60;
   });
   return stints.filter(s => s.driver && s.laps.length);
@@ -1563,33 +1565,40 @@ function debriefCarStints(car, lapsByPos, lapRows, pitStops, finalDriver){
 
 // Pace profile for one driver from their stints in one car.
 function debriefDriverProfile(stints){
-  const clean = stints.flatMap(s => s.laps.filter(l => l.clean).map(l => l.t));
-  if (!clean.length) return null;
-  const base = debriefMedian(clean);
-  const smoothMax = base * (1 + DEBRIEF.DISRUPT_PCT);
-  const disrupted = clean.filter(t => t > smoothMax);
-  const lossSec = disrupted.reduce((a, t) => a + (t - base), 0);
+  const A = l => l.adj ?? l.t; // condition-adjusted lap (raw if no field factor)
+  const cleanLaps = stints.flatMap(s => s.laps.filter(l => l.clean));
+  if (!cleanLaps.length) return null;
+  const base = debriefMedian(cleanLaps.map(l => l.t));       // actual clean lap, for display
+  const adjBase = debriefMedian(cleanLaps.map(A));           // typical condition-adjusted lap
+  // Disruption threshold keys off the driver's quicker laps (25th pct), not
+  // the median — a late-stint fade drags the median up and would otherwise
+  // let traffic laps pass as normal running.
+  const sortedAdj = cleanLaps.map(A).sort((a, b) => a - b);
+  const p25 = sortedAdj[Math.floor(sortedAdj.length * 0.25)];
+  const smoothMax = p25 * (1 + DEBRIEF.DISRUPT_PCT);
+  const disrupted = cleanLaps.filter(l => A(l) > smoothMax);
+  const lossSec = disrupted.reduce((a, l) => a + Math.max(0, A(l) - adjBase), 0);
   const drivenMin = stints.reduce((a, s) => a + s.minutes, 0);
   const lossPerHour = drivenMin > 0 ? lossSec / (drivenMin / 60) : 0;
-  const lapsPerHour = 3600 / base;
+  const lapsPerHour = 3600 / adjBase;
 
   // Pace through the stint: each smooth lap as % over its own stint's
   // opening pace, pooled across stints and sliced by stint minute.
   const pts = [];
   let earlyLaps = 0;
   stints.forEach(s => {
-    const smooth = s.laps.filter(l => l.clean && l.t <= smoothMax);
-    const early = smooth.filter(l => l.min < DEBRIEF.EARLY_MIN).map(l => l.t);
+    const smooth = s.laps.filter(l => l.clean && A(l) <= smoothMax);
+    const early = smooth.filter(l => l.min < DEBRIEF.EARLY_MIN).map(A);
     if (early.length < 3) return;
     earlyLaps += early.length;
     const ref = debriefMedian(early);
-    smooth.forEach(l => { if (l.min >= DEBRIEF.EARLY_MIN) pts.push({ min: l.min, pct: l.t / ref - 1 }); });
+    smooth.forEach(l => { if (l.min >= DEBRIEF.EARLY_MIN) pts.push({ min: l.min, pct: A(l) / ref - 1 }); });
   });
   const longestMin = Math.max(...stints.map(s => s.minutes));
-  const bins = [{ from: 0, to: DEBRIEF.EARLY_MIN, ref: true, laps: earlyLaps }];
+  const bins = [{ from: 0, to: DEBRIEF.EARLY_MIN, ref: true, laps: earlyLaps, pct: earlyLaps ? 0 : null }];
   for (let b = DEBRIEF.EARLY_MIN; b < longestMin; b += DEBRIEF.BIN_MIN){
     const inBin = pts.filter(p => p.min >= b && p.min < b + DEBRIEF.BIN_MIN).map(p => p.pct);
-    bins.push({ from: b, to: b + DEBRIEF.BIN_MIN, laps: inBin.length, pct: inBin.length >= DEBRIEF.MIN_BIN_LAPS ? debriefMedian(inBin) : null });
+    bins.push({ from: b, to: Math.min(b + DEBRIEF.BIN_MIN, longestMin), laps: inBin.length, pct: inBin.length >= DEBRIEF.MIN_BIN_LAPS ? debriefMedian(inBin) : null });
   }
 
   // Fade: first slice at/over FADE_PCT that the next slice doesn't walk back.
@@ -1604,25 +1613,24 @@ function debriefDriverProfile(stints){
   let heldThrough = earlyLaps ? DEBRIEF.EARLY_MIN : 0;
   for (let k = 1; k < bins.length; k++){
     if (fadeMin != null && bins[k].from >= fadeMin) break;
-    if (bins[k].pct != null && bins[k].pct < DEBRIEF.FADE_PCT) heldThrough = Math.min(bins[k].to, longestMin);
+    if (bins[k].pct != null && bins[k].pct < DEBRIEF.FADE_PCT) heldThrough = bins[k].to;
   }
 
   // Consistency over smooth laps before any drop-off, so a fade doesn't
-  // read as inconsistency — the slices above already show the fade.
-  const consistent = stints.flatMap(s => s.laps)
-    .filter(l => l.clean && l.t <= smoothMax && (fadeMin == null || l.min < fadeMin)).map(l => l.t);
+  // read as inconsistency — the bar already shows the fade.
+  const consistent = cleanLaps.filter(l => A(l) <= smoothMax && (fadeMin == null || l.min < fadeMin)).map(A);
   const avg = debriefMean(consistent);
   const stdev = consistent.length >= 3 ? Math.sqrt(consistent.reduce((a, x) => a + (x - avg) ** 2, 0) / (consistent.length - 1)) : null;
 
   const fullStints = stints.filter(s => s.minutes >= DEBRIEF.FULL_STINT_MIN).length;
-  const confidence = fullStints >= 2 && clean.length >= DEBRIEF.HIGH_CONF_LAPS ? "high"
-    : clean.length >= DEBRIEF.MED_CONF_LAPS ? "medium" : "low";
+  const confidence = fullStints >= 2 && cleanLaps.length >= DEBRIEF.HIGH_CONF_LAPS ? "high"
+    : cleanLaps.length >= DEBRIEF.MED_CONF_LAPS ? "medium" : "low";
   return {
-    base, stdev, lossPerHour, disruptedLaps: disrupted.length, fadeMin, fadePct, heldThrough, longestMin, bins,
-    confidence, stints: stints.length, fullStints, cleanLaps: clean.length,
-    // Per-lap pace with disruption time spread back in — what a driver
-    // actually delivers in race conditions, used to pick the closer.
-    effective: base + lossPerHour / lapsPerHour,
+    base, adjBase, stdev, lossPerHour, disruptedLaps: disrupted.length, fadeMin, fadePct, heldThrough, longestMin, bins,
+    confidence, stints: stints.length, fullStints, cleanLaps: cleanLaps.length,
+    // Condition-adjusted per-lap pace with disruption time spread back in —
+    // what a driver actually delivers in race conditions; picks the closer.
+    effective: adjBase + lossPerHour / lapsPerHour,
   };
 }
 
@@ -1716,6 +1724,57 @@ function finalizeDebriefForCar(car, ctx){
   return notes;
 }
 
+// Track-condition factor over time for one class: at any moment, how the
+// field is lapping relative to each car's own typical clean lap (1.00 =
+// normal, 1.02 = everyone 2% slower — heat, cooling, rubber, dusk). Dividing
+// a lap by it puts every stint on the same footing, so a driver isn't
+// credited or blamed for the conditions their stint happened to run in.
+function debriefTrackFactor(stintsByCar){
+  const pts = [];
+  stintsByCar.forEach(stints => {
+    const laps = stints.flatMap(s => s.laps).filter(l => l.clean && l.ts);
+    const med = debriefMedian(laps.map(l => l.t));
+    if (!med) return;
+    laps.forEach(l => { const r = l.t / med; if (r < 1 + 4 * DEBRIEF.DISRUPT_PCT) pts.push({ ts: l.ts, r }); });
+  });
+  pts.sort((a, b) => a.ts - b.ts);
+  const W = DEBRIEF.FACTOR_WINDOW_MIN * 60000;
+  return ts => {
+    if (!ts || pts.length < 20) return 1;
+    let lo = 0, hi = pts.length;
+    while (lo < hi){ const m = (lo + hi) >> 1; if (pts[m].ts < ts - W) lo = m + 1; else hi = m; }
+    const win = [];
+    for (let k = lo; k < pts.length && pts[k].ts <= ts + W; k++) win.push(pts[k].r);
+    return win.length >= 8 ? debriefMedian(win) : 1;
+  };
+}
+
+// Where each of a car's stints lost time, against the car's best
+// condition-adjusted driver pace: `pace` is the stint's typical lap being
+// slower than that reference, `consistency` is laps slower than the
+// stint's own typical lap (traffic, mistakes, fade, scatter).
+function debriefStintReport(stints, profiles){
+  const refs = Object.values(profiles).filter(p => p.confidence !== "low").map(p => p.adjBase);
+  const ref = refs.length ? Math.min(...refs) : null;
+  if (ref == null) return [];
+  return stints.map((s, i) => {
+    const clean = s.laps.filter(l => l.clean);
+    if (clean.length < 5) return null;
+    const adj = clean.map(l => l.adj ?? l.t);
+    const med = debriefMedian(adj);
+    const paceLoss = Math.max(0, med - ref) * clean.length;
+    const consistencyLoss = adj.reduce((a, t) => a + Math.max(0, t - med), 0);
+    const first = s.laps[0], last = s.laps[s.laps.length - 1];
+    return {
+      num: i + 1, driver: s.driver, minutes: s.minutes,
+      start: first.ts ? first.ts - (first.t || 0) * 1000 : null, end: last.ts || null,
+      cleanLaps: clean.length, paceLoss, consistencyLoss, total: paceLoss + consistencyLoss,
+      // Delivered pace in this stint, per lap, for comparing teammates.
+      effective: med + consistencyLoss / clean.length,
+    };
+  }).filter(Boolean);
+}
+
 async function buildSaturdayDebrief(src){
   const resultRows = await fetchRedmistResultRows(src);
   if (!resultRows) return null;
@@ -1744,9 +1803,19 @@ async function buildSaturdayDebrief(src){
   };
 
   // Every car, not just ours — rival driver profiles feed the matchup.
+  const stintsByNum = {};
+  classification.forEach(c => { stintsByNum[c.startNumber] = debriefCarStints(c, lapsByPos, lapRows, pitStops, finalDriver); });
+  // Condition-adjust every lap against its own class's field.
+  [...new Set(classification.map(c => c.resultClass))].forEach(cls => {
+    const inClass = classification.filter(c => c.resultClass === cls).map(c => stintsByNum[c.startNumber]);
+    const factor = debriefTrackFactor(inClass);
+    inClass.forEach(stints => stints.forEach(s => s.laps.forEach(l => { if (l.t) l.adj = l.t / factor(l.ts); })));
+  });
+
   const cars = {};
   classification.forEach(c => {
-    const stints = debriefCarStints(c, lapsByPos, lapRows, pitStops, finalDriver);
+    const stints = stintsByNum[c.startNumber];
+    const profiles = debriefProfilesFor(stints);
     const stops = pitStops.filter(s => s.car_number === c.startNumber && Number(s.pit_duration_ms) >= RM_MIN_PIT_MS && !inRed(s));
     const moves = stops.filter(s => s.class_position_entering != null && s.class_position_exiting != null)
       .map(s => s.class_position_entering - s.class_position_exiting);
@@ -1754,7 +1823,7 @@ async function buildSaturdayDebrief(src){
     const closing = full.length ? full[full.length - 1] : stints[stints.length - 1];
     cars[c.startNumber] = {
       num: c.startNumber, name: c.name, cls: c.resultClass, classPos: c.positionInClass, status: c.status,
-      stints, profiles: debriefProfilesFor(stints),
+      stints, profiles, stintReport: debriefStintReport(stints, profiles),
       stops: stops.length,
       medianStop: debriefMedian(stops.map(s => Number(s.pit_duration_ms) / 1000)),
       netPerStop: moves.length ? debriefMean(moves) : null,
@@ -1872,12 +1941,48 @@ function debriefPaceColor(drivers, effective){
   return `rgb(${mix(0)},${mix(1)},${mix(2)})`;
 }
 
-// Pace-through-stint slice color: held pace green, drifting amber, fade red.
-function debriefSliceColor(pct){
-  if (pct == null) return "var(--textFaint)";
-  if (pct < DEBRIEF.FADE_PCT * 0.5) return T.green;
-  if (pct < DEBRIEF.FADE_PCT) return T.amber;
-  return T.red;
+
+
+// Same green -> amber -> red stops as the Competitors Pit Times bars.
+function debriefScaleColor(t){
+  const stops = [[63,178,127],[242,166,62],[226,68,92]];
+  t = Math.max(0, Math.min(1, t));
+  const a = t < 0.5 ? stops[0] : stops[1], b = t < 0.5 ? stops[1] : stops[2], u = t < 0.5 ? t * 2 : (t - 0.5) * 2;
+  return `rgb(${a.map((x, k) => Math.round(x + (b[k] - x) * u)).join(",")})`;
+}
+
+// One bar across the driver's longest Saturday stint, colored by pace vs.
+// the stint's opening (green held, amber drifting, red fading), with the
+// drop-off and Sunday's stint length marked on it.
+function debriefFadeBar(p, sundayMin){
+  const total = p.longestMin;
+  if (!(total > 0)) return "";
+  const pos = m => Math.max(0, Math.min(100, m / total * 100));
+  let last = debriefScaleColor(0);
+  const grad = p.bins.map(b => {
+    if (b.pct != null) last = debriefScaleColor(Math.max(0, b.pct) / (DEBRIEF.FADE_PCT * 1.5));
+    return `${last} ${pos((b.from + b.to) / 2).toFixed(1)}%`;
+  });
+  if (grad.length === 1) grad.push(grad[0].replace(/[\d.]+%$/, "100%"));
+  const marks = [];
+  if (p.fadeMin != null) marks.push({ at: p.fadeMin, label: `Drop-off ${p.fadeMin}m`, color: T.red });
+  if (sundayMin){
+    const near = marks.find(m => Math.abs(pos(m.at) - pos(sundayMin)) < 4);
+    if (near) near.label += ` · Sunday ${sundayMin}m`;
+    else marks.push({ at: sundayMin, label: `Sunday ${sundayMin}m`, color: "var(--text)" });
+  }
+  const tick = m => `<span style="position:absolute;left:${pos(m.at)}%;top:-3px;width:2px;height:14px;margin-left:-1px;border-radius:1px;background:var(--text);"></span>`;
+  const label = m => {
+    const x = pos(m.at), align = x > 80 ? "translateX(-100%)" : x < 20 ? "none" : "translateX(-50%)";
+    return `<span style="position:absolute;left:${x}%;transform:${align};white-space:nowrap;color:${m.color};font-weight:600;">${m.label}</span>`;
+  };
+  return `
+    <div style="margin:10px 0 4px;">
+      <div style="position:relative;height:8px;border-radius:4px;background:linear-gradient(90deg, ${grad.join(", ")});">${marks.map(tick).join("")}</div>
+      <div style="position:relative;height:16px;margin-top:4px;font-size:11px;color:var(--textFaint);">
+        ${marks.length ? marks.map(label).join("") : `<span style="position:absolute;left:0;">0m</span><span style="position:absolute;right:0;">${Math.round(total)}m</span>`}
+      </div>
+    </div>`;
 }
 
 function debriefDecisionLine(d){
@@ -1894,7 +1999,7 @@ function debriefDecisionLine(d){
         ? `Kept at ${dec.from} min: drop-off starts at minute ${p.fadeMin}, past the planned length`
         : `Kept at ${dec.from} min: pace held through ${Math.round(p.heldThrough)} min`;
     case "low":
-      return `Kept at ${dec.from} min: ${p.cleanLaps} clean laps isn't enough to change it`;
+      return `Kept at ${dec.from} min: not enough clean Saturday laps to change it`;
     default:
       return `Kept at ${dec.from} min: no Saturday laps found for this driver`;
   }
@@ -1909,6 +2014,7 @@ function renderDebriefPanel(){
   }
   const fmtS = s => s == null ? "—" : `${s.toFixed(1)}s`;
   const fmtN = (n, d = 1) => n == null ? "—" : n.toFixed(d);
+  const fmtLoss = s => s >= 60 ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}` : `${Math.round(s)}s`;
   const line = t => `<div style="font-size:13px;line-height:1.5;color:var(--textMuted);margin:3px 0;">${t}</div>`;
   const stat = (label, value) => `<span style="white-space:nowrap;"><span style="color:var(--textFaint);">${label}</span> ${value}</span>`;
 
@@ -1918,22 +2024,17 @@ function renderDebriefPanel(){
     const head = `<div style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;">${dot}${esc(d.name)}${d.name === c.closer && c.closerPlaced ? ` <span style="color:var(--textFaint);font-weight:400;">· closer</span>` : ""}</div>`;
     if (!p) return `<div style="padding:10px 0;border-top:1px solid var(--border);">${head}${line(esc(debriefDecisionLine(d)))}</div>`;
     const stats = [
-      stat("Clean lap", fmtLapTime(p.base)),
+      stat("Clean lap", fmtLapTime(p.adjBase)),
       stat("Race pace", fmtLapTime(p.effective)),
       stat("Consistency", p.stdev != null ? `±${p.stdev.toFixed(2)}s` : "—"),
-      stat("Lost off-pace", `${p.lossPerHour.toFixed(1)}s/hr (${p.disruptedLaps} laps)`),
-      stat("Sample", `${p.fullStints} stint${p.fullStints === 1 ? "" : "s"} · ${p.cleanLaps} clean laps`),
-    ].join(`<span style="color:var(--border);"> | </span>`);
-    const slices = p.bins.filter(b => b.laps > 0).map(b => `
-      <span style="display:inline-flex;flex-direction:column;align-items:center;min-width:52px;padding:4px 6px;border-radius:6px;background:var(--panelRaised);font-size:11px;">
-        <span style="color:var(--textFaint);">${b.from}–${Math.round(Math.min(b.to, p.longestMin))}m</span>
-        <span style="font-weight:600;color:${b.ref ? "var(--textMuted)" : debriefSliceColor(b.pct)};">${b.ref ? "base" : b.pct == null ? "—" : Math.abs(b.pct) < 0.0005 ? "0.0%" : `${b.pct > 0 ? "+" : "−"}${Math.abs(b.pct * 100).toFixed(1)}%`}</span>
-      </span>`).join("");
+      stat("Lost off-pace", `${p.lossPerHour.toFixed(1)}s/hr`),
+    ].join(`<span style="color:var(--border);margin:0 6px;">|</span>`);
+    const sunday = d.decision && d.decision.kind !== "none" ? (d.decision.to ?? d.decision.from) : null;
     return `
       <div style="padding:10px 0;border-top:1px solid var(--border);">
         ${head}
-        <div style="font-size:12px;color:var(--textMuted);display:flex;flex-wrap:wrap;gap:4px 0;margin:4px 0 6px;">${stats}</div>
-        <div class="no-scrollbar" style="display:flex;gap:4px;overflow-x:auto;margin-bottom:6px;">${slices}</div>
+        <div style="font-size:12px;color:var(--textMuted);display:flex;flex-wrap:wrap;gap:4px 0;margin-top:4px;">${stats}</div>
+        ${debriefFadeBar(p, sunday)}
         ${line(esc(debriefDecisionLine(d)))}
       </div>`;
   };
@@ -1946,10 +2047,39 @@ function renderDebriefPanel(){
     return line(`Closer: ${esc(c.closer)}, best race pace (${fmtLapTime(best.effective)}/lap)${others ? ` · ${others}` : ""}`);
   };
 
+  // Time lost per Saturday stint, worst highlighted, with pace vs.
+  // consistency split and a quicker teammate if there is one.
+  const stintBlock = c => {
+    const rep = c.sat.stintReport || [];
+    if (!rep.length) return "";
+    const planName = satName => (c.drivers.find(d => d.satName === satName) || {}).name || satName;
+    const mates = c.drivers.filter(d => d.profile && d.profile.confidence !== "low");
+    const worst = rep.reduce((w, r) => r.total > w.total ? r : w, rep[0]);
+    const row = r => {
+      const isWorst = r === worst;
+      const when = r.start && r.end ? ` · ${formatTime(r.start)}–${formatTime(r.end)}` : "";
+      const cause = r.paceLoss >= r.consistencyLoss ? "Mostly pace" : "Mostly consistency";
+      const better = mates
+        .filter(m => m.satName !== r.driver && m.effective < r.effective - DEBRIEF.SUITED_GAP_S)
+        .sort((a, b) => a.effective - b.effective)[0];
+      return `
+        <div style="padding:8px 10px;margin:4px 0;border-radius:8px;${isWorst ? `background:var(--panelRaised);border-left:3px solid ${T.red};` : "border-left:3px solid transparent;"}">
+          <div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;">
+            <span style="${isWorst ? "font-weight:600;" : "color:var(--textMuted);"}">Stint ${r.num} · ${esc(planName(r.driver))}<span style="color:var(--textFaint);font-weight:400;">${when}</span></span>
+            <span class="font-mono" style="white-space:nowrap;font-weight:700;color:${isWorst ? T.red : "var(--textMuted)"};">${fmtLoss(r.total)}</span>
+          </div>
+          <div style="font-size:12px;color:var(--textFaint);margin-top:2px;">${isWorst ? `Most time lost · ${cause}: ` : `${cause}: `}${fmtLoss(r.paceLoss)} pace · ${fmtLoss(r.consistencyLoss)} consistency</div>
+          ${better ? `<div style="font-size:12px;color:var(--textMuted);margin-top:2px;">${esc(better.name)} delivers ${(r.effective - better.effective).toFixed(2)}s/lap more for this stint</div>` : ""}
+        </div>`;
+    };
+    return `<div style="margin:10px 0 6px;"><span class="eyebrow">Time Lost by Stint</span>${rep.map(row).join("")}</div>`;
+  };
+
   const carBlocks = db.cars.map(c => `
     <div style="border-left:3px solid ${c.accent};padding-left:12px;margin-bottom:16px;">
       <div class="font-display" style="font-weight:600;font-size:14px;margin-bottom:4px;">#${esc(c.number)}</div>
       ${closerLine(c)}
+      ${stintBlock(c)}
       ${c.drivers.map(d => driverCard(c, d)).join("")}
     </div>`).join("");
 
