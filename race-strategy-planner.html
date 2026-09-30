@@ -677,6 +677,7 @@ let state = {
   eventName: "",
   eventDate: null,
   duplicateSource: null, // race object being duplicated from, set by "duplicate-race", consumed by "confirmName"
+  debrief: null, // Saturday debrief shown on Setup after duplicating — see runSaturdayDebrief()
 
   cars: [],
   addingCar: false,
@@ -1506,6 +1507,381 @@ function rmDriverConsistency(ourNumbers, classification, lapsByPos, lapRows, pit
     });
   });
   return out;
+}
+
+// ===========================================================================
+// SATURDAY DEBRIEF -> SUNDAY PLAN
+// ===========================================================================
+// Runs once, when an engineer duplicates a race that has Red Mist results.
+// Reads the source race's laps and pit stops and bakes into the duplicated
+// Setup: per-driver stint lengths (shortened only where pace clearly fades
+// before the planned length) and driver rotation (so each car's strongest
+// closer runs the final stint). A class rival summary is shown alongside.
+// Everything stays editable on Setup, and each applied change is written to
+// the stint log when the plan is created. Never runs during a live race and
+// never touches driver assignments after the plan exists.
+const DEBRIEF = {
+  DISRUPT_PCT: 0.025,  // clean green lap this far over the driver's median = disrupted (traffic, off, etc.)
+  FADE_PCT: 0.01,      // pooled pace loss vs. a stint's opening pace that counts as fade
+  EARLY_MIN: 25,       // opening window that sets each stint's reference pace
+  BIN_MIN: 10,         // fade is checked in slices of this many minutes after the opening window
+  MIN_BIN_LAPS: 4,
+  HIGH_CONF_LAPS: 40,
+  MED_CONF_LAPS: 20,
+  FULL_STINT_MIN: 20,  // stints shorter than this (splash, final sliver) are left out of stint-length averages
+};
+
+function debriefMedian(xs){
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b), m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+function debriefMean(xs){ return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null; }
+
+// One car's race split into stints: a new stint starts on a driver change
+// or on the lap after any pit lap (same-driver fuel stops split too).
+function debriefCarStints(car, lapsByPos, lapRows, pitStops, finalDriver){
+  const laps = lapsByPos.get(car.position) || [];
+  const drivers = rmDriverForLaps(car.startNumber, laps, lapRows, pitStops, finalDriver);
+  const pitLaps = new Set();
+  lapRows.forEach(l => { if (l.car_number === car.startNumber && l.is_pit_lap === true) pitLaps.add(l.lap_number); });
+  pitStops.forEach(s => { if (s.car_number === car.startNumber) pitLaps.add(s.lap_number); });
+
+  const stints = [];
+  let cur = null;
+  laps.forEach((l, i) => {
+    const d = drivers[i] || null;
+    if (!cur || d !== cur.driver || pitLaps.has(l.lap - 1)){
+      cur = { driver: d, laps: [], minutes: 0 };
+      stints.push(cur);
+    }
+    cur.laps.push({ lap: l.lap, t: l.lapTime, min: cur.minutes, clean: !l.inPit && l.status === "GREEN" && !!l.lapTime });
+    cur.minutes += (l.lapTime || 0) / 60;
+  });
+  return stints.filter(s => s.driver && s.laps.length);
+}
+
+// Pace profile for one driver from their stints in one car.
+function debriefDriverProfile(stints){
+  const clean = stints.flatMap(s => s.laps.filter(l => l.clean).map(l => l.t));
+  if (!clean.length) return null;
+  const base = debriefMedian(clean);
+  const smoothMax = base * (1 + DEBRIEF.DISRUPT_PCT);
+  const lossSec = clean.filter(t => t > smoothMax).reduce((a, t) => a + (t - base), 0);
+  const drivenMin = stints.reduce((a, s) => a + s.minutes, 0);
+  const lossPerHour = drivenMin > 0 ? lossSec / (drivenMin / 60) : 0;
+  const lapsPerHour = 3600 / base;
+
+  // Fade: each smooth lap past the opening window, as % over its own
+  // stint's opening pace, pooled across stints and checked per slice.
+  const pts = [];
+  stints.forEach(s => {
+    const smooth = s.laps.filter(l => l.clean && l.t <= smoothMax);
+    const early = smooth.filter(l => l.min < DEBRIEF.EARLY_MIN).map(l => l.t);
+    if (early.length < 3) return;
+    const ref = debriefMedian(early);
+    smooth.forEach(l => { if (l.min >= DEBRIEF.EARLY_MIN) pts.push({ min: l.min, pct: l.t / ref - 1 }); });
+  });
+  const longestMin = Math.max(...stints.map(s => s.minutes));
+  const binPct = b => {
+    const inBin = pts.filter(p => p.min >= b && p.min < b + DEBRIEF.BIN_MIN).map(p => p.pct);
+    return inBin.length >= DEBRIEF.MIN_BIN_LAPS ? debriefMedian(inBin) : null;
+  };
+  let fadeMin = null;
+  for (let b = DEBRIEF.EARLY_MIN; b < longestMin; b += DEBRIEF.BIN_MIN){
+    const p = binPct(b);
+    if (p == null || p < DEBRIEF.FADE_PCT) continue;
+    const next = binPct(b + DEBRIEF.BIN_MIN);
+    if (next == null || next >= DEBRIEF.FADE_PCT * 0.75){ fadeMin = b; break; }
+  }
+
+  const fullStints = stints.filter(s => s.minutes >= DEBRIEF.FULL_STINT_MIN).length;
+  const confidence = fullStints >= 2 && clean.length >= DEBRIEF.HIGH_CONF_LAPS ? "high"
+    : clean.length >= DEBRIEF.MED_CONF_LAPS ? "medium" : "low";
+  return {
+    base, lossPerHour, fadeMin, longestMin, confidence,
+    stints: stints.length, cleanLaps: clean.length,
+    // Per-lap pace with disruption time spread back in — what a driver
+    // actually delivers in race conditions, used to pick the closer.
+    effective: base + lossPerHour / lapsPerHour,
+  };
+}
+
+function debriefProfilesFor(stints){
+  const byDriver = {};
+  stints.forEach(s => (byDriver[s.driver] ||= []).push(s));
+  const out = {};
+  Object.entries(byDriver).forEach(([d, ss]) => { const p = debriefDriverProfile(ss); if (p) out[d] = p; });
+  return out;
+}
+
+// Plan names are often surname-only while Red Mist has full names.
+function debriefMatchDriver(planName, profiles){
+  const n = String(planName || "").trim();
+  if (!n) return null;
+  const hit = Object.keys(profiles).find(k => sameDriverName(n, k))
+    || Object.keys(profiles).find(k => driverSurname(k).toLowerCase() === driverSurname(n).toLowerCase());
+  return hit ? { name: hit, profile: profiles[hit] } : null;
+}
+
+// Mirrors createRacePlan()'s stint loop (including quiet time) so rotation
+// choices land the same way the real plan will.
+function debriefStintSequence(modes, totalMinutes, startDateTime, track){
+  const quiet = quietWindowFor(track, startDateTime);
+  const seq = [];
+  let driven = 0, di = 0, cursor = new Date(startDateTime), quietApplied = false;
+  while (driven < totalMinutes && seq.length < 500){
+    if (quiet && !quietApplied && +cursor >= +quiet.start){ cursor = new Date(quiet.end); quietApplied = true; continue; }
+    let segLen = Math.min(Number(modes[di % modes.length] || 60), totalMinutes - driven);
+    let end = addMinutes(cursor, segLen);
+    if (quiet && !quietApplied && +end > +quiet.start){
+      segLen = Math.round((+quiet.start - +cursor) / 60000);
+      end = new Date(quiet.start);
+    }
+    if (segLen <= 0) break;
+    seq.push({ idx: di % modes.length, len: segLen });
+    driven += segLen; di += 1; cursor = end;
+  }
+  return seq;
+}
+// The stint that actually closes the race — a final sliver too short to
+// hand a driver doesn't count.
+function debriefClosingStint(seq){
+  for (let k = seq.length - 1; k >= 0; k--) if (seq[k].len >= finalStintNegligibleThresholdMin()) return k;
+  return seq.length ? seq.length - 1 : null;
+}
+
+function setupPlanContext(){
+  const track = state.track === "Other" ? state.customTrack.trim() : state.track;
+  const [hh, mm] = String(state.startTime || "10:00").split(":").map(Number);
+  const startDateTime = new Date(state.eventDate || Date.now());
+  startDateTime.setHours(hh || 0, mm || 0, 0, 0);
+  return { track, startDateTime, totalMinutes: Number(state.durationHours) * 60 };
+}
+
+// Rotates the car's driver order (sequence preserved, only the starter
+// changes) so `closer` runs the closing stint. Returns true if placed.
+function rotateCarForCloser(car, closer, ctx){
+  const valid = car.drivers.map((d, i) => ({ d, mode: stintModeOf(car, i) })).filter(o => o.d.trim());
+  const n = valid.length;
+  if (n < 2 || !(ctx.totalMinutes > 0)) return false;
+  for (let r = 0; r < n; r++){
+    const rot = valid.slice(r).concat(valid.slice(0, r));
+    const seq = debriefStintSequence(rot.map(o => o.mode), ctx.totalMinutes, ctx.startDateTime, ctx.track);
+    const k = debriefClosingStint(seq);
+    if (k == null || rot[seq[k].idx].d !== closer) continue;
+    if (r > 0){
+      car.drivers = rot.map(o => o.d);
+      car.driverStintMode = rot.map(o => o.mode);
+    }
+    return true;
+  }
+  return false;
+}
+
+function debriefOrderNote(closer){
+  return { driver: closer, kind: "order", text: `${closer} set to run the final stint, from Saturday closing pace` };
+}
+
+// Called per car from createRacePlan(). Race date and duration are usually
+// changed on Setup after duplicating (Sunday is shorter, quiet time is
+// Sunday-only), so the closer rotation is re-checked against the final
+// values — unless the engineer has edited this car's drivers, in which
+// case their order stands. Returns the notes still true for this car.
+function finalizeDebriefForCar(car, ctx){
+  const db = car.debrief;
+  if (!db) return [];
+  const notes = db.notes.filter(n => n.kind === "len"
+    && stintModeOf(car, car.drivers.indexOf(n.driver)) === n.suggested);
+  if (db.closer && !db.orderTouched && rotateCarForCloser(car, db.closer, ctx)) notes.push(debriefOrderNote(db.closer));
+  return notes;
+}
+
+async function buildSaturdayDebrief(src){
+  const resultRows = await fetchRedmistResultRows(src);
+  if (!resultRows) return null;
+  const { event_id, session_id, session_name } = resultRows[0];
+  const classification = rmClassification(resultRows);
+  const scope = q => q.eq("event_id", event_id).eq("session_id", session_id).eq("session_name", session_name);
+
+  const [lapRows, periods, pitStops] = await Promise.all([
+    fetchAllRows(() => scope(supabase.from("redmist_live_laps")
+      .select("car_number, lap_number, lap_time_seconds, is_pit_lap, caution_lap, captured_at, driver_name"))
+      .order("car_number").order("lap_number")),
+    fetchAllRows(() => scope(supabase.from("redmist_flag_periods").select("flag, started_at, ended_at")).order("started_at")).catch(() => []),
+    fetchAllRows(() => scope(supabase.from("redmist_live_pit_stops")
+      .select("car_number, lap_number, pit_duration_ms, driver_change, driver_out, driver_in, class_position_entering, class_position_exiting"))).catch(() => []),
+  ]);
+  if (!lapRows.length) return null;
+
+  const lapsByPos = rmLapsByPos(classification, lapRows);
+  const finalDriver = Object.fromEntries(resultRows.map(r => [String(r.car_number), r.driver_name]));
+  const redPeriods = periods.length ? rmFlagSummary(periods).redFlags : [];
+  const lapTime = {};
+  lapRows.forEach(l => { lapTime[`${l.car_number}|${l.lap_number}`] = new Date(l.captured_at).getTime(); });
+  const inRed = s => {
+    const t = lapTime[`${s.car_number}|${s.lap_number}`];
+    return t != null && redPeriods.some(p => t >= p.start - 600000 && t <= (p.end || p.start) + 600000);
+  };
+
+  // Every car, not just ours — rival driver profiles feed the matchup.
+  const cars = {};
+  classification.forEach(c => {
+    const stints = debriefCarStints(c, lapsByPos, lapRows, pitStops, finalDriver);
+    const stops = pitStops.filter(s => s.car_number === c.startNumber && Number(s.pit_duration_ms) >= RM_MIN_PIT_MS && !inRed(s));
+    const moves = stops.filter(s => s.class_position_entering != null && s.class_position_exiting != null)
+      .map(s => s.class_position_entering - s.class_position_exiting);
+    const full = stints.filter(s => s.minutes >= DEBRIEF.FULL_STINT_MIN);
+    const closing = full.length ? full[full.length - 1] : stints[stints.length - 1];
+    cars[c.startNumber] = {
+      num: c.startNumber, name: c.name, cls: c.resultClass, classPos: c.positionInClass, status: c.status,
+      stints, profiles: debriefProfilesFor(stints),
+      stops: stops.length,
+      medianStop: debriefMedian(stops.map(s => Number(s.pit_duration_ms) / 1000)),
+      netPerStop: moves.length ? debriefMean(moves) : null,
+      avgStintMin: debriefMean(full.map(s => s.minutes)),
+      closer: closing ? closing.driver : null,
+    };
+  });
+  return { sourceName: src.eventName, cars };
+}
+
+// Bakes the debrief into state.cars (Setup) and builds the panel summary.
+function applySaturdayDebrief(debrief){
+  const ctx = setupPlanContext();
+  const summary = { sourceName: debrief.sourceName, cars: [], classes: {} };
+
+  state.cars.forEach(car => {
+    const sat = debrief.cars[String(car.number)];
+    if (!sat) return;
+    const notes = [];
+
+    car.drivers.forEach((d, i) => {
+      const m = debriefMatchDriver(d, sat.profiles);
+      if (!m || m.profile.confidence === "low" || m.profile.fadeMin == null) return;
+      const current = Number(stintModeOf(car, i));
+      const suggested = Math.max(STINT_WHEEL_MIN, Math.floor(m.profile.fadeMin / STINT_WHEEL_STEP) * STINT_WHEEL_STEP);
+      if (suggested >= current) return;
+      if (!car.driverStintMode) car.driverStintMode = car.drivers.map(() => '60');
+      car.driverStintMode[i] = String(suggested);
+      notes.push({ driver: d, kind: "len", suggested: String(suggested), text: `Stint length ${current} → ${suggested} min for ${d}, from Saturday pace data` });
+    });
+
+    // Closer: best race-condition pace among drivers with enough data.
+    const candidates = car.drivers
+      .map(d => ({ d, m: debriefMatchDriver(d, sat.profiles) }))
+      .filter(o => o.m && o.m.profile.confidence !== "low")
+      .sort((a, b) => a.m.profile.effective - b.m.profile.effective);
+    const closer = candidates.length >= 2 ? candidates[0].d : null;
+    let closerPlaced = false;
+    if (closer){
+        closerPlaced = rotateCarForCloser(car, closer, ctx);
+      if (closerPlaced) notes.push(debriefOrderNote(closer));
+    }
+
+    const drivers = car.drivers.map(d => { const m = debriefMatchDriver(d, sat.profiles); return { name: d, effective: m ? m.profile.effective : null }; });
+    car.debrief = { closer, closerPlaced, orderTouched: false, notes };
+    summary.cars.push({ number: car.number, accent: car.accent, notes, drivers, closer, closerPlaced, sat });
+    (summary.classes[sat.cls] ||= true);
+  });
+
+  // Rival summary per class we're racing in.
+  Object.keys(summary.classes).forEach(cls => {
+    const ourNums = new Set(state.cars.map(c => String(c.number)));
+    const field = Object.values(debrief.cars).filter(c => c.cls === cls);
+    const ranked = field.filter(c => c.status === "Normal" && c.classPos != null).sort((a, b) => a.classPos - b.classPos);
+    const top = ranked.slice(0, 3), rest = ranked.slice(3);
+    const avg = (xs, k) => debriefMean(xs.map(c => c[k]).filter(v => v != null));
+    const stopTimes = field.filter(c => c.medianStop != null).sort((a, b) => a.medianStop - b.medianStop);
+    const movers = field.filter(c => c.netPerStop != null && c.stops >= 2).sort((a, b) => b.netPerStop - a.netPerStop);
+    const rivalClosers = top.filter(c => !ourNums.has(c.num) && c.closer && c.profiles[c.closer])
+      .map(c => ({ num: c.num, name: c.name, driver: c.closer, effective: c.profiles[c.closer].effective }));
+    summary.classes[cls] = {
+      top: top.length ? { stops: avg(top, "stops"), stintMin: avg(top, "avgStintMin"), nums: top.map(c => c.num) } : null,
+      rest: rest.length ? { stops: avg(rest, "stops"), stintMin: avg(rest, "avgStintMin") } : null,
+      bestStop: stopTimes[0] || null,
+      ourStops: stopTimes.filter(c => ourNums.has(c.num)),
+      mover: movers[0] || null,
+      rivalClosers,
+    };
+  });
+  return summary;
+}
+
+// Kicked off from "confirmName" when duplicating. Async so Setup appears
+// immediately; the debrief lands on it a moment later.
+async function runSaturdayDebrief(src){
+  const token = uid("debrief");
+  state.debrief = { token, status: "loading", sourceName: src.eventName };
+  try {
+    const debrief = await buildSaturdayDebrief(src);
+    if (state.debrief?.token !== token || state.page !== "setup" || state.currentRaceId) return; // engineer moved on
+    if (!debrief){ state.debrief = null; render(); return; }
+    state.debrief = { token, status: "ready", ...applySaturdayDebrief(debrief) };
+  } catch (err){
+    console.error("[debrief] failed:", err);
+    if (state.debrief?.token === token) state.debrief = null;
+  }
+  render();
+}
+
+// Driver color scale within a car — faster race pace toward green,
+// slower toward amber. Color only, no labels.
+function debriefPaceColor(drivers, effective){
+  const vals = drivers.map(d => d.effective).filter(v => v != null);
+  if (effective == null || vals.length < 2) return T.textFaint;
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const f = hi > lo ? (effective - lo) / (hi - lo) : 0;
+  const a = hexToRgb(T.green), b = hexToRgb(T.amber);
+  const mix = k => Math.round(a[k] + (b[k] - a[k]) * f);
+  return `rgb(${mix(0)},${mix(1)},${mix(2)})`;
+}
+
+function renderDebriefPanel(){
+  const db = state.debrief;
+  if (!db || state.currentRaceId) return "";
+  if (db.status === "loading"){
+    return `<section style="margin-bottom:32px;"><h2>Saturday Debrief</h2>
+      <div class="catalog-panel" style="margin-top:0;color:var(--textMuted);font-size:13px;">Reading ${esc(db.sourceName)}…</div></section>`;
+  }
+  const fmtS = s => s == null ? "—" : `${s.toFixed(1)}s`;
+  const fmtN = (n, d = 1) => n == null ? "—" : n.toFixed(d);
+  const line = t => `<div style="font-size:13px;line-height:1.5;color:var(--textMuted);margin:3px 0;">${t}</div>`;
+
+  const carBlocks = db.cars.map(c => `
+    <div style="border-left:3px solid ${c.accent};padding-left:12px;margin-bottom:14px;">
+      <div class="font-display" style="font-weight:600;font-size:14px;margin-bottom:6px;">#${esc(c.number)}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
+        ${c.drivers.map(d => `<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:3px 8px;border-radius:999px;background:var(--panelRaised);">
+          <span style="width:8px;height:8px;border-radius:999px;background:${debriefPaceColor(c.drivers, d.effective)};"></span>${esc(d.name)}</span>`).join("")}
+      </div>
+      ${c.notes.length ? c.notes.map(n => line(esc(n.text))).join("") : line("No changes — Saturday's plan held up.")}
+      ${c.closer && !c.closerPlaced ? line(`${esc(c.closer)} can't be placed on the final stint with current stint lengths.`) : ""}
+    </div>`).join("");
+
+  const classBlocks = Object.entries(db.classes).map(([cls, k]) => {
+    const rows = [];
+    if (k.top && k.rest) rows.push(`Top 3: ${fmtN(k.top.stops)} stops, ${fmtN(k.top.stintMin, 0)}-min stints · Rest: ${fmtN(k.rest.stops)} stops, ${fmtN(k.rest.stintMin, 0)}-min stints`);
+    if (k.bestStop) rows.push(`Quickest stops: #${esc(k.bestStop.num)} ${esc(k.bestStop.name)}, ${fmtS(k.bestStop.medianStop)} median`);
+    k.ourStops.forEach(o => { if (k.bestStop && o.num !== k.bestStop.num) rows.push(`Our #${esc(o.num)}: ${fmtS(o.medianStop)} median (+${(o.medianStop - k.bestStop.medianStop).toFixed(1)}s)`); });
+    if (k.mover && k.mover.netPerStop > 0) rows.push(`Most gained through stops: #${esc(k.mover.num)} ${esc(k.mover.name)}, +${fmtN(k.mover.netPerStop)} positions per stop`);
+    const ourCloser = db.cars.filter(c => c.sat.cls === cls).map(c => c.closerPlaced && c.drivers.find(d => d.name === c.closer)).find(Boolean);
+    k.rivalClosers.forEach(r => {
+      const delta = ourCloser && ourCloser.effective != null ? r.effective - ourCloser.effective : null;
+      rows.push(`#${esc(r.num)} closed with ${esc(r.driver)}${delta != null ? ` (${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(1)}s/lap vs. our closer)` : ""}`);
+    });
+    return `<div style="margin-top:6px;"><span class="eyebrow">${esc(cls)} Rivals</span>${rows.map(line).join("")}</div>`;
+  }).join("");
+
+  return `
+    <section style="margin-bottom:32px;">
+      <h2>Saturday Debrief</h2>
+      <div class="catalog-panel" style="margin-top:0;">
+        <div style="font-size:12px;color:var(--textFaint);margin-bottom:12px;">From ${esc(db.sourceName)} · applied below, edit anything</div>
+        ${carBlocks || line("None of these cars ran in that race.")}
+        ${classBlocks}
+      </div>
+    </section>`;
 }
 
 function rmAssemble(classification, sessionLabel, summary){
@@ -3240,6 +3616,8 @@ function renderSetup(){
           </div>`).join("")}
       </section>` : ""}
 
+      ${renderDebriefPanel()}
+
       <section style="margin-bottom:40px;">
         <h2>Race Setup</h2>
         <div class="setup-grid">
@@ -4766,7 +5144,10 @@ function bindEvents(){
     listenOnce(el, "input", ()=>{
       const carId = el.getAttribute("data-car"), idx = +el.getAttribute("data-idx");
       const car = state.cars.find(c=>c.id===carId);
-      if (car) car.drivers[idx] = el.value;
+      if (car){
+        car.drivers[idx] = el.value;
+        if (car.debrief) car.debrief.orderTouched = true;
+      }
       updateSetupButtonState();
     });
   });
@@ -4893,6 +5274,7 @@ async function handleAction(act, el){
       render(); break;
     case "startCreate":
       state.duplicateSource = null;
+      state.debrief = null;
       state.showNameInput = true; render(); break;
     case "duplicate-race": {
       const race = state.races.find(r=>r.id===el.getAttribute("data-id"));
@@ -4930,12 +5312,16 @@ async function handleAction(act, el){
         state.durationHours = src.durationHours;
         state.duplicateSource = null;
       } else {
+        state.debrief = null;
         state.cars = []; state.track=""; state.customTrack="";
         state.startTime="10:00"; state.durationHours=4;
       }
 
       navPush();
       state.page = "setup";
+      // Sets the loading state synchronously, then bakes Saturday's
+      // lessons into Setup once the source race's data is read.
+      if (src) runSaturdayDebrief(src);
       render(); break;
     }
     case "view-archive":
@@ -5054,6 +5440,7 @@ async function handleAction(act, el){
     case "add-driver": {
       const car = state.cars.find(c=>c.id===el.getAttribute("data-car"));
       if (car){
+        if (car.debrief) car.debrief.orderTouched = true;
         car.drivers.push("");
         if (!car.driverStintMode) car.driverStintMode = car.drivers.slice(0,-1).map(()=>'60');
         car.driverStintMode.push('60');
@@ -5065,6 +5452,7 @@ async function handleAction(act, el){
       const car = state.cars.find(c=>c.id===el.getAttribute("data-car"));
       const idx = +el.getAttribute("data-idx");
       if (car && car.drivers.length>1){
+        if (car.debrief) car.debrief.orderTouched = true;
         car.drivers.splice(idx,1);
         if (car.driverStintMode) car.driverStintMode.splice(idx,1);
         render();
@@ -5512,7 +5900,9 @@ async function createRacePlan(){
   // Postgres generates the real car/stint ids — insert cars one at a
   // time so each one's generated id is available for its own stints.
   const carPlans = [];
+  const debriefCtx = { track: resolvedTrack, startDateTime, totalMinutes };
   for (const c of cars){
+    const debriefNotes = finalizeDebriefForCar(c, debriefCtx);
     const validIdx = c.drivers.map((d,idx)=>({d,idx})).filter(o=>o.d.trim());
     const validDrivers = validIdx.map(o=>o.d);
     const validStintModes = validIdx.map(o=>stintModeOf(c, o.idx));
@@ -5581,8 +5971,20 @@ async function createRacePlan(){
     const { error: stintErr } = await supabase.from("stints").insert(stintRows);
     if (stintErr) console.error("insert stints failed:", stintErr);
 
-    carPlans.push({ car: mapCarRowToCarRecord(carRow), stints, log: [], retiredAtStint: null });
+    const cp = { car: mapCarRowToCarRecord(carRow), stints, log: [], retiredAtStint: null };
+    carPlans.push(cp);
+
+    // Saturday debrief changes, logged against the stint they affect so
+    // the engineer can see why the plan looks the way it does.
+    debriefNotes.forEach(n => {
+      const idx = n.kind === "order"
+        ? debriefClosingStint(stints.map(s => ({ len: s.lengthMin })))
+        : stints.findIndex(s => s.driver === n.driver);
+      if (idx != null && idx >= 0) logStintNote(cp, idx, n.text, "info", `debrief-${n.kind}-${n.driver}`);
+    });
+    delete c.debrief;
   }
+  state.debrief = null;
 
   state.plan = { startDateTime, endDateTime, totalMinutes, track: resolvedTrack, carPlans };
   state.currentRaceId = raceId;
