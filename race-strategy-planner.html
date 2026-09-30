@@ -1749,10 +1749,6 @@ function debriefTrackFactor(stintsByCar){
   };
 }
 
-// Where each of a car's stints lost time, against the car's best
-// condition-adjusted driver pace: `pace` is the stint's typical lap being
-// slower than that reference, `consistency` is laps slower than the
-// stint's own typical lap (traffic, mistakes, fade, scatter).
 function debriefStintReport(stints, profiles){
   const refs = Object.values(profiles).filter(p => p.confidence !== "low").map(p => p.adjBase);
   const ref = refs.length ? Math.min(...refs) : null;
@@ -1761,16 +1757,20 @@ function debriefStintReport(stints, profiles){
     const clean = s.laps.filter(l => l.clean);
     if (clean.length < 5) return null;
     const adj = clean.map(l => l.adj ?? l.t);
-    const med = debriefMedian(adj);
+    const med = debriefMedian(adj), mean = debriefMean(adj);
+    // Time lost vs. the car's best driver's typical lap. `pace` is the
+    // stint's typical lap being slower; `offPace` is what slow laps
+    // (traffic, mistakes) add on top. Normal lap-to-lap scatter nets to
+    // ~zero here, so it isn't counted as lost time.
     const paceLoss = Math.max(0, med - ref) * clean.length;
-    const consistencyLoss = adj.reduce((a, t) => a + Math.max(0, t - med), 0);
+    const offPaceLoss = Math.max(0, mean - med) * clean.length;
     const first = s.laps[0], last = s.laps[s.laps.length - 1];
     return {
       num: i + 1, driver: s.driver, minutes: s.minutes,
       start: first.ts ? first.ts - (first.t || 0) * 1000 : null, end: last.ts || null,
-      cleanLaps: clean.length, paceLoss, consistencyLoss, total: paceLoss + consistencyLoss,
-      // Delivered pace in this stint, per lap, for comparing teammates.
-      effective: med + consistencyLoss / clean.length,
+      doubleStint: i > 0 && stints[i - 1].driver === s.driver,
+      paceLoss, offPaceLoss, total: paceLoss + offPaceLoss,
+      effective: mean, // delivered condition-adjusted lap in this stint
     };
   }).filter(Boolean);
 }
@@ -1971,15 +1971,20 @@ function debriefFadeBar(p, sundayMin){
     if (near) near.label += ` · Sunday ${sundayMin}m`;
     else marks.push({ at: sundayMin, label: `Sunday ${sundayMin}m`, color: "var(--text)" });
   }
+  // Labels closer than ~30% of the bar would overlap — sort by position
+  // and drop each clashing label to the next row.
+  marks.sort((a, b) => a.at - b.at);
+  marks.forEach((m, k) => { m.row = k > 0 && pos(m.at) - pos(marks[k - 1].at) < 30 ? 1 - marks[k - 1].row : 0; });
+  const rows = marks.some(m => m.row === 1) ? 2 : 1;
   const tick = m => `<span style="position:absolute;left:${pos(m.at)}%;top:-3px;width:2px;height:14px;margin-left:-1px;border-radius:1px;background:var(--text);"></span>`;
   const label = m => {
     const x = pos(m.at), align = x > 80 ? "translateX(-100%)" : x < 20 ? "none" : "translateX(-50%)";
-    return `<span style="position:absolute;left:${x}%;transform:${align};white-space:nowrap;color:${m.color};font-weight:600;">${m.label}</span>`;
+    return `<span style="position:absolute;left:${x}%;top:${m.row * 16}px;transform:${align};white-space:nowrap;color:${m.color};font-weight:600;">${m.label}</span>`;
   };
   return `
     <div style="margin:10px 0 4px;">
       <div style="position:relative;height:8px;border-radius:4px;background:linear-gradient(90deg, ${grad.join(", ")});">${marks.map(tick).join("")}</div>
-      <div style="position:relative;height:16px;margin-top:4px;font-size:11px;color:var(--textFaint);">
+      <div style="position:relative;height:${rows * 16}px;margin-top:4px;font-size:11px;color:var(--textFaint);">
         ${marks.length ? marks.map(label).join("") : `<span style="position:absolute;left:0;">0m</span><span style="position:absolute;right:0;">${Math.round(total)}m</span>`}
       </div>
     </div>`;
@@ -2047,39 +2052,53 @@ function renderDebriefPanel(){
     return line(`Closer: ${esc(c.closer)}, best race pace (${fmtLapTime(best.effective)}/lap)${others ? ` · ${others}` : ""}`);
   };
 
-  // Time lost per Saturday stint, worst highlighted, with pace vs.
-  // consistency split and a quicker teammate if there is one.
-  const stintBlock = c => {
+  // The single stint that cost the most time, and where its driver fits
+  // better. Driver decisions stay pre-race; this is a suggestion.
+  const worstStintBlock = c => {
     const rep = c.sat.stintReport || [];
     if (!rep.length) return "";
+    const w = rep.reduce((a, r) => r.total > a.total ? r : a, rep[0]);
+    if (w.total < 5) return "";
     const planName = satName => (c.drivers.find(d => d.satName === satName) || {}).name || satName;
-    const mates = c.drivers.filter(d => d.profile && d.profile.confidence !== "low");
-    const worst = rep.reduce((w, r) => r.total > w.total ? r : w, rep[0]);
-    const row = r => {
-      const isWorst = r === worst;
-      const when = r.start && r.end ? ` · ${formatTime(r.start)}–${formatTime(r.end)}` : "";
-      const cause = r.paceLoss >= r.consistencyLoss ? "Mostly pace" : "Mostly consistency";
-      const better = mates
-        .filter(m => m.satName !== r.driver && m.effective < r.effective - DEBRIEF.SUITED_GAP_S)
-        .sort((a, b) => a.effective - b.effective)[0];
-      return `
-        <div style="padding:8px 10px;margin:4px 0;border-radius:8px;${isWorst ? `background:var(--panelRaised);border-left:3px solid ${T.red};` : "border-left:3px solid transparent;"}">
-          <div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;">
-            <span style="${isWorst ? "font-weight:600;" : "color:var(--textMuted);"}">Stint ${r.num} · ${esc(planName(r.driver))}<span style="color:var(--textFaint);font-weight:400;">${when}</span></span>
-            <span class="font-mono" style="white-space:nowrap;font-weight:700;color:${isWorst ? T.red : "var(--textMuted)"};">${fmtLoss(r.total)}</span>
-          </div>
-          <div style="font-size:12px;color:var(--textFaint);margin-top:2px;">${isWorst ? `Most time lost · ${cause}: ` : `${cause}: `}${fmtLoss(r.paceLoss)} pace · ${fmtLoss(r.consistencyLoss)} consistency</div>
-          ${better ? `<div style="font-size:12px;color:var(--textMuted);margin-top:2px;">${esc(better.name)} delivers ${(r.effective - better.effective).toFixed(2)}s/lap more for this stint</div>` : ""}
-        </div>`;
-    };
-    return `<div style="margin:10px 0 6px;"><span class="eyebrow">Time Lost by Stint</span>${rep.map(row).join("")}</div>`;
+    const who = esc(planName(w.driver));
+    const when = w.start && w.end ? ` · ${formatTime(w.start)}–${formatTime(w.end)}` : "";
+    const cover = c.drivers
+      .filter(d => d.profile && d.profile.confidence !== "low" && d.satName !== w.driver && d.effective < w.effective - DEBRIEF.SUITED_GAP_S)
+      .sort((a, b) => a.effective - b.effective)[0];
+    const coverText = cover ? ` ${esc(cover.name)} covers this window ${(w.effective - cover.effective).toFixed(2)}s/lap quicker.` : "";
+    const own = rep.filter(r => r.driver === w.driver && r !== w).sort((a, b) => a.effective - b.effective)[0];
+    const ownGain = own ? w.effective - own.effective : 0;
+
+    let move;
+    if (w.doubleStint && own && ownGain >= DEBRIEF.SUITED_GAP_S){
+      move = `Second half of a double stint — ${ownGain.toFixed(2)}s/lap off their own Stint ${own.num}. Don't double-stint ${who} on Sunday.${coverText}`;
+    } else if (own && ownGain >= DEBRIEF.SUITED_GAP_S){
+      const ownWhen = own.start && own.end ? ` (${formatTime(own.start)}–${formatTime(own.end)})` : "";
+      move = `Move ${who} toward the Stint ${own.num} window${ownWhen}, where they ran ${ownGain.toFixed(2)}s/lap quicker.${coverText}`;
+    } else if (cover){
+      move = `Put ${esc(cover.name)} in this window — ${(w.effective - cover.effective).toFixed(2)}s/lap quicker.`;
+    } else {
+      move = `No teammate was quicker for this window.`;
+    }
+    const cause = w.paceLoss >= w.offPaceLoss ? "Mostly pace" : "Mostly off-pace laps";
+    const fmtLoss = s => s >= 60 ? `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}` : `${Math.round(s)}s`;
+    return `
+      <div style="margin:10px 0 6px;padding:10px 12px;border-radius:8px;background:var(--panelRaised);border-left:3px solid ${T.red};">
+        <span class="eyebrow">Most Time Lost</span>
+        <div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;margin-top:4px;">
+          <span style="font-weight:600;">Stint ${w.num} · ${who}<span style="color:var(--textFaint);font-weight:400;">${when}</span></span>
+          <span class="font-mono" style="white-space:nowrap;font-weight:700;color:${T.red};">${fmtLoss(w.total)}</span>
+        </div>
+        <div style="font-size:12px;color:var(--textFaint);margin-top:2px;">${cause}: ${fmtLoss(w.paceLoss)} pace · ${fmtLoss(w.offPaceLoss)} off-pace laps</div>
+        <div style="font-size:13px;color:var(--textMuted);margin-top:6px;">${move}</div>
+      </div>`;
   };
 
   const carBlocks = db.cars.map(c => `
     <div style="border-left:3px solid ${c.accent};padding-left:12px;margin-bottom:16px;">
       <div class="font-display" style="font-weight:600;font-size:14px;margin-bottom:4px;">#${esc(c.number)}</div>
       ${closerLine(c)}
-      ${stintBlock(c)}
+      ${worstStintBlock(c)}
       ${c.drivers.map(d => driverCard(c, d)).join("")}
     </div>`).join("");
 
