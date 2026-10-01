@@ -1264,7 +1264,7 @@ function debriefMean(xs){ return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.
 // or on the lap after any pit lap (same-driver fuel stops split too).
 function debriefCarStints(car, lapsByPos, lapRows, pitStops, finalDriver){
   const laps = lapsByPos.get(car.position) || [];
-  const drivers = rmDriverForLaps(car.startNumber, laps, lapRows, pitStops, finalDriver);
+  const drivers = rmDriverForLaps(car.startNumber, laps, lapRows, pitStops, finalDriver[car.startNumber]);
   const pitLaps = new Set();
   lapRows.forEach(l => { if (l.car_number === car.startNumber && l.is_pit_lap === true) pitLaps.add(l.lap_number); });
   pitStops.forEach(s => { if (s.car_number === car.startNumber) pitLaps.add(s.lap_number); });
@@ -1277,7 +1277,10 @@ function debriefCarStints(car, lapsByPos, lapRows, pitStops, finalDriver){
       cur = { driver: d, laps: [], minutes: 0 };
       stints.push(cur);
     }
-    cur.laps.push({ lap: l.lap, t: l.lapTime, ts: l.timeOfDay || null, min: cur.minutes, pit: l.inPit, caution: l.status === "YELLOW", clean: !l.inPit && l.status === "GREEN" && !!l.lapTime });
+    // A pit lap from either source (lap flag or the pit stop table) and the
+    // out-lap after it never count as race laps.
+    const pit = l.inPit || pitLaps.has(l.lap) || pitLaps.has(l.lap - 1);
+    cur.laps.push({ lap: l.lap, t: l.lapTime, ts: l.timeOfDay || null, min: cur.minutes, pit, caution: l.status === "YELLOW", clean: !pit && l.status === "GREEN" && !!l.lapTime });
     cur.minutes += (l.lapTime || 0) / 60;
   });
   return stints.filter(s => s.driver && s.laps.length);
