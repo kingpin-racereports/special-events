@@ -4224,7 +4224,13 @@ function pickResultSession(rows, race){
   });
   const groups = Object.values(bySession);
   const raceDate = String(race?.eventDateISO || "").slice(0, 10);
-  const dated = groups.filter(g => g.date && String(g.date).slice(0, 10) === raceDate);
+  // A weekend event holds several races, so match this race's own day: the
+  // session's date, else the local day it finished, else its name ("Saturday …").
+  const localDay = ms => ms ? new Date(ms).toLocaleDateString("en-CA") : "";
+  const weekday = raceDate ? new Date(raceDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "long" }).toLowerCase() : "";
+  const sameDay = g => g.date ? String(g.date).slice(0, 10) === raceDate : localDay(g.at) === raceDate;
+  let dated = raceDate ? groups.filter(sameDay) : [];
+  if (!dated.length && weekday) dated = groups.filter(g => String(g.name || "").toLowerCase().includes(weekday));
   if (groups.length > 1) console.warn("[race-results]", groups.length, "sessions tagged to race", race?.id, "— using", (dated[0] || groups[0]).name, dated.length ? "(date match)" : "(most recent — no date match)");
   return (dated.length ? dated : groups).sort((a, b) => b.at - a.at)[0];
 }
