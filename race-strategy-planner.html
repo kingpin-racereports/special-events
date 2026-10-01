@@ -1245,9 +1245,8 @@ const DEBRIEF = {
   MED_CONF_LAPS: 20,
   FULL_STINT_MIN: 20,  // stints shorter than this (splash, final sliver) are left out of stint-length averages
   FACTOR_WINDOW_MIN: 5, // track-condition factor looks this many minutes either side of a lap
-  SUITED_Z: 0.25,      // teammate must be this many σ quicker vs. the field to be suggested
+  SUITED_GAP_S: 0.3,   // teammate must be this many s/lap quicker vs. the field to be suggested
   FIELD_WINDOW_MIN: 5, // field pace at a moment = other class cars' laps this many minutes either side
-  FIELD_MAX_RATIO: 1.15, // laps over this × a car's typical lap (incidents, slow zones) left out of pace comparisons
 };
 
 function debriefMedian(xs){
@@ -1297,12 +1296,19 @@ function debriefDriverProfile(stints){
   const lossSec = disrupted.reduce((a, l) => a + Math.max(0, A(l) - adjBase), 0);
   const drivenMin = stints.reduce((a, s) => a + s.minutes, 0);
   const lossPerHour = drivenMin > 0 ? lossSec / (drivenMin / 60) : 0;
-  // Race pace vs. the class field on track at the same time: each lap's
-  // gap to the field's mean lap, in seconds and in field standard
-  // deviations (σ). Negative = quicker than the field.
-  const vsField = cleanLaps.filter(l => l.f && l.t <= base * DEBRIEF.FIELD_MAX_RATIO);
-  const raceZ = vsField.length >= 5 ? debriefMean(vsField.map(l => (l.t - l.f.mean) / l.f.sd)) : null;
+  // Race pace: every lap except pit laps (traffic and cautions included),
+  // each against the class field's average lap at the same moment.
+  // Seconds per lap; negative = quicker than the field.
+  const vsField = stints.flatMap(s => s.laps).filter(l => l.f);
   const raceDelta = vsField.length >= 5 ? debriefMean(vsField.map(l => l.t - l.f.mean)) : null;
+
+  // Lap ranges driven, back-to-back stints merged: "1–34, 95–130".
+  const ranges = [];
+  stints.forEach(s => {
+    const a = s.laps[0].lap, b = s.laps[s.laps.length - 1].lap, prev = ranges[ranges.length - 1];
+    if (prev && a === prev[1] + 1) prev[1] = b; else ranges.push([a, b]);
+  });
+  const lapRanges = ranges.map(([a, b]) => a === b ? `${a}` : `${a}–${b}`).join(", ");
 
   // Pace through the stint: each smooth lap as % over its own stint's
   // opening pace, pooled across stints and sliced by stint minute.
@@ -1350,7 +1356,7 @@ function debriefDriverProfile(stints){
   return {
     base, adjBase, stdev, lossPerHour, disruptedLaps: disrupted.length, fadeMin, fadePct, heldThrough, longestMin, bins,
     confidence, stints: stints.length, fullStints, cleanLaps: cleanLaps.length,
-    raceZ, raceDelta,
+    raceDelta, lapRanges,
   };
 }
 
@@ -1473,14 +1479,15 @@ function debriefStintReport(stints, field, num){
   const typ = field.typical[num];
   if (!typ) return [];
   return stints.map((s, i) => {
-    const laps = s.laps.filter(l => l.clean && l.f && l.t <= typ * DEBRIEF.FIELD_MAX_RATIO);
+    const laps = s.laps.filter(l => l.f); // every non-pit lap
     if (laps.length < 5) return null;
     const n = laps.length;
     const t = laps.map(l => l.t), fMed = laps.map(l => l.f.median), fMean = laps.map(l => l.f.mean);
     // Time lost to the class field during this stint:
-    //  pace    — our typical lap vs. the field's typical lap, over the stint
-    //  traffic — how much more our slow laps drag the average than the
-    //            field's do (inconsistency / traffic), never negative
+    //  pace    — our typical (clean) lap vs. the field's typical lap
+    //  traffic — race pace (average lap, every non-pit lap) minus that
+    //            typical lap: what inconsistency costs, net of the field's
+    //            own (so a caution everyone ran doesn't count), never negative
     //  pit     — the stop that ended this stint vs. the class median stop
     const pace = n * (debriefMedian(t) - debriefMedian(fMed));
     const traffic = Math.max(0, n * ((debriefMean(t) - debriefMedian(t)) - (debriefMean(fMean) - debriefMedian(fMed))));
@@ -1491,7 +1498,7 @@ function debriefStintReport(stints, field, num){
       num: i + 1, driver: s.driver,
       start: first.ts ? first.ts - (first.t || 0) * 1000 : null, end: last.ts || null,
       pace, traffic, pit, total: pace + traffic + (pit || 0),
-      z: debriefMean(laps.map(l => (l.t - l.f.mean) / l.f.sd)),
+      delta: debriefMean(laps.map(l => l.t - l.f.mean)), // race pace this stint, s/lap vs. field
     };
   }).filter(Boolean);
 }
@@ -1550,8 +1557,10 @@ function debriefFieldModel(stintsByNum){
     const laps = stints.flatMap(s => s.laps).filter(l => l.clean && l.ts);
     const med = debriefMedian(laps.map(l => l.t));
     typical[num] = med;
-    if (med) laps.forEach(l => { if (l.t <= med * DEBRIEF.FIELD_MAX_RATIO) pts.push({ ts: l.ts, t: l.t, num }); });
   });
+  Object.entries(stintsByNum).forEach(([num, stints]) => stints.forEach(s => s.laps.forEach(l => {
+    if (!l.pit && l.t && l.ts) pts.push({ ts: l.ts, t: l.t, num });
+  })));
   pts.sort((a, b) => a.ts - b.ts);
   const W = DEBRIEF.FIELD_WINDOW_MIN * 60000;
   const at = (ts, excludeNum) => {
@@ -1612,7 +1621,7 @@ async function buildSaturdayDebrief(src){
     const field = debriefFieldModel(Object.fromEntries(classNums.map(n => [n, stintsByNum[n]])));
     classNums.forEach(n => {
       fieldByNum[n] = field;
-      stintsByNum[n].forEach(s => s.laps.forEach(l => { if (l.clean) l.f = field.at(l.ts, n); }));
+      stintsByNum[n].forEach(s => s.laps.forEach(l => { if (!l.pit && l.t) l.f = field.at(l.ts, n); }));
     });
   });
 
@@ -1675,10 +1684,9 @@ function applySaturdayDebrief(debrief){
     // Closer: best race-condition pace among drivers with enough data.
     const candidates = car.drivers
       .map(d => ({ d, m: debriefMatchDriver(d, sat.profiles) }))
-      .filter(o => o.m && o.m.profile.confidence !== "low" && o.m.profile.raceZ != null)
-      .sort((a, b) => a.m.profile.raceZ - b.m.profile.raceZ);
+      .filter(o => o.m && o.m.profile.confidence !== "low" && o.m.profile.raceDelta != null)
+      .sort((a, b) => a.m.profile.raceDelta - b.m.profile.raceDelta);
     const closer = candidates.length >= 2 ? candidates[0].d : null;
-    const closerRanking = candidates.map(o => ({ name: o.d, raceZ: o.m.profile.raceZ }));
     let closerPlaced = false;
     if (closer){
       closerPlaced = rotateCarForCloser(car, closer, ctx);
@@ -1687,10 +1695,10 @@ function applySaturdayDebrief(debrief){
 
     const drivers = car.drivers.map(d => {
       const m = debriefMatchDriver(d, sat.profiles);
-      return { name: d, satName: m ? m.name : null, profile: m ? m.profile : null, raceZ: m ? m.profile.raceZ : null, decision: decisions[d] };
+      return { name: d, satName: m ? m.name : null, profile: m ? m.profile : null, raceDelta: m ? m.profile.raceDelta : null, decision: decisions[d] };
     });
     car.debrief = { closer, closerPlaced, orderTouched: false, notes };
-    summary.cars.push({ number: car.number, accent: car.accent, notes, drivers, closer, closerPlaced, closerRanking, sat });
+    summary.cars.push({ number: car.number, accent: car.accent, notes, drivers, closer, closerPlaced, sat });
     summary.classes[sat.cls] = true;
   });
 
@@ -1703,8 +1711,8 @@ function applySaturdayDebrief(debrief){
     const avg = (xs, k) => debriefMean(xs.map(c => c[k]).filter(v => v != null));
     const stopTimes = field.filter(c => c.medianStop != null).sort((a, b) => a.medianStop - b.medianStop);
     const movers = field.filter(c => c.netPerStop != null && c.stops >= 2).sort((a, b) => b.netPerStop - a.netPerStop);
-    const rivalClosers = top.filter(c => !ourNums.has(c.num) && c.closer && c.profiles[c.closer]?.raceZ != null)
-      .map(c => ({ num: c.num, name: c.name, driver: c.closer, raceZ: c.profiles[c.closer].raceZ }));
+    const rivalClosers = top.filter(c => !ourNums.has(c.num) && c.closer && c.profiles[c.closer]?.raceDelta != null)
+      .map(c => ({ num: c.num, name: c.name, driver: c.closer, raceDelta: c.profiles[c.closer].raceDelta }));
     summary.classes[cls] = {
       top: top.length ? { stops: avg(top, "stops"), stintMin: avg(top, "avgStintMin"), nums: top.map(c => c.num) } : null,
       rest: rest.length ? { stops: avg(rest, "stops"), stintMin: avg(rest, "avgStintMin") } : null,
@@ -1736,11 +1744,11 @@ async function runSaturdayDebrief(src){
 
 // Driver color scale within a car — faster race pace toward green,
 // slower toward amber. Color only, no labels.
-function debriefPaceColor(drivers, raceZ){
-  const vals = drivers.map(d => d.raceZ).filter(v => v != null);
-  if (raceZ == null || vals.length < 2) return T.textFaint;
+function debriefPaceColor(drivers, raceDelta){
+  const vals = drivers.map(d => d.raceDelta).filter(v => v != null);
+  if (raceDelta == null || vals.length < 2) return T.textFaint;
   const lo = Math.min(...vals), hi = Math.max(...vals);
-  const f = hi > lo ? (raceZ - lo) / (hi - lo) : 0;
+  const f = hi > lo ? (raceDelta - lo) / (hi - lo) : 0;
   const a = hexToRgb(T.green), b = hexToRgb(T.amber);
   const mix = k => Math.round(a[k] + (b[k] - a[k]) * f);
   return `rgb(${mix(0)},${mix(1)},${mix(2)})`;
@@ -1794,18 +1802,18 @@ function renderDebriefPanel(){
   const fmtS = s => s == null ? "—" : `${s.toFixed(1)}s`;
   const fmtN = (n, d = 1) => n == null ? "—" : n.toFixed(d);
   const line = t => `<div style="font-size:13px;line-height:1.5;color:var(--textMuted);margin:3px 0;">${t}</div>`;
-  const fmtZ = z => `${z < 0 ? "−" : "+"}${Math.abs(z).toFixed(2)}σ`;
   const fmtSec = x => `${x < 0 ? "−" : "+"}${Math.abs(x).toFixed(1)}s`;
   const stat = (label, value) => `<span style="white-space:nowrap;"><span style="color:var(--textFaint);">${label}</span> ${value}</span>`;
 
   const driverCard = (c, d) => {
     const p = d.profile;
-    const dot = `<span style="width:8px;height:8px;border-radius:999px;background:${debriefPaceColor(c.drivers, d.raceZ)};display:inline-block;"></span>`;
+    const dot = `<span style="width:8px;height:8px;border-radius:999px;background:${debriefPaceColor(c.drivers, d.raceDelta)};display:inline-block;"></span>`;
     const head = `<div style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:13px;">${dot}${esc(d.name)}${d.name === c.closer && c.closerPlaced ? ` <span style="color:var(--textFaint);font-weight:400;">· closer</span>` : ""}</div>`;
     if (!p) return `<div style="padding:10px 0;border-top:1px solid var(--border);">${head}</div>`;
     const stats = [
+      stat("Laps", esc(p.lapRanges)),
       stat("Clean lap", fmtLapTime(p.adjBase)),
-      stat("Race pace", p.raceZ != null ? `${fmtZ(p.raceZ)} (${fmtSec(p.raceDelta)}) vs field` : "—"),
+      stat("Race pace vs field", p.raceDelta != null ? fmtSec(p.raceDelta) : "—"),
       stat("Consistency", p.stdev != null ? `±${p.stdev.toFixed(2)}s` : "—"),
       stat("Lost off-pace", `${p.lossPerHour.toFixed(1)}s/hr`),
     ].join(`<span style="color:var(--border);margin:0 6px;">|</span>`);
@@ -1817,13 +1825,11 @@ function renderDebriefPanel(){
       </div>`;
   };
 
-  const closerLine = c => {
-    if (!c.closer) return line("Closer unchanged: fewer than two drivers with enough Saturday laps to compare.");
-    if (!c.closerPlaced) return line(`${esc(c.closer)} has the best race pace but can't be placed on the final stint with current stint lengths.`);
-    const best = c.closerRanking[0];
-    const others = c.closerRanking.slice(1).map(o => `${esc(o.name)} +${(o.raceZ - best.raceZ).toFixed(2)}σ`).join(", ");
-    return line(`Closer: ${esc(c.closer)}, best race pace (${fmtZ(best.raceZ)} vs field)${others ? ` · ${others}` : ""}`);
-  };
+  // The closer is tagged on their driver card; only say something here
+  // when the best driver couldn't be put on the final stint.
+  const closerLine = c => c.closer && !c.closerPlaced
+    ? line(`${esc(c.closer)} has the best race pace but can't be placed on the final stint with current stint lengths.`)
+    : "";
 
   // Whole-race class positions gained/lost on track vs. through the pits.
   const racePositionsLine = c => {
@@ -1853,8 +1859,8 @@ function renderDebriefPanel(){
     };
     // Only a pace problem has a driver fix: a teammate who ran quicker vs. the field.
     const cover = top[0] === "Pace" ? c.drivers
-      .filter(d => d.profile && d.profile.confidence !== "low" && d.satName !== w.driver && d.raceZ != null && d.raceZ < w.z - DEBRIEF.SUITED_Z)
-      .sort((a, b) => a.raceZ - b.raceZ)[0] : null;
+      .filter(d => d.profile && d.profile.confidence !== "low" && d.satName !== w.driver && d.raceDelta != null && d.raceDelta < w.delta - DEBRIEF.SUITED_GAP_S)
+      .sort((a, b) => a.raceDelta - b.raceDelta)[0] : null;
     return `
       <div style="margin:10px 0 6px;padding:10px 12px;border-radius:8px;background:var(--panelRaised);border-left:3px solid ${T.red};">
         <div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;">
@@ -1862,7 +1868,7 @@ function renderDebriefPanel(){
           <span class="font-mono" style="white-space:nowrap;font-weight:700;color:${T.red};">${fmtLoss(w.total)}</span>
         </div>
         <div style="font-size:12px;display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px;">${parts.map(chip).join("")}</div>
-        ${cover ? `<div style="font-size:12px;color:var(--textMuted);margin-top:4px;">${esc(cover.name)} ran ${(w.z - cover.raceZ).toFixed(2)}σ quicker vs. the field.</div>` : ""}
+        ${cover ? `<div style="font-size:12px;color:var(--textMuted);margin-top:4px;">${esc(cover.name)} ran ${(w.delta - cover.raceDelta).toFixed(1)}s/lap quicker vs. the field.</div>` : ""}
       </div>`;
   };
 
@@ -1884,8 +1890,8 @@ function renderDebriefPanel(){
     if (k.mover && k.mover.netPerStop > 0) rows.push(`Most gained through stops: #${esc(k.mover.num)} ${esc(k.mover.name)}, +${fmtN(k.mover.netPerStop)} positions per stop`);
     const ourCloser = db.cars.filter(c => c.sat.cls === cls).map(c => c.closerPlaced && c.drivers.find(d => d.name === c.closer)).find(Boolean);
     k.rivalClosers.forEach(r => {
-      const delta = ourCloser && ourCloser.raceZ != null ? r.raceZ - ourCloser.raceZ : null;
-      rows.push(`#${esc(r.num)} closed with ${esc(r.driver)}${delta != null ? ` (${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(2)}σ vs. our closer)` : ""}`);
+      const delta = ourCloser && ourCloser.raceDelta != null ? r.raceDelta - ourCloser.raceDelta : null;
+      rows.push(`#${esc(r.num)} closed with ${esc(r.driver)}${delta != null ? ` (${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(1)}s/lap vs. our closer)` : ""}`);
     });
     return `<div style="margin-top:6px;"><span class="eyebrow">${esc(cls)} Rivals</span>${rows.map(line).join("")}</div>`;
   }).join("");
