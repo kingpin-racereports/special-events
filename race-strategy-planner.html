@@ -725,6 +725,11 @@ function mapRaceRowToRecord(row){
     eventName: row.event_name,
     eventDateISO: row.event_date,
     redmistEventId: row.redmist_event_id ?? null, // links this race to a WRL event for the Home-tile LIVE badge — see subscribeHomeLiveWatch()
+    // The exact Red Mist session this race ran as — stamped by the poller when
+    // the race goes green (or on first confident match). An event holds several
+    // sessions (quali, Saturday, Sunday), so results/debrief key off this.
+    redmistSessionId: row.redmist_session_id ?? null,
+    redmistSessionName: row.redmist_session_name ?? null,
     track: row.track || "",
     startTime: (row.start_time || "10:00:00").slice(0,5),
     durationHours: Number(row.duration_hours),
@@ -1012,7 +1017,26 @@ async function fetchRedmistResultRows(race, strict = false){
     data = res.data;
   }
   if (!data?.length) return null;
-  return pickResultSession(data, race, strict)?.rows || null;
+  // Stamped session: use exactly that one, no guessing.
+  if (race.redmistSessionId != null){
+    const own = data.filter(r => Number(r.session_id) === Number(race.redmistSessionId)
+      && (!race.redmistSessionName || r.session_name === race.redmistSessionName));
+    if (own.length || strict) return own.length ? own : null;
+  }
+  const picked = pickResultSession(data, race, strict);
+  if (!picked) return null;
+  // Strict picks only ever come from a same-day match — stamp it on the race
+  // so every later lookup is exact (backfills races from before stamping).
+  if (strict && race.redmistSessionId == null){
+    const sid = Number(picked.rows[0].session_id), sname = picked.rows[0].session_name;
+    race.redmistSessionId = sid; race.redmistSessionName = sname;
+    const cached = state.races?.find(r => r.id === race.id);
+    if (cached && cached !== race){ cached.redmistSessionId = sid; cached.redmistSessionName = sname; }
+    supabase.from("races").update({ redmist_session_id: sid, redmist_session_name: sname })
+      .eq("id", race.id).is("redmist_session_id", null)
+      .then(({ error }) => { if (error) console.warn("[race-results] couldn't stamp session on race", race.id, error); });
+  }
+  return picked.rows;
 }
 
 function rmResultStatus(s){
