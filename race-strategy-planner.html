@@ -461,6 +461,13 @@
 
   .stint-log{margin-top:10px;display:flex;flex-direction:column;gap:6px;}
   .log-head{display:flex;align-items:center;justify-content:space-between;margin:14px 2px 2px;}
+  /* Archived races: stint timeline, stint table and adjustment log folded
+     into one collapsible section (collapsed by default). */
+  .stint-section{margin-bottom:16px;}
+  .stint-section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;border-radius:12px;background:var(--panel);border:1px solid var(--border);padding:12px 16px;cursor:pointer;user-select:none;}
+  .stint-section-head .meta{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textFaint);display:flex;align-items:center;gap:10px;}
+  .stint-section-body{display:none;margin-top:12px;}
+  .stint-section.open .stint-section-body{display:block;}
   .log-head .lbl{font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:var(--textFaint);}
   .log-clear{background:none;border:none;color:var(--textFaint);font-size:11px;font-family:'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:0.06em;}
   .log-item{font-size:13px;line-height:1.45;padding:9px 11px;border-radius:8px;background:var(--panel);border:1px solid var(--border);display:flex;align-items:flex-start;gap:7px;color:var(--textMuted);}
@@ -648,6 +655,7 @@ const ICONS = {
   chevronUp:'<polyline points="18 15 12 9 6 15"/>',
   copy:'<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   calendar:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+  activity:'<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
 };
 function icon(name, size=16, extra=""){
   return `<svg class="i icon" width="${size}" height="${size}" viewBox="0 0 24 24" style="${extra}">${ICONS[name]||""}</svg>`;
@@ -692,6 +700,7 @@ let state = {
   finishDrafts: {},
   openStintNotes: new Set(), // UI-only: which stint rows have their note field expanded
   expandedCarPlans: new Set(), // UI-only: which cars' plan sections are expanded (archive view — collapsed by default)
+  expandedStintSections: new Set(), // UI-only: archived car tiles whose Stints section is open (collapsed by default)
   addingReserve: new Set(), // UI-only: which cars currently have the "Add Reserve Driver" input open
   reserveDraft: {}, // UI-only: in-progress reserve driver name per car id, keyed by car.id
 
@@ -1707,7 +1716,7 @@ function debriefPaceSeries(stintsByNum, opts = {}){
     const last = cautions[cautions.length - 1];
     if (last && last[1] === k * binMin) last[1] = (k + 1) * binMin; else cautions.push([k * binMin, (k + 1) * binMin]);
   });
-  return { minutes: (end - start) / 60000, field, cautions };
+  return { start, minutes: (end - start) / 60000, field, cautions };
 }
 
 // Line chart that always fills its container's width: the plot is a
@@ -1715,7 +1724,11 @@ function debriefPaceSeries(stintsByNum, opts = {}){
 // labels and caution dots are HTML laid over it, so nothing distorts.
 // Lap time up = faster, an hour mark every 60 min, a yellow dot on the first
 // line for each caution. lines: [{ label, color, points, dash, width }].
-function debriefPaceChartSvg(chart, lines){
+// opts.bands: shaded time windows behind the lines, e.g. who was driving —
+// [{ from, to, color, label, title }] in race minutes.
+function debriefPaceChartSvg(chart, lines, opts = {}){
+  const bands = opts.bands || [];
+  const height = opts.height || 200;
   const vals = lines.flatMap(l => l.points.filter(Boolean).map(p => p.t)).sort((a, b) => a - b);
   if (vals.length < 4 || !(chart.minutes > 0)) return "";
   const q = f => vals[Math.min(vals.length - 1, Math.floor(vals.length * f))];
@@ -1749,11 +1762,19 @@ function debriefPaceChartSvg(chart, lines){
   const pct = f => `${(f * 100).toFixed(2)}%`;
   const mono = "font-family:'JetBrains Mono',monospace;";
   // Plot area inset: room for the lap-time labels on the left and the hour labels below.
-  const PL = 50, PR = 8, PT = 8, PB = 22;
+  const PL = 50, PR = 8, PT = bands.length ? 24 : 8, PB = 22;
+  const wash = (hex, a) => { const [r, g, b] = hexToRgb(hex); return `rgba(${r},${g},${b},${a})`; };
+  const bandHtml = bands.map(b => {
+    const x0 = fx(b.from), w = Math.max(0, fx(b.to) - x0);
+    return `<div title="${esc(b.title || b.label || "")}" style="position:absolute;top:0;bottom:0;left:${pct(x0)};width:${pct(w)};background:${wash(b.color, 0.12)};border-left:1px solid ${wash(b.color, 0.5)};">
+      ${b.label && w >= 0.045 ? `<span style="position:absolute;left:4px;top:-18px;font-size:10px;font-weight:700;letter-spacing:0.04em;color:${b.color};${mono}white-space:nowrap;">${esc(b.label)}</span>` : ""}
+    </div>`;
+  }).join("");
   return `
-    <div style="position:relative;width:100%;height:200px;" role="img" aria-label="Race pace by hour">
+    <div style="position:relative;width:100%;height:${height}px;" role="img" aria-label="${esc(opts.ariaLabel || "Race pace by hour")}">
       ${ticks.map(t => `<div style="position:absolute;left:0;width:${PL - 6}px;top:calc(${PT}px + (100% - ${PT + PB}px) * ${fy(t).toFixed(4)});transform:translateY(-50%);text-align:right;font-size:10px;color:${T.textFaint};${mono}">${fmtLapTime(t).replace(/\.\d+$/, m => m.slice(0, 2))}</div>`).join("")}
       <div style="position:absolute;left:${PL}px;right:${PR}px;top:${PT}px;bottom:${PB}px;">
+        ${bandHtml}
         <svg viewBox="0 0 ${VW} ${VH}" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;overflow:visible;">
           ${ticks.map(t => `<line x1="0" x2="${VW}" y1="${(fy(t) * VH).toFixed(2)}" y2="${(fy(t) * VH).toFixed(2)}" stroke="${T.border}" stroke-width="1" vector-effect="non-scaling-stroke"/>`).join("")}
           ${hours.map(h => `<line x1="${(fx(h * 60) * VW).toFixed(1)}" x2="${(fx(h * 60) * VW).toFixed(1)}" y1="0" y2="${VH}" stroke="${T.borderLight}" stroke-width="1" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"/>`).join("")}
@@ -1769,10 +1790,11 @@ function debriefPaceChartSvg(chart, lines){
     </div>`;
 }
 
-async function buildSaturdayDebrief(src){
-  // Always the source race's own day — Saturday's data, never Sunday's.
-  const resultRows = await fetchRedmistResultRows(src, true);
-  if (!resultRows) return null;
+// One Red Mist session read the same way everywhere: laps, flag timeline
+// and pit stops, with every car's race split into driver stints. Shared by
+// the Saturday Debrief and the per-car Race Pace chart. Null if the
+// session has no laps.
+async function rmLoadSessionStints(resultRows){
   const { event_id, session_id, session_name } = resultRows[0];
   const classification = rmClassification(resultRows);
   const scope = q => q.eq("event_id", event_id).eq("session_id", session_id).eq("session_name", session_name);
@@ -1789,6 +1811,22 @@ async function buildSaturdayDebrief(src){
 
   const lapsByPos = rmLapsByPos(classification, lapRows);
   const finalDriver = Object.fromEntries(resultRows.map(r => [String(r.car_number), r.driver_name]));
+  // Charts stop at the checkered flag: the overall winner's last lap.
+  const leader = classification[0]?.startNumber;
+  const checkered = lapRows.reduce((m, l) => l.car_number === leader ? Math.max(m, new Date(l.captured_at).getTime()) : m, 0) || null;
+  const flagCautions = periods.length ? rmFlagSummary(periods).cautions : [];
+  const stintsByNum = {};
+  classification.forEach(c => { stintsByNum[c.startNumber] = debriefCarStints(c, lapsByPos, lapRows, pitStops, finalDriver); });
+  return { classification, lapRows, periods, pitStops, finalDriver, checkered, flagCautions, stintsByNum };
+}
+
+async function buildSaturdayDebrief(src){
+  // Always the source race's own day — Saturday's data, never Sunday's.
+  const resultRows = await fetchRedmistResultRows(src, true);
+  if (!resultRows) return null;
+  const session = await rmLoadSessionStints(resultRows);
+  if (!session) return null;
+  const { classification, lapRows, periods, pitStops, checkered, flagCautions, stintsByNum } = session;
   const redPeriods = periods.length ? rmFlagSummary(periods).redFlags : [];
   const lapTime = {};
   lapRows.forEach(l => { lapTime[`${l.car_number}|${l.lap_number}`] = new Date(l.captured_at).getTime(); });
@@ -1798,12 +1836,7 @@ async function buildSaturdayDebrief(src){
   };
 
   // Every car, not just ours — rival driver profiles feed the matchup.
-  const stintsByNum = {}, fieldByNum = {}, paceCharts = {};
-  // The chart stops at the checkered flag: the overall winner's last lap.
-  const leader = classification[0]?.startNumber;
-  const checkered = lapRows.reduce((m, l) => l.car_number === leader ? Math.max(m, new Date(l.captured_at).getTime()) : m, 0) || null;
-  const flagCautions = periods.length ? rmFlagSummary(periods).cautions : [];
-  classification.forEach(c => { stintsByNum[c.startNumber] = debriefCarStints(c, lapsByPos, lapRows, pitStops, finalDriver); });
+  const fieldByNum = {}, paceCharts = {};
   // Condition-adjust every lap against its own class's field.
   [...new Set(classification.map(c => c.resultClass))].forEach(cls => {
     const inClass = classification.filter(c => c.resultClass === cls).map(c => stintsByNum[c.startNumber]);
@@ -2277,6 +2310,81 @@ async function loadArchiveResults(race){
 // showing "Red Flag" rather than either duration number (confirmed real
 // case: clock-gap ~26 minutes on a stop that wasn't actually a long repair,
 // just badly timed against a red flag).
+// Pit Stop Times for an archived race. redmist_pit_cycles only exists for
+// races that went through the redmist-backfill project; races captured by
+// the live poller have their stops in redmist_live_pit_stops instead. Any
+// of the race's cars missing from the former are filled from the latter.
+async function loadArchivePitStops(race){
+  const cycles = await loadRedmistPitCyclesFromSupabase(race.id);
+  const nums = (race.cars || []).map(c => String(c.number)).filter(n => n.toLowerCase() !== "53x");
+  const missing = nums.filter(n => !cycles?.byCarNumber?.[n]?.length);
+  if (!missing.length) return cycles;
+  let live = null;
+  try { live = await loadLivePitStopsForRace(race, missing); }
+  catch (e){ console.error("[pit] live pit stop fallback failed:", e); }
+  if (!live) return cycles;
+  return { byCarNumber: { ...(cycles?.byCarNumber || {}), ...live.byCarNumber } };
+}
+
+// Same shape as loadRedmistPitCyclesFromSupabase(), built from the live
+// poller's rows for this race's own session. Duration is Red Mist's
+// pit_duration_ms (the same pdm figure validated against a stopwatch).
+// The poller doesn't record flag state on a stop, so it's derived here:
+// a stop (in-lap completion minus its duration, with a minute of slack
+// either side) that overlaps a logged red flag period is Red Flag; one
+// that overlaps a caution period, or whose pit lap / out-lap is a caution
+// lap, is Caution. Unfinished rows (no duration) and sub-15s drive-
+// through/timing noise are left out, as in the race overview stats.
+async function loadLivePitStopsForRace(race, carNumbers){
+  const resultRows = await fetchRedmistResultRows(race);
+  if (!resultRows) return null;
+  const { event_id, session_id, session_name } = resultRows[0];
+  const scope = q => q.eq("event_id", event_id).eq("session_id", session_id).eq("session_name", session_name);
+  const [stops, periods] = await Promise.all([
+    fetchAllRows(() => scope(supabase.from("redmist_live_pit_stops")
+      .select("car_number, stop_num, lap_number, pit_duration_ms, driver_change, driver_in"))
+      .in("car_number", carNumbers).order("car_number").order("lap_number")),
+    fetchAllRows(() => scope(supabase.from("redmist_flag_periods").select("flag, started_at, ended_at")).order("started_at")).catch(() => []),
+  ]);
+  const kept = stops.filter(s => Number(s.pit_duration_ms) >= RM_MIN_PIT_MS);
+  if (!kept.length) return null;
+
+  const lapNums = [...new Set(kept.flatMap(s => [s.lap_number, s.lap_number + 1]))];
+  const laps = lapNums.length ? await fetchAllRows(() => scope(supabase.from("redmist_live_laps")
+    .select("car_number, lap_number, caution_lap, captured_at"))
+    .in("car_number", carNumbers).in("lap_number", lapNums)).catch(() => []) : [];
+  const lapAt = {};
+  laps.forEach(l => { lapAt[`${l.car_number}|${l.lap_number}`] = l; });
+
+  const span = p => ({ flag: Number(p.flag), a: new Date(p.started_at).getTime(), b: p.ended_at ? new Date(p.ended_at).getTime() : Infinity });
+  const reds = periods.map(span).filter(p => p.flag === RM_RED);
+  const yellows = periods.map(span).filter(p => RM_CAUTION_FLAGS.has(p.flag));
+  const overlaps = (list, a, b) => list.some(p => a <= p.b && b >= p.a);
+
+  const byCarNumber = {};
+  kept.forEach(s => {
+    const num = String(s.car_number);
+    const inLap = lapAt[`${num}|${s.lap_number}`], outLap = lapAt[`${num}|${s.lap_number + 1}`];
+    const end = inLap ? new Date(inLap.captured_at).getTime() : null;
+    const a = end != null ? end - Number(s.pit_duration_ms) - 60000 : null, b = end != null ? end + 60000 : null;
+    const redFlagOverlap = a != null && overlaps(reds, a, b);
+    const underCaution = !redFlagOverlap && (inLap?.caution_lap === true || outLap?.caution_lap === true || (a != null && overlaps(yellows, a, b)));
+    const list = (byCarNumber[num] ||= []);
+    list.push({
+      stopNum: list.length + 1,
+      pdmSeconds: Number(s.pit_duration_ms) / 1000,
+      clockGapSeconds: null,
+      redFlagOverlap,
+      underCaution,
+      needsReview: false,
+      notes: null,
+      driverChanged: s.driver_change === true,
+      driverIn: s.driver_in || null,
+    });
+  });
+  return { byCarNumber };
+}
+
 async function loadRedmistPitCyclesFromSupabase(raceId){
   const { data, error } = await supabase
     .from("redmist_pit_cycles")
@@ -4643,6 +4751,162 @@ function sameDriverName(a, b){
   return short.every(t => long.includes(t));
 }
 
+// =============== Per-car Race Pace chart (archived races) ===============
+// Under each car's tile: the class field's race pace through the race, this
+// car's own pace on top of it, and who was driving when — each driver's
+// stints shaded and their line drawn in their timeline colour, so a slow
+// window can be tied to a driver and a time of day for driver-order review.
+//
+// Laps are only read the first time a tile is opened (a race is ~7,000
+// rows), then kept for the rest of the session. Keyed by race id rather
+// than stored on the race object so re-opening a race or a tab-focus
+// re-fetch (startApp) doesn't throw it away.
+const racePaceCache = new Map(); // race.id -> { status: "loading" | "ready" | "none", ... }
+
+async function loadRacePace(race){
+  const key = race.id;
+  racePaceCache.set(key, { status: "loading" });
+  try {
+    const resultRows = await fetchRedmistResultRows(race);
+    const session = resultRows ? await rmLoadSessionStints(resultRows) : null;
+    if (!session){ racePaceCache.set(key, { status: "none" }); }
+    else {
+      const { classification, stintsByNum, flagCautions, checkered } = session;
+      const clsByNum = Object.fromEntries(classification.map(c => [c.startNumber, c.resultClass]));
+      const charts = {};
+      [...new Set(classification.map(c => c.resultClass))].forEach(cls => {
+        const nums = classification.filter(c => c.resultClass === cls).map(c => c.startNumber);
+        charts[cls] = debriefPaceSeries(Object.fromEntries(nums.map(n => [n, stintsByNum[n]])), { cautions: flagCautions, checkered });
+      });
+      racePaceCache.set(key, { status: "ready", charts, clsByNum, stintsByNum, carLines: {} });
+    }
+  } catch (e){
+    console.error("[race-pace] load failed:", e);
+    racePaceCache.set(key, { status: "none" });
+  }
+  refreshRacePaceSlots(race.id);
+}
+
+// In-place update of any open Race Pace slots once laps arrive — no full
+// re-render, so the page doesn't jump.
+function refreshRacePaceSlots(raceId){
+  if (state.currentRaceId !== raceId) return;
+  const race = state.races.find(r => r.id === raceId);
+  if (!race) return;
+  document.querySelectorAll(".race-pace-slot").forEach(el => {
+    const cp = state.plan?.carPlans?.find(c => String(c.car.id) === el.dataset.carId);
+    if (cp) el.innerHTML = racePaceInner(race, cp);
+  });
+}
+
+// One car's pace, a point per chart bin, built stint by stint so a line
+// never smooths across a driver change or a stop. Each point is the median
+// of that stint's green, non-pit laps within CHART_SMOOTH_MIN either side —
+// the same smoothing and outlier rule as the field line, so the two are
+// directly comparable. Caution windows are left as gaps.
+function racePaceCarSegments(stints, chart){
+  const W = DEBRIEF.CHART_SMOOTH_MIN;
+  const end = chart.start + chart.minutes * 60000;
+  const toMin = ts => (ts - chart.start) / 60000;
+  const inCaution = m => (chart.cautions || []).some(([a, b]) => m >= a && m < b);
+  const green = l => l.t && l.ts && !l.pit && !l.caution && l.ts <= end;
+  const ref = debriefMedian(stints.flatMap(s => s.laps).filter(green).map(l => l.t));
+  if (!ref) return null;
+  const max = ref * (1 + DEBRIEF.CHART_OUTLIER_PCT);
+  return stints.map(s => {
+    const first = s.laps[0], last = s.laps[s.laps.length - 1];
+    if (!first.ts || !last.ts) return null;
+    const from = toMin(first.ts - (first.t || 0) * 1000), to = toMin(Math.min(last.ts, end));
+    if (to <= 0 || from >= chart.minutes) return null;
+    const laps = s.laps.filter(l => green(l) && l.t <= max)
+      .map(l => ({ m: toMin(l.ts) - l.t / 120, t: l.t })) // lap midpoint
+      .filter(l => !inCaution(l.m));
+    const points = chart.field.map(p => {
+      if (p.m < from || p.m > to || inCaution(p.m)) return null;
+      const win = laps.filter(l => Math.abs(l.m - p.m) <= W).map(l => l.t);
+      return win.length >= 3 ? { m: p.m, t: debriefMedian(win) } : null;
+    });
+    return { driver: s.driver, from: Math.max(0, from), to: Math.min(chart.minutes, to), firstLap: first.lap, lastLap: last.lap, points };
+  }).filter(Boolean);
+}
+
+function racePaceBlock(cp){
+  const race = state.races.find(r => r.id === state.currentRaceId);
+  if (!race) return "";
+  return `<div class="race-pace-slot" data-car-id="${esc(cp.car.id)}">${racePaceInner(race, cp)}</div>`;
+}
+
+function racePaceInner(race, cp){
+  if (!racePaceCache.has(race.id)) loadRacePace(race);
+  const entry = racePaceCache.get(race.id);
+  const head = `<div style="padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:10px;"><span class="fin-label" style="margin:0;">${icon("activity",12)} Race Pace</span></div>`;
+  if (entry.status === "loading"){
+    return `<div class="summary-box">${head}<div style="font-size:12px;color:var(--textFaint);padding:6px 0;">Loading lap data…</div></div>`;
+  }
+  if (entry.status !== "ready") return "";
+
+  const car = cp.car, num = String(car.number);
+  const cls = entry.clsByNum[num];
+  const chart = cls ? entry.charts[cls] : null;
+  const stints = entry.stintsByNum[num];
+  if (!chart || !stints?.length) return "";
+  if (!(num in entry.carLines)) entry.carLines[num] = racePaceCarSegments(stints, chart);
+  const segs = entry.carLines[num];
+  if (!segs?.length) return "";
+
+  // Red Mist names -> this plan's drivers (plan names are often surname-only),
+  // so colours and abbreviations match the stint timeline below.
+  const planIdx = {};
+  cp.stints.forEach(s => { if (!s.removed && s.driver && !(s.driver in planIdx)) planIdx[s.driver] = s.driverIndex ?? Object.keys(planIdx).length; });
+  const planNames = Object.keys(planIdx);
+  const abbrev = buildTimelineAbbrev(car.drivers.filter(d => d.trim()));
+  const toPlan = rm => planNames.find(p => sameDriverName(p, rm))
+    || planNames.find(p => driverSurname(p).toLowerCase() === driverSurname(rm).toLowerCase()) || null;
+  const used = new Set(Object.values(planIdx).map(i => i % DRIVER_PALETTE.length));
+  const who = {};
+  segs.forEach(s => {
+    if (who[s.driver]) return;
+    const p = toPlan(s.driver);
+    let idx = p != null ? planIdx[p] : null;
+    if (idx == null){
+      idx = [...DRIVER_PALETTE.keys()].find(i => !used.has(i)) ?? Object.keys(who).length;
+      used.add(idx % DRIVER_PALETTE.length);
+    }
+    who[s.driver] = {
+      name: p || s.driver,
+      label: (p && abbrev[p]) || driverSurname(s.driver).slice(0, 3).toUpperCase(),
+      color: DRIVER_PALETTE[idx % DRIVER_PALETTE.length],
+    };
+  });
+
+  // Shaded windows: back-to-back stints by the same driver (a fuel-only
+  // stop) read as one window.
+  const bands = [];
+  segs.forEach(s => {
+    const prev = bands[bands.length - 1];
+    if (prev && prev.driver === s.driver){ prev.to = s.to; prev.lastLap = s.lastLap; return; }
+    bands.push({ driver: s.driver, from: s.from, to: s.to, firstLap: s.firstLap, lastLap: s.lastLap });
+  });
+  const bandOpts = bands.map(b => ({
+    from: b.from, to: b.to, color: who[b.driver].color, label: who[b.driver].label,
+    title: `${who[b.driver].name} · Laps ${b.firstLap}–${b.lastLap}`,
+  }));
+
+  // One line per driver across the whole race, gaps outside their stints.
+  const drivers = Object.keys(who);
+  const lines = [
+    { label: `${cls} field`, color: T.textMuted, points: chart.field, dash: "5 4", width: 2 },
+    ...drivers.map(d => ({
+      label: who[d].name, color: who[d].color, width: 2.2,
+      points: chart.field.map((_, k) => { const s = segs.find(x => x.driver === d && x.points[k]); return s ? s.points[k] : null; }),
+    })),
+  ];
+  const svg = debriefPaceChartSvg(chart, lines, { bands: bandOpts, height: 220, ariaLabel: `#${car.number} race pace against the ${cls} field, by driver` });
+  if (!svg) return "";
+  return `<div class="summary-box">${head}${svg}</div>`;
+}
+// =============== end Race Pace chart ===============
+
 function raceSummaryBlock(cp){
   // One row per driver: name, the lap ranges they drove, a seat-time share
   // bar in their timeline colour, seat time + share, and lap-time
@@ -5048,9 +5312,10 @@ function carPlanSection(cp, plan, archived){
 
       ${isCollapsed ? "" : `
       <div class="car-plan-body fade-in">
-      ${archived ? archiveCarHeaderBlock(car) + pitCycleBlock(car) + raceSummaryBlock(cp) : ""}
+      ${archived ? archiveCarHeaderBlock(car) + pitCycleBlock(car) + raceSummaryBlock(cp) + racePaceBlock(cp) : ""}
       ${hasLiveTiming ? liveTimingBlock(car) : ""}
 
+      ${archived ? stintSectionOpen(car, stints, cp) : ""}
       <div class="timeline">
         ${stints.map((s,i)=>{
           if (s.removed || s.negligibleFinal) return "";
@@ -5233,8 +5498,39 @@ function carPlanSection(cp, plan, archived){
           </div>`;
         }).join("")}
       </div>` : ""}
+      ${archived ? `</div></div>` : ""}
       </div>`}
     </div>`;
+}
+
+// Archived tiles: header for the collapsible Stints section. Opens a
+// wrapper that carPlanSection() closes after the adjustment log. Toggled
+// in place (toggleStintSection) rather than through render(), so opening
+// it doesn't jump the page.
+function stintSectionOpen(car, stints, cp){
+  const open = state.expandedStintSections.has(car.id);
+  const n = stints.filter(s => !s.removed && !s.negligibleFinal).length;
+  const adj = (cp.log || []).length;
+  const meta = `${n} stint${n === 1 ? "" : "s"}${adj ? ` · ${adj} adjustment${adj === 1 ? "" : "s"}` : ""}`;
+  return `
+      <div class="stint-section ${open ? "open" : ""}" data-car="${car.id}">
+        <div class="stint-section-head" data-act="toggle-stint-section" data-car="${car.id}" role="button" tabindex="0" aria-expanded="${open}">
+          <span class="fin-label" style="margin:0;">${icon("clock",12)} ${adj ? "Stints &amp; Adjustments" : "Stints"}</span>
+          <span class="meta">${meta}<span class="chev" style="display:flex;">${icon(open ? "chevronUp" : "chevronDown", 16)}</span></span>
+        </div>
+        <div class="stint-section-body">`;
+}
+
+function toggleStintSection(carId){
+  const open = !state.expandedStintSections.has(carId);
+  if (open) state.expandedStintSections.add(carId); else state.expandedStintSections.delete(carId);
+  const sec = [...document.querySelectorAll(".stint-section")].find(el => el.getAttribute("data-car") === carId);
+  if (!sec){ render(); return; }
+  sec.classList.toggle("open", open);
+  const head = sec.querySelector(".stint-section-head");
+  if (head) head.setAttribute("aria-expanded", String(open));
+  const chev = sec.querySelector(".stint-section-head .chev");
+  if (chev) chev.innerHTML = icon(open ? "chevronUp" : "chevronDown", 16);
 }
 
 function renderConfirmModal(){
@@ -5540,7 +5836,7 @@ async function handleAction(act, el){
             state.archiveLoading = false;
             render();
           });
-          loadRedmistPitCyclesFromSupabase(raceId).then(redmist=>{
+          loadArchivePitStops(state.races.find(r=>r.id===raceId) || full).then(redmist=>{
             const r = state.races.find(r=>r.id===raceId);
             if (r && redmist) r.redmistPitCycles = redmist;
             render();
@@ -5734,6 +6030,10 @@ async function handleAction(act, el){
     }
     case "toggle-stint-flag": {
       await toggleStintFlag(el.getAttribute("data-car"), +el.getAttribute("data-stint"), el.getAttribute("data-flag"));
+      break;
+    }
+    case "toggle-stint-section": {
+      toggleStintSection(el.getAttribute("data-car"));
       break;
     }
     case "toggle-car-plan": {
@@ -5952,6 +6252,7 @@ async function openRace(race){
   };
   state.finishDrafts = {};
   state.expandedCarPlans = new Set();
+  state.expandedStintSections = new Set();
   state.addingReserve = new Set();
   state.reserveDraft = {};
   state.page = "plan";
