@@ -1669,7 +1669,6 @@ function debriefPaceChartSvg(chart, lines){
   const ticks = [lo + pad, (lo + hi) / 2, hi - pad];
   return `
     <svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:560px;height:auto;display:block;" role="img" aria-label="Pace by hour">
-      ${chart.cautions.map(([a, b]) => `<rect x="${x(a).toFixed(1)}" y="${Tp}" width="${Math.max(1, x(b) - x(a)).toFixed(1)}" height="${H - Tp - Bt}" fill="${T.amber}" opacity="0.22"/>`).join("")}
       ${ticks.map(t => `<line x1="${L}" x2="${W - R}" y1="${y(t).toFixed(1)}" y2="${y(t).toFixed(1)}" stroke="${T.border}" stroke-width="0.6"/>
         <text x="${L - 4}" y="${(y(t) + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="${T.textFaint}" font-family="JetBrains Mono, monospace">${fmtLapTime(t).replace(/\.\d+$/, m => m.slice(0, 2))}</text>`).join("")}
       ${hours.map(h => `<line x1="${x(h * 60).toFixed(1)}" x2="${x(h * 60).toFixed(1)}" y1="${Tp}" y2="${H - Bt}" stroke="${T.borderLight}" stroke-width="0.7" stroke-dasharray="2 3"/>
@@ -1678,7 +1677,6 @@ function debriefPaceChartSvg(chart, lines){
     </svg>
     <div style="display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;color:var(--textMuted);margin-top:4px;">
       ${lines.map(l => `<span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:14px;height:0;border-top:2px ${l.dash ? "dashed" : "solid"} ${l.color};"></span>${esc(l.label)}</span>`).join("")}
-      ${chart.cautions.length ? `<span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:2px;background:${T.amber};opacity:.35;"></span>Caution</span>` : ""}
     </div>`;
 }
 
@@ -1993,18 +1991,14 @@ function renderDebriefPanel(){
       const delta = ourCloser && ourCloser.raceDelta != null ? r.raceDelta - ourCloser.raceDelta : null;
       rows.push(`#${esc(r.num)} closed with ${esc(r.driver)}${delta != null ? ` (${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(1)}s/lap vs. our closer)` : ""}`);
     });
-    const ourCars = db.cars.filter(c => c.sat.cls === cls);
     const chartLines = k.chart ? [
-      { label: `${cls} field`, color: T.textFaint, points: k.chart.field, dash: "3 3", width: 1.3 },
-      ...(k.winner && !ourCars.some(c => String(c.number) === k.winner.startNumber)
-        ? [{ label: `Winner #${k.winner.startNumber}`, color: T.gold, points: k.chart.winner || [], width: 1.4 }] : []),
-      ...ourCars.map(c => ({ label: `#${c.number}`, color: c.accent, points: k.chart.cars[String(c.number)] || [], width: 2 })),
+      { label: `${cls} field race pace`, color: T.blue, points: k.chart.field, width: 2 },
     ] : [];
     const chart = chartLines.length ? debriefPaceChartSvg(k.chart, chartLines) : "";
     return `
       <div style="margin-bottom:18px;">
         <span class="eyebrow">${esc(cls)} Rivals</span>${rows.map(line).join("")}
-        ${chart ? `<div style="margin-top:14px;"><span class="eyebrow">Pace by Hour</span><div style="margin-top:6px;">${chart}</div></div>` : ""}
+        ${chart ? `<div style="margin-top:14px;"><span class="eyebrow">Race Pace by Hour</span><div style="margin-top:6px;">${chart}</div></div>` : ""}
       </div>`;
   }).join("");
 
