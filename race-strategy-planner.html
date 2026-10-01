@@ -216,6 +216,8 @@
   .pit-table td.pit-time{font-family:'JetBrains Mono',monospace;font-weight:600;text-align:right;}
   .pit-table td.pit-driver{color:var(--textMuted);white-space:normal;}
   .pit-table td.pit-flag{text-align:center;}
+  /* Phones: surname only in the pit stop table (full name stays in the title). */
+  @media(max-width:560px){ .pit-table .dn-first{display:none;} }
   .chip{border-radius:12px;background:var(--panel);border:1px solid var(--border);padding:10px 12px;display:flex;align-items:center;gap:8px;}
   .chip .ico{color:var(--textFaint);}
   .chip .lbl{font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--textFaint);}
@@ -5040,6 +5042,15 @@ function raceSummaryBlock(cp){
 // needsReview (numbers don't fit a normal pattern at all, e.g. a real
 // garage repair) gets a wrench marker so it's visually distinct without
 // implying the number itself is wrong.
+// "Bruce Ledoux" -> first name(s) in a span the phone layout hides, so the
+// pit stop table shows "Ledoux" on mobile and the full name elsewhere.
+function pitDriverName(name){
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return esc(parts[0] || "\u2014");
+  const last = parts.pop();
+  return `<span title="${esc(parts.join(" ") + " " + last)}"><span class="dn-first">${esc(parts.join(" "))} </span>${esc(last)}</span>`;
+}
+
 function pitCycleBlock(car){
   const race = state.races.find(r=>r.id===state.currentRaceId);
   if (!race || !race.redmistPitCycles) return "";
@@ -5081,8 +5092,8 @@ function pitCycleBlock(car){
     const out = s.driverOut || prev?.driverIn || null;
     const changed = !s.penalty && !!(out && s.driverIn && !sameDriverName(out, s.driverIn));
     const driverCell = changed
-      ? `<span style="color:var(--textFaint);">${esc(out)}</span> <span style="color:var(--textFaint);margin:0 2px;">→</span> <span style="color:var(--text);">${esc(s.driverIn)}</span>`
-      : esc(s.driverIn || "\u2014");
+      ? `<span style="color:var(--textFaint);">${pitDriverName(out)}</span> <span style="color:var(--textFaint);margin:0 2px;">→</span> <span style="color:var(--text);">${pitDriverName(s.driverIn)}</span>`
+      : pitDriverName(s.driverIn);
 
     // Flag column: mutually exclusive text label - a stop overlapping a red
     // flag shows "Red Flag" and nothing else; caution (yellow) shows
