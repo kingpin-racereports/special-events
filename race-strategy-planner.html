@@ -1245,6 +1245,8 @@ const DEBRIEF = {
   MED_CONF_LAPS: 20,
   FULL_STINT_MIN: 20,  // stints shorter than this (splash, final sliver) are left out of stint-length averages
   FACTOR_WINDOW_MIN: 5, // track-condition factor looks this many minutes either side of a lap
+  CHART_BIN_MIN: 5,    // pace chart point spacing
+  CHART_SMOOTH_MIN: 10, // each chart point = median lap within this many minutes either side
   TRAFFIC_PCT: 0.015,  // lap this far over the stint's typical field-relative lap = traffic lap
   FIELD_WINDOW_MIN: 5, // field pace at a moment = other class cars' laps this many minutes either side
 };
@@ -1595,6 +1597,91 @@ function debriefFieldModel(stintsByNum){
   return { at, typical, stopMedian: debriefMedian(costs) };
 }
 
+// Pace through the race for one class, a point every CHART_BIN_MIN: the
+// class field's typical lap, the class winner's, and each car's — median
+// of non-pit green laps within CHART_SMOOTH_MIN either side, so single
+// laps don't make it jagged. Caution periods are shaded and left unplotted,
+// so a full-course yellow doesn't read as everyone falling off.
+function debriefPaceSeries(stintsByNum, winnerNum){
+  const pts = [];
+  Object.entries(stintsByNum).forEach(([num, stints]) => stints.forEach(s => s.laps.forEach(l => {
+    if (!l.pit && l.t && l.ts) pts.push({ num, ts: l.ts, t: l.t, caution: l.caution });
+  })));
+  if (pts.length < 20) return null;
+  const firsts = Object.values(stintsByNum).map(st => st[0]?.laps[0]).filter(f => f?.ts);
+  const start = Math.min(...firsts.map(f => f.ts - (f.t || 0) * 1000));
+  const end = Math.max(...pts.map(p => p.ts));
+  const binMin = DEBRIEF.CHART_BIN_MIN, B = binMin * 60000;
+  const nb = Math.max(1, Math.ceil((end - start) / B));
+  const bins = Array.from({ length: nb }, () => ({ green: [], caution: 0, total: 0 }));
+  pts.forEach(p => {
+    const b = bins[Math.min(nb - 1, Math.max(0, Math.floor((p.ts - start) / B)))];
+    b.total++;
+    if (p.caution) b.caution++; else b.green.push(p);
+  });
+  const mid = k => (k + 0.5) * binMin;
+  const isCaution = b => b.total && b.caution / b.total >= 0.5;
+  const reach = Math.round(DEBRIEF.CHART_SMOOTH_MIN / binMin);
+  const series = (pick, minLaps) => bins.map((b, k) => {
+    if (isCaution(b)) return null;
+    const ts = [];
+    for (let j = Math.max(0, k - reach); j <= Math.min(nb - 1, k + reach); j++) bins[j].green.forEach(p => { if (pick(p)) ts.push(p.t); });
+    return ts.length >= minLaps ? { m: mid(k), t: debriefMedian(ts) } : null;
+  });
+  const cautions = [];
+  bins.forEach((b, k) => {
+    if (!isCaution(b)) return;
+    const last = cautions[cautions.length - 1];
+    if (last && last[1] === k * binMin) last[1] = (k + 1) * binMin; else cautions.push([k * binMin, (k + 1) * binMin]);
+  });
+  return {
+    minutes: (end - start) / 60000,
+    field: series(() => true, 8),
+    winner: winnerNum ? series(p => p.num === winnerNum, 3) : null,
+    cars: Object.fromEntries(Object.keys(stintsByNum).map(n => [n, series(p => p.num === n, 3)])),
+    cautions,
+  };
+}
+
+// SVG line chart: lap time up = faster, an hour mark every 60 min, caution
+// periods shaded. lines: [{ label, color, points, dash, width }].
+function debriefPaceChartSvg(chart, lines){
+  const W = 360, H = 190, L = 48, R = 8, Tp = 8, Bt = 20;
+  const vals = lines.flatMap(l => l.points.filter(Boolean).map(p => p.t)).sort((a, b) => a - b);
+  if (vals.length < 4 || !(chart.minutes > 0)) return "";
+  const q = f => vals[Math.min(vals.length - 1, Math.floor(vals.length * f))];
+  let lo = q(0.03), hi = q(0.97);
+  const pad = Math.max(0.3, (hi - lo) * 0.12);
+  lo -= pad; hi += pad;
+  const x = m => L + m / chart.minutes * (W - L - R);
+  const y = t => Tp + (Math.min(hi, Math.max(lo, t)) - lo) / (hi - lo) * (H - Tp - Bt);
+  const path = pts => {
+    let d = "", pen = false;
+    pts.forEach(p => {
+      if (!p){ pen = false; return; }
+      d += `${pen ? "L" : "M"}${x(p.m).toFixed(1)},${y(p.t).toFixed(1)}`;
+      pen = true;
+    });
+    return d;
+  };
+  const hours = [];
+  for (let h = 1; h * 60 < chart.minutes; h++) hours.push(h);
+  const ticks = [lo + pad, (lo + hi) / 2, hi - pad];
+  return `
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:560px;height:auto;display:block;" role="img" aria-label="Pace by hour">
+      ${chart.cautions.map(([a, b]) => `<rect x="${x(a).toFixed(1)}" y="${Tp}" width="${Math.max(1, x(b) - x(a)).toFixed(1)}" height="${H - Tp - Bt}" fill="${T.amber}" opacity="0.22"/>`).join("")}
+      ${ticks.map(t => `<line x1="${L}" x2="${W - R}" y1="${y(t).toFixed(1)}" y2="${y(t).toFixed(1)}" stroke="${T.border}" stroke-width="0.6"/>
+        <text x="${L - 4}" y="${(y(t) + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="${T.textFaint}" font-family="JetBrains Mono, monospace">${fmtLapTime(t).replace(/\.\d+$/, m => m.slice(0, 2))}</text>`).join("")}
+      ${hours.map(h => `<line x1="${x(h * 60).toFixed(1)}" x2="${x(h * 60).toFixed(1)}" y1="${Tp}" y2="${H - Bt}" stroke="${T.borderLight}" stroke-width="0.7" stroke-dasharray="2 3"/>
+        <text x="${x(h * 60).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="${T.textMuted}" font-family="JetBrains Mono, monospace">${h}h</text>`).join("")}
+      ${lines.map(l => `<path d="${path(l.points)}" fill="none" stroke="${l.color}" stroke-width="${l.width || 1.6}" stroke-linejoin="round" stroke-linecap="round"${l.dash ? ` stroke-dasharray="${l.dash}"` : ""}/>`).join("")}
+    </svg>
+    <div style="display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;color:var(--textMuted);margin-top:4px;">
+      ${lines.map(l => `<span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:14px;height:0;border-top:2px ${l.dash ? "dashed" : "solid"} ${l.color};"></span>${esc(l.label)}</span>`).join("")}
+      ${chart.cautions.length ? `<span style="display:inline-flex;align-items:center;gap:5px;"><span style="width:10px;height:10px;border-radius:2px;background:${T.amber};opacity:.35;"></span>Caution</span>` : ""}
+    </div>`;
+}
+
 async function buildSaturdayDebrief(src){
   const resultRows = await fetchRedmistResultRows(src);
   if (!resultRows) return null;
@@ -1623,7 +1710,7 @@ async function buildSaturdayDebrief(src){
   };
 
   // Every car, not just ours — rival driver profiles feed the matchup.
-  const stintsByNum = {}, fieldByNum = {};
+  const stintsByNum = {}, fieldByNum = {}, paceCharts = {};
   classification.forEach(c => { stintsByNum[c.startNumber] = debriefCarStints(c, lapsByPos, lapRows, pitStops, finalDriver); });
   // Condition-adjust every lap against its own class's field.
   [...new Set(classification.map(c => c.resultClass))].forEach(cls => {
@@ -1632,6 +1719,8 @@ async function buildSaturdayDebrief(src){
     inClass.forEach(stints => stints.forEach(s => s.laps.forEach(l => { if (l.t) l.adj = l.t / factor(l.ts); })));
     const classNums = classification.filter(c => c.resultClass === cls).map(c => c.startNumber);
     const field = debriefFieldModel(Object.fromEntries(classNums.map(n => [n, stintsByNum[n]])));
+    const winner = classification.find(c => c.resultClass === cls && c.positionInClass === 1);
+    paceCharts[cls] = debriefPaceSeries(Object.fromEntries(classNums.map(n => [n, stintsByNum[n]])), winner?.startNumber);
     classNums.forEach(n => {
       fieldByNum[n] = field;
       stintsByNum[n].forEach(s => s.laps.forEach(l => { if (!l.pit && l.t) l.f = field.at(l.ts, n); }));
@@ -1658,7 +1747,8 @@ async function buildSaturdayDebrief(src){
       closer: closing ? closing.driver : null,
     };
   });
-  return { sourceName: src.eventName, cars };
+  const winners = Object.fromEntries(classification.filter(c => c.positionInClass === 1).map(c => [c.resultClass, c]));
+  return { sourceName: src.eventName, cars, paceCharts, winners };
 }
 
 // Bakes the debrief into state.cars (Setup) and builds the panel summary.
@@ -1733,6 +1823,8 @@ function applySaturdayDebrief(debrief){
       ourStops: stopTimes.filter(c => ourNums.has(c.num)),
       mover: movers[0] || null,
       rivalClosers,
+      chart: debrief.paceCharts?.[cls] || null,
+      winner: debrief.winners?.[cls] || null,
     };
   });
   return summary;
@@ -1901,15 +1993,27 @@ function renderDebriefPanel(){
       const delta = ourCloser && ourCloser.raceDelta != null ? r.raceDelta - ourCloser.raceDelta : null;
       rows.push(`#${esc(r.num)} closed with ${esc(r.driver)}${delta != null ? ` (${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(1)}s/lap vs. our closer)` : ""}`);
     });
-    return `<div style="margin-top:6px;"><span class="eyebrow">${esc(cls)} Rivals</span>${rows.map(line).join("")}</div>`;
+    const ourCars = db.cars.filter(c => c.sat.cls === cls);
+    const chartLines = k.chart ? [
+      { label: `${cls} field`, color: T.textFaint, points: k.chart.field, dash: "3 3", width: 1.3 },
+      ...(k.winner && !ourCars.some(c => String(c.number) === k.winner.startNumber)
+        ? [{ label: `Winner #${k.winner.startNumber}`, color: T.gold, points: k.chart.winner || [], width: 1.4 }] : []),
+      ...ourCars.map(c => ({ label: `#${c.number}`, color: c.accent, points: k.chart.cars[String(c.number)] || [], width: 2 })),
+    ] : [];
+    const chart = chartLines.length ? debriefPaceChartSvg(k.chart, chartLines) : "";
+    return `
+      <div style="margin-bottom:18px;">
+        <span class="eyebrow">${esc(cls)} Rivals</span>${rows.map(line).join("")}
+        ${chart ? `<div style="margin-top:14px;"><span class="eyebrow">Pace by Hour</span><div style="margin-top:6px;">${chart}</div></div>` : ""}
+      </div>`;
   }).join("");
 
   return `
     <section style="margin-bottom:32px;">
       <h2>Saturday Debrief</h2>
       <div class="catalog-panel" style="margin-top:0;">
-        ${carBlocks || line("None of these cars ran in that race.")}
         ${classBlocks}
+        ${carBlocks || line("None of these cars ran in that race.")}
       </div>
     </section>`;
 }
