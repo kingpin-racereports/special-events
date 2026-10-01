@@ -1155,6 +1155,21 @@ function rmAvgLaps(classification, lapsByPos){
 // ---- Archive extras: fastest lap, fastest stops, per-driver consistency ----
 const RM_MIN_PIT_MS = 15000; // shorter "stops" are drive-throughs / timing noise
 
+// Stops that served a penalty (drive-through / stop-and-go), marked by the
+// archive backfill from Red Mist's control log or the track's drive-through
+// time. They count toward no metric: not fastest stops, pit totals, stop
+// counts, driver changes, stint splits or pit cycles.
+const rmIsPenaltyStop = s => s?.penalty_served === true;
+const rmServiceStops = stops => (stops || []).filter(s => !rmIsPenaltyStop(s));
+// Lap rows with a penalty stop's in-lap no longer marked as a pit lap, so
+// it doesn't split a stint or count as a pit cycle. Laps built from the
+// unmodified rows still treat it as a non-race lap.
+function rmLapRowsWithoutPenaltyPits(lapRows, allStops){
+  const pen = new Set((allStops || []).filter(rmIsPenaltyStop).map(s => `${s.car_number}|${s.lap_number}`));
+  if (!pen.size) return lapRows;
+  return lapRows.map(l => l.is_pit_lap === true && pen.has(`${l.car_number}|${l.lap_number}`) ? { ...l, is_pit_lap: false } : l);
+}
+
 // Fastest single lap of the race, any class — from each car's best lap.
 function rmFastestLap(classification){
   let best = null;
@@ -1832,17 +1847,21 @@ async function rmLoadSessionStints(resultRows){
   const classification = rmClassification(resultRows);
   const scope = q => q.eq("event_id", event_id).eq("session_id", session_id).eq("session_name", session_name);
 
-  const [lapRows, periods, pitStops] = await Promise.all([
+  const [rawLapRows, periods, allPitStops] = await Promise.all([
     fetchAllRows(() => scope(supabase.from("redmist_live_laps")
       .select("car_number, lap_number, lap_time_seconds, is_pit_lap, caution_lap, captured_at, driver_name"))
       .order("car_number").order("lap_number")),
     fetchAllRows(() => scope(supabase.from("redmist_flag_periods").select("flag, started_at, ended_at")).order("started_at")).catch(() => []),
     fetchAllRows(() => scope(supabase.from("redmist_live_pit_stops")
-      .select("car_number, lap_number, pit_duration_ms, driver_change, driver_out, driver_in, class_position_entering, class_position_exiting"))).catch(() => []),
+      .select("car_number, lap_number, pit_duration_ms, driver_change, driver_out, driver_in, class_position_entering, class_position_exiting, penalty_served"))).catch(() => []),
   ]);
-  if (!lapRows.length) return null;
+  if (!rawLapRows.length) return null;
 
-  const lapsByPos = rmLapsByPos(classification, lapRows);
+  // Penalty laps stay non-race laps (lapsByPos keeps the pit flag) but
+  // don't split stints or count as pit cycles (lapRows / pitStops drop them).
+  const lapsByPos = rmLapsByPos(classification, rawLapRows);
+  const lapRows = rmLapRowsWithoutPenaltyPits(rawLapRows, allPitStops);
+  const pitStops = rmServiceStops(allPitStops);
   const finalDriver = Object.fromEntries(resultRows.map(r => [String(r.car_number), r.driver_name]));
   // Charts stop at the checkered flag: the overall winner's last lap.
   const leader = classification[0]?.startNumber;
@@ -2215,7 +2234,7 @@ async function buildRedmistArchive(race, { save } = { save: false }){
 
   const scope = q => q.eq("event_id", event_id).eq("session_id", session_id).eq("session_name", session_name);
   const lapCols = "car_number, lap_number, lap_time_seconds, is_pit_lap, caution_lap, captured_at";
-  const [lapRows, periods, pitStops] = await Promise.all([
+  const [lapRows, periods, allPitStops] = await Promise.all([
     // driver_name on laps is newer — fall back to the older column set if
     // the column isn't there yet.
     fetchAllRows(() => scope(supabase.from("redmist_live_laps").select(lapCols + ", driver_name")).order("car_number").order("lap_number"))
@@ -2224,8 +2243,9 @@ async function buildRedmistArchive(race, { save } = { save: false }){
       .eq("event_id", event_id).eq("session_id", session_id).eq("session_name", session_name)
       .order("started_at")).catch(() => []), // table may not exist on older deploys
     fetchAllRows(() => scope(supabase.from("redmist_live_pit_stops")
-      .select("car_number, lap_number, pit_duration_ms, driver_change, driver_out, driver_in"))).catch(() => []),
+      .select("car_number, lap_number, pit_duration_ms, driver_change, driver_out, driver_in, penalty_served"))).catch(() => []),
   ]);
+  const pitStops = rmServiceStops(allPitStops);
 
   const lapsByPos = rmLapsByPos(classification, lapRows);
   // Logged flag timeline when we have one; lap-based inference otherwise
@@ -2376,7 +2396,7 @@ async function loadLivePitStopsForRace(race, carNumbers){
   const scope = q => q.eq("event_id", event_id).eq("session_id", session_id).eq("session_name", session_name);
   const [stops, periods] = await Promise.all([
     fetchAllRows(() => scope(supabase.from("redmist_live_pit_stops")
-      .select("car_number, stop_num, lap_number, pit_duration_ms, driver_change, driver_out, driver_in"))
+      .select("car_number, stop_num, lap_number, pit_duration_ms, driver_change, driver_out, driver_in, penalty_served"))
       .in("car_number", carNumbers).order("car_number").order("lap_number")),
     fetchAllRows(() => scope(supabase.from("redmist_flag_periods").select("flag, started_at, ended_at")).order("started_at")).catch(() => []),
   ]);
@@ -2412,9 +2432,10 @@ async function loadLivePitStopsForRace(race, carNumbers){
       underCaution,
       needsReview: false,
       notes: null,
-      driverChanged: s.driver_change === true,
+      driverChanged: s.driver_change === true && !rmIsPenaltyStop(s),
       driverIn: s.driver_in || null,
       driverOut: s.driver_out || null,
+      penalty: rmIsPenaltyStop(s),
     });
   });
   return { byCarNumber };
@@ -2701,10 +2722,10 @@ async function loadRedmistFullField(race, eventId, skipRender){
 // from a missed or out-of-order realtime event.
 async function refreshFullFieldStopCounts(race, eventId, skipRender){
   const { data: stops, error } = await scopeToLiveSession(supabase
-    .from("redmist_live_pit_stops").select("car_number").eq("event_id", eventId));
+    .from("redmist_live_pit_stops").select("car_number, penalty_served").eq("event_id", eventId));
   if (error){ console.error("[redmist-live] refreshFullFieldStopCounts failed:", error); return; }
   const counts = {};
-  (stops||[]).forEach(r => { counts[r.car_number] = (counts[r.car_number]||0) + 1; });
+  rmServiceStops(stops).forEach(r => { counts[r.car_number] = (counts[r.car_number]||0) + 1; });
   if (!race.redmistLive) race.redmistLive = { byCarNumber:{}, statsByCarNumber:{} };
   race.redmistLive.stopCountsByCarNumber = counts;
   // skipRender=true during openRace()'s initial blocking load — same
@@ -4444,7 +4465,7 @@ async function loadFinishedRaceState(race){
     scope(supabase.from("redmist_live_positions").select("*")),
     scope(supabase.from("redmist_current_stint_stats").select("*")).in("car_number", carNumbers),
     scope(supabase.from("redmist_current_stint_consistency").select("*")).in("car_number", carNumbers),
-    scope(supabase.from("redmist_live_pit_stops").select("car_number")),
+    scope(supabase.from("redmist_live_pit_stops").select("car_number, penalty_served")),
   ]);
   if (pos.error){ console.error("[finished] positions fetch failed:", pos.error); return; }
   if (isLiveAttached(race)) return; // a live session attached while we were fetching — it wins
@@ -4453,7 +4474,7 @@ async function loadFinishedRaceState(race){
   fullField.forEach(r => { if (carNumbers.includes(r.car_number)) byCarNumber[r.car_number] = r; });
   (stats.data || []).forEach(r => { statsByCarNumber[r.car_number] = r; });
   (cons.data || []).forEach(r => { consistencyByCarNumber[r.car_number] = r; });
-  (stops.data || []).forEach(r => { stopCountsByCarNumber[r.car_number] = (stopCountsByCarNumber[r.car_number] || 0) + 1; });
+  rmServiceStops(stops.data).forEach(r => { stopCountsByCarNumber[r.car_number] = (stopCountsByCarNumber[r.car_number] || 0) + 1; });
   const finishedAt = fullField.reduce((m, r) => Math.max(m, new Date(r.fetched_at || 0).getTime()), 0) || rr.checkeredAt || Date.now();
   race.redmistLive = { byCarNumber, statsByCarNumber, consistencyByCarNumber, fullField, stopCountsByCarNumber, finished: true, finishedAt };
   scheduleRender();
@@ -5036,7 +5057,7 @@ function pitCycleBlock(car){
   // and would badly skew it (a single 95-min outlier would dominate an
   // average of otherwise ~1-3 min stops). Computed before the row loop
   // since outlier coloring below compares each normal stop against it.
-  const clean = stops.filter(s => !s.redFlagOverlap && !s.needsReview && s.pdmSeconds != null);
+  const clean = stops.filter(s => !s.redFlagOverlap && !s.needsReview && !s.penalty && s.pdmSeconds != null);
   const avgSeconds = clean.length ? clean.reduce((a,s)=>a+s.pdmSeconds,0)/clean.length : null;
 
   const rows = stops.map(s => {
@@ -5058,7 +5079,7 @@ function pitCycleBlock(car){
     // own driver_out when recorded, else whoever got in at the previous stop.
     const prev = stops[stops.indexOf(s) - 1];
     const out = s.driverOut || prev?.driverIn || null;
-    const changed = !!(out && s.driverIn && !sameDriverName(out, s.driverIn));
+    const changed = !s.penalty && !!(out && s.driverIn && !sameDriverName(out, s.driverIn));
     const driverCell = changed
       ? `<span style="color:var(--textFaint);">${esc(out)}</span> <span style="color:var(--textFaint);margin:0 2px;">→</span> <span style="color:var(--text);">${esc(s.driverIn)}</span>`
       : esc(s.driverIn || "\u2014");
@@ -5072,7 +5093,9 @@ function pitCycleBlock(car){
     // worth judging case by case rather than hiding it - see project notes
     // on pdm's reliability during a red flag).
     let flagCell = "";
-    if (s.redFlagOverlap){
+    if (s.penalty){
+      flagCell = `<span style="color:var(--textFaint);">Penalty</span>`;
+    } else if (s.redFlagOverlap){
       flagCell = `<span style="color:${T.red};">Red Flag</span>`;
     } else if (s.underCaution){
       flagCell = `<span style="color:${T.amber};">Caution</span>`;
@@ -5092,7 +5115,7 @@ function pitCycleBlock(car){
     // actually shown for those) so a severe outlier is never capped at the
     // same amber as a merely-long stop.
     const displaySeconds = isGarageTrip ? s.clockGapSeconds : s.pdmSeconds;
-    const ratio = avgSeconds && displaySeconds != null ? displaySeconds / avgSeconds : null;
+    const ratio = !s.penalty && avgSeconds && displaySeconds != null ? displaySeconds / avgSeconds : null;
     const color = ratio != null && ratio >= 3 ? T.red
                 : ratio != null && ratio >= 1.5 ? T.amber
                 : null;
