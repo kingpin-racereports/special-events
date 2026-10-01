@@ -1245,7 +1245,7 @@ const DEBRIEF = {
   MED_CONF_LAPS: 20,
   FULL_STINT_MIN: 20,  // stints shorter than this (splash, final sliver) are left out of stint-length averages
   FACTOR_WINDOW_MIN: 5, // track-condition factor looks this many minutes either side of a lap
-  SUITED_GAP_S: 0.3,   // teammate must be this many s/lap quicker vs. the field to be suggested
+  TRAFFIC_PCT: 0.015,  // lap this far over the stint's typical field-relative lap = traffic lap
   FIELD_WINDOW_MIN: 5, // field pace at a moment = other class cars' laps this many minutes either side
 };
 
@@ -1280,22 +1280,38 @@ function debriefCarStints(car, lapsByPos, lapRows, pitStops, finalDriver){
 }
 
 // Pace profile for one driver from their stints in one car.
+// Traffic laps in a run of laps. Each non-pit lap is measured against the
+// class field at that moment (lap − field median), which takes out
+// cautions, conditions and anything everyone ran. A lap more than
+// TRAFFIC_PCT over the run's typical field-relative lap was held up —
+// traffic, a mistake, an incident — and the excess is time lost to it.
+// Typical laps (the median) are untouched, so a uniformly slow driver
+// shows up as pace, not traffic.
+function debriefTraffic(laps, typical){
+  const x = laps.filter(l => l.f).map(l => l.t - l.f.median);
+  if (x.length < 5 || !typical) return null;
+  const b = debriefMedian(x), thresh = typical * DEBRIEF.TRAFFIC_PCT;
+  const slow = x.filter(v => v - b > thresh);
+  return { n: x.length, typical: b, laps: slow.length, loss: slow.reduce((a, v) => a + (v - b), 0) };
+}
+
 function debriefDriverProfile(stints){
   const A = l => l.adj ?? l.t; // condition-adjusted lap (raw if no field factor)
   const cleanLaps = stints.flatMap(s => s.laps.filter(l => l.clean));
   if (!cleanLaps.length) return null;
   const base = debriefMedian(cleanLaps.map(l => l.t));       // actual clean lap, for display
   const adjBase = debriefMedian(cleanLaps.map(A));           // typical condition-adjusted lap
-  // Disruption threshold keys off the driver's quicker laps (25th pct), not
-  // the median — a late-stint fade drags the median up and would otherwise
-  // let traffic laps pass as normal running.
+  // Smooth-lap threshold for the fade bar and consistency keys off the
+  // driver's quicker laps (25th pct), not the median — a late-stint fade
+  // drags the median up and would otherwise let slow laps pass as normal.
   const sortedAdj = cleanLaps.map(A).sort((a, b) => a - b);
   const p25 = sortedAdj[Math.floor(sortedAdj.length * 0.25)];
   const smoothMax = p25 * (1 + DEBRIEF.DISRUPT_PCT);
-  const disrupted = cleanLaps.filter(l => A(l) > smoothMax);
-  const lossSec = disrupted.reduce((a, l) => a + Math.max(0, A(l) - adjBase), 0);
+  // Off-pace: traffic time per hour driven, same method as the stint
+  // card's Traffic, stint by stint.
   const drivenMin = stints.reduce((a, s) => a + s.minutes, 0);
-  const lossPerHour = drivenMin > 0 ? lossSec / (drivenMin / 60) : 0;
+  const traffic = stints.map(s => debriefTraffic(s.laps, base)).filter(Boolean);
+  const lossPerHour = drivenMin > 0 ? traffic.reduce((a, t) => a + t.loss, 0) / (drivenMin / 60) : 0;
   // Race pace: every lap except pit laps (traffic and cautions included),
   // each against the class field's average lap at the same moment.
   // Seconds per lap; negative = quicker than the field.
@@ -1354,7 +1370,7 @@ function debriefDriverProfile(stints){
   const confidence = fullStints >= 2 && cleanLaps.length >= DEBRIEF.HIGH_CONF_LAPS ? "high"
     : cleanLaps.length >= DEBRIEF.MED_CONF_LAPS ? "medium" : "low";
   return {
-    base, adjBase, stdev, lossPerHour, disruptedLaps: disrupted.length, fadeMin, fadePct, heldThrough, longestMin, bins,
+    base, adjBase, stdev, lossPerHour, fadeMin, fadePct, heldThrough, longestMin, bins,
     confidence, stints: stints.length, fullStints, cleanLaps: cleanLaps.length,
     raceDelta, lapRanges,
   };
@@ -1480,24 +1496,21 @@ function debriefStintReport(stints, field, num){
   if (!typ) return [];
   return stints.map((s, i) => {
     const laps = s.laps.filter(l => l.f); // every non-pit lap
-    if (laps.length < 5) return null;
-    const n = laps.length;
-    const t = laps.map(l => l.t), fMed = laps.map(l => l.f.median), fMean = laps.map(l => l.f.mean);
+    const tr = debriefTraffic(laps, typ);
+    if (!tr) return null;
     // Time lost to the class field during this stint:
-    //  pace    — our typical (clean) lap vs. the field's typical lap
-    //  traffic — race pace (average lap, every non-pit lap) minus that
-    //            typical lap: what inconsistency costs, net of the field's
-    //            own (so a caution everyone ran doesn't count), never negative
+    //  pace    — our typical lap vs. the field's at the same moments, every lap
+    //  traffic — held-up laps' excess over that typical lap (debriefTraffic)
     //  pit     — the stop that ended this stint vs. the class median stop
-    const pace = n * (debriefMedian(t) - debriefMedian(fMed));
-    const traffic = Math.max(0, n * ((debriefMean(t) - debriefMedian(t)) - (debriefMean(fMean) - debriefMedian(fMed))));
+    const pace = tr.n * tr.typical;
+    const traffic = tr.loss;
     const cost = debriefStopCost(s, stints[i + 1], typ);
     const pit = cost != null && field.stopMedian != null ? cost - field.stopMedian : null;
     const first = s.laps[0], last = s.laps[s.laps.length - 1];
     return {
       num: i + 1, driver: s.driver,
       start: first.ts ? first.ts - (first.t || 0) * 1000 : null, end: last.ts || null,
-      pace, traffic, pit, total: pace + traffic + (pit || 0),
+      pace, traffic, trafficLaps: tr.laps, pit, total: pace + traffic + (pit || 0),
       delta: debriefMean(laps.map(l => l.t - l.f.mean)), // race pace this stint, s/lap vs. field
     };
   }).filter(Boolean);
@@ -1813,9 +1826,9 @@ function renderDebriefPanel(){
     const stats = [
       stat("Laps", esc(p.lapRanges)),
       stat("Clean lap", fmtLapTime(p.adjBase)),
-      stat("Race pace vs field", p.raceDelta != null ? fmtSec(p.raceDelta) : "—"),
+      stat("Race Pace", p.raceDelta != null ? fmtSec(p.raceDelta) : "—"),
       stat("Consistency", p.stdev != null ? `±${p.stdev.toFixed(2)}s` : "—"),
-      stat("Lost off-pace", `${p.lossPerHour.toFixed(1)}s/hr`),
+      stat("Off-Pace", `${p.lossPerHour.toFixed(1)}s/hr`),
     ].join(`<span style="color:var(--border);margin:0 6px;">|</span>`);
     return `
       <div style="padding:10px 0;border-top:1px solid var(--border);">
@@ -1857,10 +1870,6 @@ function renderDebriefPanel(){
       const color = isTop ? T.red : v < -0.5 ? T.green : "var(--textMuted)";
       return `<span style="white-space:nowrap;"><span style="color:var(--textFaint);">${label}</span> <span style="font-weight:${isTop ? 700 : 600};color:${color};">${v < -0.5 ? "−" : ""}${fmtLoss(v)}</span></span>`;
     };
-    // Only a pace problem has a driver fix: a teammate who ran quicker vs. the field.
-    const cover = top[0] === "Pace" ? c.drivers
-      .filter(d => d.profile && d.profile.confidence !== "low" && d.satName !== w.driver && d.raceDelta != null && d.raceDelta < w.delta - DEBRIEF.SUITED_GAP_S)
-      .sort((a, b) => a.raceDelta - b.raceDelta)[0] : null;
     return `
       <div style="margin:10px 0 6px;padding:10px 12px;border-radius:8px;background:var(--panelRaised);border-left:3px solid ${T.red};">
         <div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;">
@@ -1868,7 +1877,6 @@ function renderDebriefPanel(){
           <span class="font-mono" style="white-space:nowrap;font-weight:700;color:${T.red};">${fmtLoss(w.total)}</span>
         </div>
         <div style="font-size:12px;display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px;">${parts.map(chip).join("")}</div>
-        ${cover ? `<div style="font-size:12px;color:var(--textMuted);margin-top:4px;">${esc(cover.name)} ran ${(w.delta - cover.raceDelta).toFixed(1)}s/lap quicker vs. the field.</div>` : ""}
       </div>`;
   };
 
