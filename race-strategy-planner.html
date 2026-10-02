@@ -1655,7 +1655,7 @@ function debriefTrackFactor(stintsByCar){
   };
 }
 
-function debriefStintReport(stints, field, num, stops, stopRef){
+function debriefStintReport(stints, field, num, stops, stopRef, stopTime){
   const typ = field.typical[num];
   if (!typ) return [];
   return stints.map((s, i) => {
@@ -1672,14 +1672,15 @@ function debriefStintReport(stints, field, num, stops, stopRef){
     const lapSet = new Set(s.laps.map(l => l.lap));
     const stop = i < stints.length - 1 ? (stops || []).find(st => lapSet.has(st.lap_number)) : null;
     const ref = stop && stopRef ? (stop.driver_change ? stopRef.change : stopRef.service) : null;
-    const pit = stop && ref != null ? Number(stop.pit_duration_ms) / 1000 - ref : null;
+    const st = stop ? (stopTime ? stopTime(stop) : { sec: Number(stop.pit_duration_ms) / 1000, repair: false }) : null;
+    const pit = st && ref != null ? st.sec - ref : null;
     const first = s.laps[0], last = s.laps[s.laps.length - 1];
     // Only losses add up: a quick driver doesn't hide a slow stop, and a
     // quick stop doesn't hide slow pace.
     const total = Math.max(0, pace || 0) + Math.max(0, traffic || 0) + Math.max(0, pit || 0);
     return {
       num: i + 1, driver: s.driver, firstLap: first.lap, lastLap: last.lap,
-      stopSec: stop ? Number(stop.pit_duration_ms) / 1000 : null, stopRef: ref,
+      stopSec: st ? st.sec : null, stopRepair: !!st?.repair, stopRef: ref,
       start: first.ts ? first.ts - (first.t || 0) * 1000 : null, end: last.ts || null,
       pace, traffic, trafficLaps: tr ? tr.laps : null, trafficLapList: tr ? tr.lapList : [], pit, total,
       delta: laps.length ? debriefMean(laps.map(l => l.t - l.f.mean)) : null, // race pace this stint, s/lap vs. field
@@ -2027,13 +2028,29 @@ async function buildSaturdayDebrief(src){
     });
   });
 
+  // Stop time, the same figure Pit Stop Times shows: Red Mist's pit duration,
+  // except a garage trip flagged for review (no red flag), where that
+  // understates the real loss and the clock gap is used instead.
+  let cycles = null;
+  try { cycles = await loadArchivePitStops(src); } catch (e){ console.warn("[debrief] pit cycles unavailable:", e); }
+  const cycleFor = s => {
+    const list = cycles?.byCarNumber?.[s.car_number] || [];
+    return list.find(c => c.lap === s.lap_number)
+      || list.filter(c => c.lap != null && Math.abs(c.lap - s.lap_number) <= 2).sort((a, b) => Math.abs(a.lap - s.lap_number) - Math.abs(b.lap - s.lap_number))[0] || null;
+  };
+  const stopTime = s => {
+    const c = cycleFor(s);
+    if (c && c.needsReview && !c.redFlagOverlap && c.clockGapSeconds != null) return { sec: Number(c.clockGapSeconds), repair: true };
+    return { sec: Number(s.pit_duration_ms) / 1000, repair: false };
+  };
   const keptStop = s => Number(s.pit_duration_ms) >= RM_MIN_PIT_MS && !inRed(s);
   // Class median stop, split driver-change vs. service-only when each kind
   // has enough stops; otherwise the class median of all stops.
   const stopRefByClass = {};
   [...new Set(classification.map(c => c.resultClass))].forEach(cls => {
     const nums = new Set(classification.filter(c => c.resultClass === cls).map(c => c.startNumber));
-    const secs = f => pitStops.filter(s => nums.has(s.car_number) && keptStop(s) && f(s)).map(s => Number(s.pit_duration_ms) / 1000);
+    // Garage trips stay out of the class median.
+    const secs = f => pitStops.filter(s => nums.has(s.car_number) && keptStop(s) && !stopTime(s).repair && f(s)).map(s => Number(s.pit_duration_ms) / 1000);
     const all = debriefMedian(secs(() => true));
     const ch = secs(s => s.driver_change), sv = secs(s => !s.driver_change);
     stopRefByClass[cls] = { change: ch.length >= 3 ? debriefMedian(ch) : all, service: sv.length >= 3 ? debriefMedian(sv) : all };
@@ -2064,7 +2081,7 @@ async function buildSaturdayDebrief(src){
     cars[c.startNumber] = {
       driverBars,
       num: c.startNumber, name: c.name, cls: c.resultClass, classPos: c.positionInClass, status: c.status,
-      stints, profiles, stintReport: debriefStintReport(stints, fieldByNum[c.startNumber], c.startNumber, stops, stopRefByClass[c.resultClass]),
+      stints, profiles, stintReport: debriefStintReport(stints, fieldByNum[c.startNumber], c.startNumber, stops, stopRefByClass[c.resultClass], stopTime),
       battle: debriefBattle(c.startNumber, c.resultClass, stints, classification, lapRows, pitStops),
       stops: stops.length,
       medianStop: debriefMedian(stops.map(s => Number(s.pit_duration_ms) / 1000)),
@@ -2316,7 +2333,7 @@ function renderDebriefPanel(){
         const color = isTop ? T.red : v < -0.5 ? T.green : "var(--textMuted)";
         const lapsTxt = ls => ls.length > 6 ? `${ls.slice(0, 6).map(L => `L${L}`).join(", ")} +${ls.length - 6}` : ls.map(L => `L${L}`).join(", ");
         const extra = label === "Pit stop" && r.stopSec != null
-          ? ` <span style="color:var(--textFaint);">(${fmtClock(r.stopSec)}${r.stopRef != null ? ` vs ${fmtClock(r.stopRef)}` : ""})</span>`
+          ? ` <span style="color:var(--textFaint);">(${r.stopRepair ? "\uD83D\uDD27 " : ""}${fmtClock(r.stopSec)}${r.stopRef != null ? ` vs ${fmtClock(r.stopRef)}` : ""})</span>`
           : label === "Traffic" && r.trafficLapList?.length
           ? ` <span style="color:var(--textFaint);">(${lapsTxt(r.trafficLapList)})</span>` : "";
         return `<span style="white-space:nowrap;"><span style="color:var(--textFaint);">${label}</span> <span style="font-weight:${isTop ? 700 : 600};color:${color};">${v < -0.5 ? "−" : ""}${fmtLoss(v)}</span>${extra}</span>`;
@@ -2557,6 +2574,7 @@ async function loadArchiveResults(race){
 async function loadArchivePitStops(race){
   const cycles = await loadRedmistPitCyclesFromSupabase(race.id);
   const nums = (race.cars || []).map(c => String(c.number)).filter(n => n.toLowerCase() !== "53x");
+  if (!nums.length) return cycles;
   let live = null;
   try { live = await loadLivePitStopsForRace(race, nums); }
   catch (e){ console.error("[pit] live pit stop load failed:", e); }
