@@ -1156,12 +1156,13 @@ function rmLapsByPos(classification, lapRows){
     const laps = (byNum[c.startNumber] || []).sort((a, b) => a.lap_number - b.lap_number);
     const times = laps.map(l => Number(l.lap_time_seconds)).filter(x => x > 0).sort((a, b) => a - b);
     const median = times.length ? times[Math.floor(times.length / 2)] : null;
-    let prevPit = false;
-    lapsByPos.set(c.position, laps.map(l => {
+    // is_pit_lap marks a stop's out-lap (pit exit); the lap before it is the
+    // in-lap (pit entry). Both are non-racing laps.
+    lapsByPos.set(c.position, laps.map((l, i) => {
       const t = Number(l.lap_time_seconds) > 0 ? Number(l.lap_time_seconds) : null;
       const slow = median != null && t != null && t > median * 1.5;
-      const inPit = l.is_pit_lap === true || prevPit || slow;
-      prevPit = l.is_pit_lap === true;
+      const next = laps[i + 1];
+      const inPit = l.is_pit_lap === true || (next?.is_pit_lap === true && next.lap_number === l.lap_number + 1) || slow;
       return { lap: l.lap_number, timeOfDay: new Date(l.captured_at).getTime(), lapTime: t, inPit, status: l.caution_lap === true ? "YELLOW" : "GREEN" };
     }));
   });
@@ -1213,6 +1214,15 @@ const RM_MIN_PIT_MS = 15000; // shorter "stops" are drive-throughs / timing nois
 // counts, driver changes, stint splits or pit cycles.
 const rmIsPenaltyStop = s => s?.penalty_served === true;
 const rmServiceStops = stops => (stops || []).filter(s => !rmIsPenaltyStop(s));
+// A pit cycle spans two laps: the in-lap (pit entry — the lap the stop
+// happened on) and the out-lap (pit exit). Red Mist's stop rows and the
+// laps' is_pit_lap both record the out-lap, so the stop's in-lap is the lap
+// before. Stops are moved onto their in-lap here: the in-lap ends the
+// stint, the out-lap starts the next, and both are non-racing laps.
+const rmPitInLap = recordedLap => recordedLap - 1;
+function rmAlignStopLaps(stops){
+  return (stops || []).map(s => s.lap_number != null ? { ...s, lap_number: rmPitInLap(s.lap_number), recorded_lap: s.lap_number } : s);
+}
 // Lap rows with a penalty stop's in-lap no longer marked as a pit lap, so
 // it doesn't split a stint or count as a pit cycle. Laps built from the
 // unmodified rows still treat it as a non-race lap.
@@ -1403,15 +1413,14 @@ function debriefMean(xs){ return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.
 function debriefCarStints(car, lapsByPos, lapRows, pitStops, finalDriver){
   const laps = lapsByPos.get(car.position) || [];
   const drivers = rmDriverForLaps(car.startNumber, laps, lapRows, pitStops, finalDriver[car.startNumber]);
+  // In-laps: each stop sits on its in-lap (rmAlignStopLaps); a pit-flagged
+  // lap (the out-lap) with no stop row adds the lap before it.
   const pitLaps = new Set();
-  lapRows.forEach(l => { if (l.car_number === car.startNumber && l.is_pit_lap === true) pitLaps.add(l.lap_number); });
+  lapRows.forEach(l => { if (l.car_number === car.startNumber && l.is_pit_lap === true) pitLaps.add(rmPitInLap(l.lap_number)); });
   pitStops.forEach(s => { if (s.car_number === car.startNumber) pitLaps.add(s.lap_number); });
-  // Stint boundaries: the car's real stops only. Pit-flagged laps (in-lap
-  // and out-lap are often both flagged) never start a stint on their own.
-  // Without stop rows, each run of consecutive pit laps counts once.
+  // Stint boundaries: the car's real stops only, each ending on its in-lap.
   const stops = rmCarStops(car.startNumber, pitStops);
-  const endLaps = new Set(stops.length ? stops.map(s => s.lap_number)
-    : [...pitLaps].filter(L => !pitLaps.has(L + 1)));
+  const endLaps = new Set(stops.length ? stops.map(s => s.lap_number) : [...pitLaps]);
 
   const stints = [];
   let cur = null;
@@ -1968,7 +1977,7 @@ async function rmLoadSessionStints(resultRows){
   // don't split stints or count as pit cycles (lapRows / pitStops drop them).
   const lapsByPos = rmLapsByPos(classification, rawLapRows);
   const lapRows = rmLapRowsWithoutPenaltyPits(rawLapRows, allPitStops);
-  const pitStops = rmServiceStops(allPitStops);
+  const pitStops = rmServiceStops(rmAlignStopLaps(allPitStops));
   const finalDriver = Object.fromEntries(resultRows.map(r => [String(r.car_number), r.driver_name]));
   // Charts stop at the checkered flag: the overall winner's last lap.
   const leader = classification[0]?.startNumber;
@@ -2422,7 +2431,7 @@ async function buildRedmistArchive(race, { save } = { save: false }){
     fetchAllRows(() => scope(supabase.from("redmist_live_pit_stops")
       .select("car_number, lap_number, pit_duration_ms, driver_change, driver_out, driver_in, penalty_served"))).catch(() => []),
   ]);
-  const pitStops = rmServiceStops(allPitStops);
+  const pitStops = rmServiceStops(rmAlignStopLaps(allPitStops));
 
   const lapsByPos = rmLapsByPos(classification, lapRows);
   // Logged flag timeline when we have one; lap-based inference otherwise
@@ -2599,13 +2608,14 @@ async function loadLivePitStopsForRace(race, carNumbers){
       .in("car_number", carNumbers).order("car_number").order("lap_number")),
     fetchAllRows(() => scope(supabase.from("redmist_flag_periods").select("flag, started_at, ended_at")).order("started_at")).catch(() => []),
   ]);
-  const kept = stops.filter(s => Number(s.pit_duration_ms) >= RM_MIN_PIT_MS);
+  let kept = stops.filter(s => Number(s.pit_duration_ms) >= RM_MIN_PIT_MS);
   if (!kept.length) return null;
 
-  const lapNums = [...new Set(kept.flatMap(s => [s.lap_number, s.lap_number + 1]))];
+  const lapNums = [...new Set(kept.flatMap(s => [s.lap_number - 1, s.lap_number, s.lap_number + 1]))];
   const laps = lapNums.length ? await fetchAllRows(() => scope(supabase.from("redmist_live_laps")
     .select("car_number, lap_number, caution_lap, captured_at"))
     .in("car_number", carNumbers).in("lap_number", lapNums)).catch(() => []) : [];
+  kept = rmAlignStopLaps(kept);
   const lapAt = {};
   laps.forEach(l => { lapAt[`${l.car_number}|${l.lap_number}`] = l; });
 
@@ -5318,6 +5328,7 @@ async function saveLapFix(){
     // Write Red Mist's full name when this car already has one for the
     // driver (plan names are often surname-only).
     const laps = await fetchAllRows(() => scope(supabase.from("redmist_live_laps").select("lap_number, driver_name")).eq("car_number", num).order("lap_number"));
+    const pitLapOf = rmPitInLap; // stop rows record the out-lap — see rmAlignStopLaps
     const seen = [...new Set(laps.map(l => l.driver_name).filter(Boolean))];
     const name = seen.find(n => sameDriverName(f.driver, n))
       || seen.find(n => driverSurname(n).toLowerCase() === driverSurname(f.driver).toLowerCase()) || f.driver;
@@ -5339,8 +5350,9 @@ async function saveLapFix(){
     const stops = await fetchAllRows(() => scope(supabase.from("redmist_live_pit_stops")
       .select("stop_num, lap_number, driver_out, driver_in, driver_change, penalty_served")).eq("car_number", num));
     for (const st of stops){
-      if (rmIsPenaltyStop(st) || st.lap_number < from - 1 || st.lap_number > to) continue;
-      const out = atOrBefore(st.lap_number), inn = atOrAfter(st.lap_number + 1);
+      const L = pitLapOf(st.lap_number);
+      if (rmIsPenaltyStop(st) || L < from - 1 || L > to) continue;
+      const out = atOrBefore(L), inn = atOrAfter(L + 1);
       const change = !!(out && inn && !sameDriverName(out, inn));
       if (out === st.driver_out && inn === st.driver_in && change === (st.driver_change === true)) continue;
       const { error: e2 } = await scope(supabase.from("redmist_live_pit_stops").update({ driver_out: out, driver_in: inn, driver_change: change }))
