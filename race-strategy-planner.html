@@ -1438,12 +1438,16 @@ function debriefCarStints(car, lapsByPos, lapRows, pitStops, finalDriver){
 // traffic, a mistake, an incident — and the excess is time lost to it.
 // Typical laps (the median) are untouched, so a uniformly slow driver
 // shows up as pace, not traffic.
+// Green racing laps only: the opening lap (rolling start) and any lap that
+// ran into a caution or red flag are compared against a field window that
+// straddles different conditions, so they'd read as time lost when the
+// whole field was slow.
 function debriefTraffic(laps, typical){
-  const x = laps.filter(l => l.f).map(l => l.t - l.f.median);
-  if (x.length < 5 || !typical) return null;
-  const b = debriefMedian(x), thresh = typical * DEBRIEF.TRAFFIC_PCT;
-  const slow = x.filter(v => v - b > thresh);
-  return { n: x.length, typical: b, laps: slow.length, loss: slow.reduce((a, v) => a + (v - b), 0) };
+  const pts = laps.filter(l => l.f && !l.flagged && l.lap > 1).map(l => ({ lap: l.lap, v: l.t - l.f.median }));
+  if (pts.length < 5 || !typical) return null;
+  const b = debriefMedian(pts.map(p => p.v)), thresh = typical * DEBRIEF.TRAFFIC_PCT;
+  const slow = pts.filter(p => p.v - b > thresh);
+  return { n: pts.length, typical: b, laps: slow.length, lapList: slow.map(p => p.lap), loss: slow.reduce((a, p) => a + (p.v - b), 0) };
 }
 
 function debriefDriverProfile(stints){
@@ -1668,7 +1672,7 @@ function debriefStintReport(stints, field, num, stops, stopRef){
       num: i + 1, driver: s.driver, firstLap: first.lap, lastLap: last.lap,
       stopSec: stop ? Number(stop.pit_duration_ms) / 1000 : null, stopRef: ref,
       start: first.ts ? first.ts - (first.t || 0) * 1000 : null, end: last.ts || null,
-      pace, traffic, trafficLaps: tr ? tr.laps : null, pit, total,
+      pace, traffic, trafficLaps: tr ? tr.laps : null, trafficLapList: tr ? tr.lapList : [], pit, total,
       delta: laps.length ? debriefMean(laps.map(l => l.t - l.f.mean)) : null, // race pace this stint, s/lap vs. field
     };
   });
@@ -1983,6 +1987,13 @@ async function buildSaturdayDebrief(src){
   const session = await rmLoadSessionStints(resultRows);
   if (!session) return null;
   const { classification, lapRows, periods, pitStops, checkered, flagCautions, flagReds, stintsByNum } = session;
+  // Laps that ran into any part of a caution or red flag (or were marked
+  // caution) — left out of traffic, which only judges green racing laps.
+  const flagSpans = [...flagCautions, ...flagReds].filter(f => f.start != null);
+  Object.values(stintsByNum).forEach(stints => stints.forEach(s => s.laps.forEach(l => {
+    const end = l.ts, start = l.ts && l.t ? l.ts - l.t * 1000 : l.ts;
+    l.flagged = l.caution || (end != null && flagSpans.some(f => start <= (f.end ?? f.start) && end >= f.start));
+  })));
   const redPeriods = periods.length ? rmFlagSummary(periods).redFlags : [];
   const lapTime = {};
   lapRows.forEach(l => { lapTime[`${l.car_number}|${l.lap_number}`] = new Date(l.captured_at).getTime(); });
@@ -2294,8 +2305,11 @@ function renderDebriefPanel(){
       const chip = ([label, v]) => {
         const isTop = isWorst && label === top[0] && v > 0;
         const color = isTop ? T.red : v < -0.5 ? T.green : "var(--textMuted)";
+        const lapsTxt = ls => ls.length > 6 ? `${ls.slice(0, 6).map(L => `L${L}`).join(", ")} +${ls.length - 6}` : ls.map(L => `L${L}`).join(", ");
         const extra = label === "Pit stop" && r.stopSec != null
-          ? ` <span style="color:var(--textFaint);">(${fmtClock(r.stopSec)}${r.stopRef != null ? ` vs ${fmtClock(r.stopRef)}` : ""})</span>` : "";
+          ? ` <span style="color:var(--textFaint);">(${fmtClock(r.stopSec)}${r.stopRef != null ? ` vs ${fmtClock(r.stopRef)}` : ""})</span>`
+          : label === "Traffic" && r.trafficLapList?.length
+          ? ` <span style="color:var(--textFaint);">(${lapsTxt(r.trafficLapList)})</span>` : "";
         return `<span style="white-space:nowrap;"><span style="color:var(--textFaint);">${label}</span> <span style="font-weight:${isTop ? 700 : 600};color:${color};">${v < -0.5 ? "−" : ""}${fmtLoss(v)}</span>${extra}</span>`;
       };
       return `
