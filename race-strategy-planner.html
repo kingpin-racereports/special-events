@@ -522,55 +522,6 @@
     .segmented button{padding:0 9px;}
     .stint-wheel{width:74px;padding:0 19px 0 8px;background-position:calc(100% - 11px) 13px,calc(100% - 7px) 13px;}
   }
-  /* ---- Desktop tiers ----
-     Phones and tablets keep the single 768px column above. From 900px the
-     column widens and per-car content gets room to breathe; from 1280px
-     the plan page splits into cars + a side column (info, track map,
-     standings/qualifying), capped at 1600px so an ultrawide doesn't turn
-     every row into a head-turn. Setup stays a narrower form page. */
-  .plan-cols{display:block;}
-  .car-plans{display:flex;flex-direction:column;gap:40px;margin-top:24px;}
-  .archive-top{display:block;}
-  /* Archived car dashboard: stat tiles, full-width Race Pace, then Drivers
-     and Pit Stop Times side by side. Sized by the car column's own width
-     (container queries), not the viewport, since that column narrows when
-     the side column is present. */
-  .arch-dash{container-type:inline-size;}
-  .arch-split{display:block;}
-  @container (min-width:480px){
-    .arch-dash .results-carstat-grid{grid-template-columns:repeat(3,1fr);}
-  }
-  @container (min-width:720px){
-    .arch-dash .results-carstat-grid{grid-template-columns:repeat(6,1fr);}
-    .arch-dash .race-pace-slot [role="img"]{height:300px!important;}
-    .arch-split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:stretch;}
-  }
-  .ff-panel{margin-top:40px;}
-  @media (min-width:900px){
-    .page,.page-wide,.local-banner,.races-strip{max-width:1120px;}
-    .page{padding-left:32px;padding-right:32px;}
-    .car-plans-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:32px;align-items:start;}
-    /* Race Overview tiles: three rows at this width, two rows from 1440px,
-       column count driven by how many tiles the race has (--c3 / --c2). */
-    .results-overview-grid{grid-template-columns:repeat(var(--c3,4),minmax(0,1fr));}
-    .pit-times-row{grid-template-columns:minmax(200px,1.2fr) 72px 104px minmax(240px,2fr);gap:18px;}
-    .pit-times-bar{max-width:none;}
-  }
-  @media (min-width:1280px){
-    .page,.page-wide,.local-banner,.races-strip{max-width:1600px;}
-    .page{padding-left:40px;padding-right:40px;}
-    .page.page-setup{max-width:1120px;}
-    .plan-cols{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:32px;align-items:start;margin-top:24px;}
-    .plan-cols.side-wide{grid-template-columns:minmax(0,1fr) minmax(480px,560px);}
-    .plan-cols .car-plans{margin-top:0;}
-    .plan-side .chip-grid{margin:16px 0!important;max-width:none;}
-    .plan-side > .chip-grid:first-child{margin-top:0!important;}
-    .plan-side .track-detail-box{margin:16px 0;}
-    .plan-side > :first-child,.plan-side .results-panel:first-child{margin-top:0;}
-  }
-  @media (min-width:1440px){
-    .results-overview-grid{grid-template-columns:repeat(var(--c2,6),minmax(0,1fr));}
-  }
 </style>
 </head>
 <body>
@@ -756,6 +707,7 @@ let state = {
   reserveDraft: {}, // UI-only: in-progress reserve driver name per car id, keyed by car.id
 
   archiveError: null,       // UI-only: last Build Results from Red Mist error
+  showFullField: false,     // UI-only: archive full-field standings expanded
   archiveLoading: false,    // UI-only: loading/building archived results after opening an archived race
 
   redmistEventId: null, // Red Mist event id currently being polled — set by subscribeRedmistLive(), null when nothing's live
@@ -1433,7 +1385,7 @@ function debriefDriverProfile(stints){
 
   // Pace through the stint: each smooth lap as % over its own stint's
   // opening pace, pooled across stints and sliced by stint minute.
-  const pts = [];
+  const pts = [], allPts = [];
   let earlyLaps = 0;
   stints.forEach(s => {
     const smooth = s.laps.filter(l => l.clean && A(l) <= smoothMax);
@@ -1441,13 +1393,24 @@ function debriefDriverProfile(stints){
     if (early.length < 3) return;
     earlyLaps += early.length;
     const ref = debriefMedian(early);
-    smooth.forEach(l => { if (l.min >= DEBRIEF.EARLY_MIN) pts.push({ min: l.min, pct: A(l) / ref - 1 }); });
+    smooth.forEach(l => {
+      const pt = { min: l.min, pct: A(l) / ref - 1 };
+      allPts.push(pt);
+      if (l.min >= DEBRIEF.EARLY_MIN) pts.push(pt);
+    });
   });
   const longestMin = Math.max(...stints.map(s => s.minutes));
   const bins = [{ from: 0, to: DEBRIEF.EARLY_MIN, ref: true, laps: earlyLaps, pct: earlyLaps ? 0 : null }];
   for (let b = DEBRIEF.EARLY_MIN; b < longestMin; b += DEBRIEF.BIN_MIN){
     const inBin = pts.filter(p => p.min >= b && p.min < b + DEBRIEF.BIN_MIN).map(p => p.pct);
     bins.push({ from: b, to: Math.min(b + DEBRIEF.BIN_MIN, longestMin), laps: inBin.length, pct: inBin.length >= DEBRIEF.MIN_BIN_LAPS ? debriefMedian(inBin) : null });
+  }
+
+  // Bar slices from minute 0, so a slow opening shows as well as a late fade.
+  const barBins = [];
+  for (let b = 0; b < longestMin; b += DEBRIEF.BIN_MIN){
+    const inBin = allPts.filter(p => p.min >= b && p.min < b + DEBRIEF.BIN_MIN).map(p => p.pct);
+    barBins.push({ from: b, to: Math.min(b + DEBRIEF.BIN_MIN, longestMin), pct: inBin.length >= DEBRIEF.MIN_BIN_LAPS ? debriefMedian(inBin) : null });
   }
 
   // Fade: first slice at/over FADE_PCT that the next slice doesn't walk back.
@@ -1475,7 +1438,7 @@ function debriefDriverProfile(stints){
   const confidence = fullStints >= 2 && cleanLaps.length >= DEBRIEF.HIGH_CONF_LAPS ? "high"
     : cleanLaps.length >= DEBRIEF.MED_CONF_LAPS ? "medium" : "low";
   return {
-    base, adjBase, stdev, lossPerHour, fadeMin, fadePct, heldThrough, longestMin, bins,
+    base, adjBase, stdev, lossPerHour, fadeMin, fadePct, heldThrough, longestMin, bins, barBins,
     confidence, stints: stints.length, fullStints, cleanLaps: cleanLaps.length,
     raceDelta, lapRanges,
   };
@@ -1596,7 +1559,7 @@ function debriefTrackFactor(stintsByCar){
   };
 }
 
-function debriefStintReport(stints, field, num){
+function debriefStintReport(stints, field, num, stops, stopRef){
   const typ = field.typical[num];
   if (!typ) return [];
   return stints.map((s, i) => {
@@ -1606,16 +1569,23 @@ function debriefStintReport(stints, field, num){
     // Time lost to the class field during this stint:
     //  pace    — our typical lap vs. the field's at the same moments, every lap
     //  traffic — held-up laps' excess over that typical lap (debriefTraffic)
-    //  pit     — the stop that ended this stint vs. the class median stop
+    //  pit     — Red Mist duration of the stop that ended this stint vs. the
+    //            class median for that kind of stop (any flag, so caution
+    //            stops count too)
     const pace = tr.n * tr.typical;
     const traffic = tr.loss;
-    const cost = debriefStopCost(s, stints[i + 1], typ);
-    const pit = cost != null && field.stopMedian != null ? cost - field.stopMedian : null;
+    const lapSet = new Set(s.laps.map(l => l.lap));
+    const stop = i < stints.length - 1 ? (stops || []).find(st => lapSet.has(st.lap_number)) : null;
+    const ref = stop && stopRef ? (stop.driver_change ? stopRef.change : stopRef.service) : null;
+    const pit = stop && ref != null ? Number(stop.pit_duration_ms) / 1000 - ref : null;
     const first = s.laps[0], last = s.laps[s.laps.length - 1];
+    // Only losses add up: a quick driver doesn't hide a slow stop, and a
+    // quick stop doesn't hide slow pace.
+    const total = Math.max(0, pace) + Math.max(0, traffic) + Math.max(0, pit || 0);
     return {
       num: i + 1, driver: s.driver,
       start: first.ts ? first.ts - (first.t || 0) * 1000 : null, end: last.ts || null,
-      pace, traffic, trafficLaps: tr.laps, pit, total: pace + traffic + (pit || 0),
+      pace, traffic, trafficLaps: tr.laps, pit, total,
       delta: debriefMean(laps.map(l => l.t - l.f.mean)), // race pace this stint, s/lap vs. field
     };
   }).filter(Boolean);
@@ -1954,18 +1924,30 @@ async function buildSaturdayDebrief(src){
     });
   });
 
+  const keptStop = s => Number(s.pit_duration_ms) >= RM_MIN_PIT_MS && !inRed(s);
+  // Class median stop, split driver-change vs. service-only when each kind
+  // has enough stops; otherwise the class median of all stops.
+  const stopRefByClass = {};
+  [...new Set(classification.map(c => c.resultClass))].forEach(cls => {
+    const nums = new Set(classification.filter(c => c.resultClass === cls).map(c => c.startNumber));
+    const secs = f => pitStops.filter(s => nums.has(s.car_number) && keptStop(s) && f(s)).map(s => Number(s.pit_duration_ms) / 1000);
+    const all = debriefMedian(secs(() => true));
+    const ch = secs(s => s.driver_change), sv = secs(s => !s.driver_change);
+    stopRefByClass[cls] = { change: ch.length >= 3 ? debriefMedian(ch) : all, service: sv.length >= 3 ? debriefMedian(sv) : all };
+  });
+
   const cars = {};
   classification.forEach(c => {
     const stints = stintsByNum[c.startNumber];
     const profiles = debriefProfilesFor(stints);
-    const stops = pitStops.filter(s => s.car_number === c.startNumber && Number(s.pit_duration_ms) >= RM_MIN_PIT_MS && !inRed(s));
+    const stops = pitStops.filter(s => s.car_number === c.startNumber && keptStop(s));
     const moves = stops.filter(s => s.class_position_entering != null && s.class_position_exiting != null)
       .map(s => s.class_position_entering - s.class_position_exiting);
     const full = stints.filter(s => s.minutes >= DEBRIEF.FULL_STINT_MIN);
     const closing = full.length ? full[full.length - 1] : stints[stints.length - 1];
     cars[c.startNumber] = {
       num: c.startNumber, name: c.name, cls: c.resultClass, classPos: c.positionInClass, status: c.status,
-      stints, profiles, stintReport: debriefStintReport(stints, fieldByNum[c.startNumber], c.startNumber),
+      stints, profiles, stintReport: debriefStintReport(stints, fieldByNum[c.startNumber], c.startNumber, stops, stopRefByClass[c.resultClass]),
       battle: debriefBattle(c.startNumber, c.resultClass, stints, classification, lapRows, pitStops),
       stops: stops.length,
       medianStop: debriefMedian(stops.map(s => Number(s.pit_duration_ms) / 1000)),
@@ -2094,16 +2076,20 @@ function debriefScaleColor(t){
   return `rgb(${a.map((x, k) => Math.round(x + (b[k] - x) * u)).join(",")})`;
 }
 
-// One bar across the driver's longest Saturday stint, colored by pace vs.
-// the stint's opening (green held, amber drifting, red fading), with the
-// drop-off marked when there is one.
+// One bar across the driver's longest Saturday stint, each slice colored by
+// how far it was off the driver's quickest slice (green = at pace, amber,
+// red = slowest) — a late fade goes green to red, a slow start red to
+// green — with the drop-off marked when there is one.
 function debriefFadeBar(p){
   const total = p.longestMin;
   if (!(total > 0)) return "";
   const pos = m => Math.max(0, Math.min(100, m / total * 100));
+  const bins = p.barBins || p.bins;
+  const known = bins.filter(b => b.pct != null).map(b => b.pct);
+  const best = known.length ? Math.min(...known) : 0;
   let last = debriefScaleColor(0);
-  const grad = p.bins.map(b => {
-    if (b.pct != null) last = debriefScaleColor(Math.max(0, b.pct) / (DEBRIEF.FADE_PCT * 1.5));
+  const grad = bins.map(b => {
+    if (b.pct != null) last = debriefScaleColor((b.pct - best) / (DEBRIEF.FADE_PCT * 1.5));
     return `${last} ${pos((b.from + b.to) / 2).toFixed(1)}%`;
   });
   if (grad.length === 1) grad.push(grad[0].replace(/[\d.]+%$/, "100%"));
@@ -3944,7 +3930,7 @@ function renderSetup(){
       && state.startTime && Number(state.durationHours)>0;
 
   return `
-    <div class="page page-setup fade-in">
+    <div class="page fade-in">
       <button class="btn-back" data-act="setup-back">${icon("arrowLeft",15)} Back</button>
 
       <div style="margin:24px 0 32px;">
@@ -4168,10 +4154,6 @@ function renderPlan(){
   // mid-race rather than just silently losing them, or this looks like a
   // bug rather than the intended handoff to Red Mist.
   const liveLocked = !archived && isLiveAttached(race); // drives the live bar (shown for quali too); editing lock is readOnly above
-  // Standings / qualifying / saved results. On desktop these sit in the
-  // side column, which widens when there's a table in it.
-  const fullFieldPanel = archived ? renderArchiveFullFieldPanel(race) : "";
-  const sidePanels = (!archived ? renderLiveStandingsPanel(race) : (race?.archiveResults ? "" : savedResultsPanel(race))).trim();
 
   return `
     <div class="page page-wide fade-in">
@@ -4201,33 +4183,25 @@ function renderPlan(){
         <span style="color:${bannerColor}">Archived — results below by car</span>
       </div>` : ""}
 
-      ${archived ? `<div class="archive-top">${renderArchiveResultsPanel(race)}${competitorPitTimesPanel(race)}</div>` : ""}
+      ${archived ? renderArchiveResultsPanel(race) + competitorPitTimesPanel(race) : ""}
 
       ${!archived ? renderLiveRaceSummary(race) : ""}
       ${!archived ? renderFinalStandingsTop(race) : ""}
 
-      <div class="plan-cols ${(sidePanels || fullFieldPanel) ? "side-wide" : ""}">
-        <div class="plan-main">
-          <div class="car-plans ${archived ? "" : "car-plans-grid"}">
-            ${sortedCarPlans.map(cp=>carPlanSection(cp, plan, archived)).join("")}
-          </div>
-        </div>
-
-        <div class="plan-side">
-          ${fullFieldPanel}
-
-          <div class="chip-grid" style="margin-top:${fullFieldPanel ? 24 : 40}px;">
-            ${infoChip("mapPin","Track",plan.track)}
-            ${infoChip("flag","Duration",formatDuration(plan.totalMinutes))}
-            ${infoChip("clock","Green Flag",formatTime(plan.startDateTime))}
-            ${infoChip("timer","Checkered Flag",formatTime(plan.endDateTime))}
-          </div>
-
-          ${trackDetailSection(plan.track)}
-
-          ${sidePanels}
-        </div>
+      <div style="display:flex;flex-direction:column;gap:40px;margin-top:24px;">
+        ${sortedCarPlans.map(cp=>carPlanSection(cp, plan, archived)).join("")}
       </div>
+
+      <div class="chip-grid" style="margin-top:40px;">
+        ${infoChip("mapPin","Track",plan.track)}
+        ${infoChip("flag","Duration",formatDuration(plan.totalMinutes))}
+        ${infoChip("clock","Green Flag",formatTime(plan.startDateTime))}
+        ${infoChip("timer","Checkered Flag",formatTime(plan.endDateTime))}
+      </div>
+
+      ${trackDetailSection(plan.track)}
+
+      ${!archived ? renderLiveStandingsPanel(race) : (race?.archiveResults ? "" : savedResultsPanel(race))}
 
       ${!readOnly ? `
       <div class="archive-box fade-in">
@@ -4322,6 +4296,21 @@ function renderArchiveResultsPanel(race){
       </div>`;
   }
 
+  const fieldRows = state.showFullField ? res.classification.map((r,i) => {
+    const isOurs = race.cars.some(c=>c.number===r.startNumber);
+    const statusBadge = r.status === "DNF" ? `<span class="results-badge dnf">DNF</span>`
+                       : r.status === "DNS" ? `<span class="results-badge dns">DNS</span>` : "";
+    return `<tr style="${isOurs?`background:${T.gold}17;border-left:2px solid ${T.gold};`:""}">
+      <td class="num" style="white-space:nowrap;">P${i+1}${classPodiumTrophy(r.positionInClass, r.status !== "DNS" && r.numberOfLaps > 0)}</td>
+      <td><span class="num">#${esc(r.startNumber)}</span> - <span style="font-weight:600;">${esc(r.name)}</span></td>
+      <td class="num">${esc(res.intervals[r.startNumber] ?? "—")}</td>
+      <td class="num col-laps">${r.numberOfLaps}</td>
+      <td class="stops col-stops">${res.pitStopsByNumber[r.startNumber] ?? 0}</td>
+      <td class="results-cls" style="white-space:nowrap;">${classPosCell(r.resultClass, r.positionInClass)}</td>
+      <td>${statusBadge}</td>
+    </tr>`;
+  }).join("") : "";
+
   const ov = res.overview;
   const overviewTile = (label, value, sub) => `
     <div class="results-stat-tile">
@@ -4340,24 +4329,6 @@ function renderArchiveResultsPanel(race){
     return entries.map(e=>`#${esc(e.num)}`).join(", ");
   };
 
-  // Built as a list so the desktop grid can size itself to the tile count
-  // (three rows at 900px+, two from 1440px) — see --c3 / --c2 in the CSS.
-  const overviewTiles = [
-        overviewTile("Total Laps", ov.totalLaps),
-        overviewTile("Total Pit Stops", ov.totalPitStops),
-        overviewTile("Entries", ov.entries),
-        overviewTile("Finishers", ov.finishers, `${ov.dnf} DNF`),
-        overviewTile("Total Cautions", res.cautions.length),
-        res.redFlags && res.redFlags.length ? overviewTile("Red Flags", res.redFlags.length) : "",
-        overviewTile("Cars on Lead Lap", ov.carsOnLeadLap),
-        overviewTile("Most Laps Led", res.lapsLed ? `${res.lapsLed.laps} laps` : "—", res.lapsLed ? `#${esc(res.lapsLed.num)} ${esc(res.lapsLed.name)}` : ""),
-        overviewTile("Best Stint Pace - GTO", res.bestStint ? fmtLapTime(res.bestStint.avg) : "—", res.bestStint ? `#${esc(res.bestStint.num)} ${esc(res.bestStint.name)}` : ""),
-        overviewTile("Longest Stint - GTO", res.longestStint ? `${res.longestStint.lapCount} laps` : "—", longestStintSub(res.longestStint)),
-        overviewTile(`Fastest Lap${res.fastestLap?.cls ? ` - ${esc(res.fastestLap.cls)}` : ""}`, res.fastestLap ? fmtLapTime(res.fastestLap.seconds) : "—", res.fastestLap ? `#${esc(res.fastestLap.num)} ${esc(res.fastestLap.name)}` : ""),
-        overviewTile("Fastest Pit Stop", res.fastestStop ? `${res.fastestStop.seconds.toFixed(1)}s` : "—", res.fastestStop ? `#${esc(res.fastestStop.num)} ${esc(res.fastestStop.name)}` : ""),
-        overviewTile("Fastest Driver Change", res.fastestStopDc ? `${res.fastestStopDc.seconds.toFixed(1)}s` : "—", res.fastestStopDc ? `#${esc(res.fastestStopDc.num)} ${esc(res.fastestStopDc.name)}${(res.fastestStopDc.driverOut || res.fastestStopDc.driverIn) ? `<br>${esc(driverSurname(res.fastestStopDc.driverOut))} → ${esc(driverSurname(res.fastestStopDc.driverIn))}` : ""}` : "")
-  ].filter(Boolean);
-
   return `
     <div class="results-panel fade-in">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
@@ -4365,39 +4336,34 @@ function renderArchiveResultsPanel(race){
         ${state.isEngineer ? `<button class="link-muted" data-act="rm-archive-build" style="font-size:11px;">${icon("rotate",12)} Rebuild</button>` : ""}
       </div>
 
-      <div class="results-overview-grid" style="--c3:${Math.ceil(overviewTiles.length/3)};--c2:${Math.ceil(overviewTiles.length/2)};">
-        ${overviewTiles.join("")}
+      <div class="results-overview-grid">
+        ${overviewTile("Total Laps", ov.totalLaps)}
+        ${overviewTile("Total Pit Stops", ov.totalPitStops)}
+        ${overviewTile("Entries", ov.entries)}
+        ${overviewTile("Finishers", ov.finishers, `${ov.dnf} DNF`)}
+        ${overviewTile("Total Cautions", res.cautions.length)}
+        ${res.redFlags && res.redFlags.length ? overviewTile("Red Flags", res.redFlags.length) : ""}
+        ${overviewTile("Cars on Lead Lap", ov.carsOnLeadLap)}
+        ${overviewTile("Most Laps Led", res.lapsLed ? `${res.lapsLed.laps} laps` : "—", res.lapsLed ? `#${esc(res.lapsLed.num)} ${esc(res.lapsLed.name)}` : "")}
+        ${overviewTile("Best Stint Pace - GTO", res.bestStint ? fmtLapTime(res.bestStint.avg) : "—", res.bestStint ? `#${esc(res.bestStint.num)} ${esc(res.bestStint.name)}` : "")}
+        ${overviewTile("Longest Stint - GTO", res.longestStint ? `${res.longestStint.lapCount} laps` : "—", longestStintSub(res.longestStint))}
+        ${overviewTile(`Fastest Lap${res.fastestLap?.cls ? ` - ${esc(res.fastestLap.cls)}` : ""}`, res.fastestLap ? fmtLapTime(res.fastestLap.seconds) : "—", res.fastestLap ? `#${esc(res.fastestLap.num)} ${esc(res.fastestLap.name)}` : "")}
+        ${overviewTile("Fastest Pit Stop", res.fastestStop ? `${res.fastestStop.seconds.toFixed(1)}s` : "—", res.fastestStop ? `#${esc(res.fastestStop.num)} ${esc(res.fastestStop.name)}` : "")}
+        ${overviewTile("Fastest Driver Change", res.fastestStopDc ? `${res.fastestStopDc.seconds.toFixed(1)}s` : "—", res.fastestStopDc ? `#${esc(res.fastestStopDc.num)} ${esc(res.fastestStopDc.name)}${(res.fastestStopDc.driverOut || res.fastestStopDc.driverIn) ? `<br>${esc(driverSurname(res.fastestStopDc.driverOut))} → ${esc(driverSurname(res.fastestStopDc.driverIn))}` : ""}` : "")}
       </div>
 
-    </div>`;
-}
+      <button class="link-muted" data-act="toggle-full-field" style="margin-top:16px;font-size:12px;">
+        ${state.showFullField ? "Hide" : "Show"} full-field standings ${icon(state.showFullField?"chevronUp":"chevronDown",12)}
+      </button>
 
-// Archived full-field standings: always shown in full, beneath the car
-// car tiles, ahead of the info chips and track map, rather than toggled
-// inside Race Overview.
-function renderArchiveFullFieldPanel(race){
-  const res = race?.archiveResults;
-  if (state.archiveLoading || !res?.classification?.length) return "";
-  const fieldRows = res.classification.map((r,i) => {
-    const isOurs = race.cars.some(c=>c.number===r.startNumber);
-    return `<tr style="${isOurs?`background:${T.gold}17;border-left:2px solid ${T.gold};`:""}">
-      <td class="num" style="white-space:nowrap;">P${i+1}${classPodiumTrophy(r.positionInClass, r.status !== "DNS" && r.numberOfLaps > 0)}</td>
-      <td><span class="num">#${esc(r.startNumber)}</span> - <span style="font-weight:600;">${esc(r.name)}</span></td>
-      <td class="num">${esc(res.intervals[r.startNumber] ?? "—")}</td>
-      <td class="num col-laps">${r.numberOfLaps}</td>
-      <td class="stops col-stops">${res.pitStopsByNumber[r.startNumber] ?? 0}</td>
-      <td class="results-cls" style="white-space:nowrap;">${classPosCell(r.resultClass, r.positionInClass, r.status)}</td>
-    </tr>`;
-  }).join("");
-  return `
-    <div class="results-panel ff-panel fade-in">
-      <div style="margin-bottom:12px;"><span class="eyebrow" style="color:${T.gold};">Full-Field Standings</span></div>
+      ${state.showFullField ? `
       <div class="results-table-wrap">
       <table class="results-table archive-field">
-        <thead><tr><th>Finish</th><th>Car</th><th>Gap</th><th class="col-laps">Laps</th><th class="col-stops">Stops</th><th>Class</th></tr></thead>
+        <thead><tr><th>Finish</th><th>Car</th><th>Gap</th><th class="col-laps">Laps</th><th class="col-stops">Stops</th><th>Class</th><th>Status</th></tr></thead>
         <tbody>${fieldRows}</tbody>
       </table>
       </div>
+` : ""}
     </div>`;
 }
 
@@ -4663,12 +4629,8 @@ function finalResultStatus(row, leaderLaps){
 // Rows are either the live full field (still attached, flag 5) or the
 // saved redmist_race_results rows (normalised to the same field names).
 // Class + class position, plain. Class podiums are marked by the trophy
-// beside the overall finish (classPodiumTrophy), so no color here. A
-// DNF/DNS status replaces the position with its tag ("GTO DNF").
-function classPosCell(cls, classPos, status){
-  if (status === "DNF" || status === "DNS"){
-    return `${esc(cls || "—")} <span class="results-badge ${status.toLowerCase()}">${status}</span>`;
-  }
+// beside the overall finish (classPodiumTrophy), so no color here.
+function classPosCell(cls, classPos){
   const cp = Number(classPos);
   return `${esc(cls || "—")}${cp ? ` <span style="color:var(--textFaint);">P${cp}</span>` : ""}`;
 }
@@ -5222,8 +5184,12 @@ function pitCycleBlock(car){
 
   return `
     <div class="summary-box">
+      <div class="summary-driver" style="margin-bottom:6px;">
+        <span></span>
+        <span class="fin-label" style="margin:0;">${icon("timer",12)} Pit Stop Times</span>
+      </div>
       <table class="pit-table">
-        <thead><tr><th>Pit Stops</th><th>Driver</th><th>Flag</th><th style="text-align:right;">Time</th></tr></thead>
+        <thead><tr><th>Stop</th><th>Driver</th><th>Flag</th><th style="text-align:right;">Time</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
       ${avgRow}
@@ -5454,7 +5420,7 @@ function carPlanSection(cp, plan, archived){
 
       ${isCollapsed ? "" : `
       <div class="car-plan-body fade-in">
-      ${archived ? `<div class="arch-dash">${archiveCarHeaderBlock(car)}${racePaceBlock(cp)}<div class="arch-split">${raceSummaryBlock(cp)}${pitCycleBlock(car)}</div></div>` : ""}
+      ${archived ? archiveCarHeaderBlock(car) + pitCycleBlock(car) + raceSummaryBlock(cp) + racePaceBlock(cp) : ""}
       ${hasLiveTiming ? liveTimingBlock(car) : ""}
 
       ${archived ? stintSectionOpen(car, stints, cp) : ""}
@@ -6152,6 +6118,8 @@ async function handleAction(act, el){
       }
       state.archiveLoading = false; render(); break;
     }
+    case "toggle-full-field":
+      state.showFullField = !state.showFullField; render(); break;
     case "clear-stint-log": {
       const cp = state.plan.carPlans.find(cp=>cp.car.id===el.getAttribute("data-car"));
       if (cp){
@@ -6178,16 +6146,9 @@ async function handleAction(act, el){
     }
     case "toggle-car-plan": {
       const carId = el.getAttribute("data-car");
-      // One open tile at a time: opening a car closes any other.
-      const opening = !state.expandedCarPlans.has(carId);
-      state.expandedCarPlans = opening ? new Set([carId]) : new Set();
+      if (state.expandedCarPlans.has(carId)) state.expandedCarPlans.delete(carId);
+      else state.expandedCarPlans.add(carId);
       render();
-      // Closing a tile above this one shifts it up the page — bring the
-      // newly opened tile's header back into view if it scrolled off.
-      if (opening){
-        const head = document.querySelector(`[data-act="toggle-car-plan"][data-car="${CSS.escape(carId)}"]`);
-        if (head && head.getBoundingClientRect().top < 0) head.scrollIntoView({ block:"start" });
-      }
       break;
     }
     case "prompt-retire-car": {
