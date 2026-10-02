@@ -687,6 +687,7 @@ let state = {
   eventName: "",
   eventDate: null,
   duplicateSource: null, // race object being duplicated from, set by "duplicate-race", consumed by "confirmName"
+  lapFix: null, // engineer "Fix driver laps" form on an archived car: { carId, from, to, driver, saving, msg, ok }
   debrief: null, // Saturday debrief shown on Setup after duplicating — see runSaturdayDebrief()
 
   cars: [],
@@ -5134,15 +5135,108 @@ function raceSummaryBlock(cp){
       </div>`;
   }).join("");
 
+  const canFix = state.isEngineer && race?.status === "archived" && !!race?.archiveResults;
+  const fixOpen = canFix && state.lapFix && String(state.lapFix.carId) === String(cp.car.id);
+  const fixBtn = canFix && !fixOpen
+    ? `<button data-act="lapfix-open" data-car="${esc(cp.car.id)}" style="margin-left:10px;background:none;border:1px solid var(--borderLight);border-radius:6px;color:var(--blue);font-size:11px;padding:3px 8px;cursor:pointer;">Fix driver laps</button>` : "";
   return `
     <div class="summary-box">
       <div style="display:grid;grid-template-columns:${cols};gap:12px;padding-bottom:8px;border-bottom:1px solid var(--border);">
-        <span class="fin-label" style="margin:0;">${icon("timer",12)} Drivers</span>
+        <span class="fin-label" style="margin:0;">${icon("timer",12)} Drivers${fixBtn}</span>
         <span class="fin-label" style="margin:0;justify-content:flex-end;">Seat Time</span>
         ${cons ? `<span class="fin-label" style="margin:0;justify-content:flex-end;">Consistency</span>` : ""}
       </div>
+      ${fixOpen ? lapFixForm(cp) : ""}
       ${rows}
     </div>`;
+}
+
+// Engineer-only: set the driver on a range of laps for one car in an
+// archived race (Red Mist's driver name lags or sticks at real swaps).
+// Writes redmist_live_laps, re-derives the stops at the edges of the range
+// on redmist_live_pit_stops, then rebuilds the archive so the Drivers
+// table, Pit Stop Times, Race Pace and any later Debrief all follow.
+function lapFixForm(cp){
+  const f = state.lapFix;
+  const drivers = cp.car.drivers.filter(d => d && d.trim());
+  const inp = "background:var(--panelRaised);border:1px solid var(--borderLight);border-radius:6px;color:var(--text);padding:7px 9px;font-size:13px;";
+  const lbl = t => `<div style="font-size:11px;color:var(--textFaint);margin-bottom:4px;">${t}</div>`;
+  const opts = [`<option value="">Select driver</option>`, ...drivers.map(d => `<option value="${esc(d)}" ${d === f.driver ? "selected" : ""}>${esc(d)}</option>`)].join("");
+  return `
+    <div style="margin:10px 0 4px;padding:10px;border:1px solid var(--border);border-radius:8px;">
+      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;">
+        <div>${lbl("From lap")}<input id="lapFixFrom" type="number" min="1" inputmode="numeric" value="${esc(f.from ?? "")}" style="${inp}width:80px;"></div>
+        <div>${lbl("To lap")}<input id="lapFixTo" type="number" min="1" inputmode="numeric" value="${esc(f.to ?? "")}" style="${inp}width:80px;"></div>
+        <div style="flex:1;min-width:160px;">${lbl("Driver")}<select id="lapFixDriver" style="${inp}width:100%;">${opts}</select></div>
+        <button data-act="lapfix-save" ${f.saving ? "disabled" : ""} style="background:var(--blue);color:#0A0C10;border:none;border-radius:6px;font-weight:600;font-size:13px;padding:8px 14px;cursor:pointer;">${f.saving ? "Saving…" : "Save fix"}</button>
+        <button data-act="lapfix-close" ${f.saving ? "disabled" : ""} style="background:none;border:none;color:var(--textMuted);font-size:13px;padding:8px 6px;cursor:pointer;">Close</button>
+      </div>
+      ${f.msg ? `<div style="font-size:12px;margin-top:8px;color:${f.ok ? T.green : T.red};">${esc(f.msg)}</div>` : ""}
+    </div>`;
+}
+
+async function saveLapFix(){
+  const f = state.lapFix;
+  const race = state.races.find(r => r.id === state.currentRaceId);
+  const car = race?.cars?.find(c => String(c.id) === String(f?.carId));
+  if (!f || !race || !car) return;
+  const from = parseInt(f.from, 10), to = parseInt(f.to, 10);
+  if (!(from >= 1) || !(to >= from) || !f.driver){
+    f.ok = false; f.msg = "Enter a lap range and pick a driver."; render(); return;
+  }
+  f.saving = true; f.msg = ""; render();
+  try {
+    const resultRows = await fetchRedmistResultRows(race);
+    if (!resultRows) throw new Error("No Red Mist results for this race.");
+    const { event_id, session_id, session_name } = resultRows[0];
+    const scope = q => q.eq("event_id", event_id).eq("session_id", session_id).eq("session_name", session_name);
+    const num = String(car.number);
+
+    // Write Red Mist's full name when this car already has one for the
+    // driver (plan names are often surname-only).
+    const laps = await fetchAllRows(() => scope(supabase.from("redmist_live_laps").select("lap_number, driver_name")).eq("car_number", num).order("lap_number"));
+    const seen = [...new Set(laps.map(l => l.driver_name).filter(Boolean))];
+    const name = seen.find(n => sameDriverName(f.driver, n))
+      || seen.find(n => driverSurname(n).toLowerCase() === driverSurname(f.driver).toLowerCase()) || f.driver;
+
+    const { data: updated, error } = await scope(supabase.from("redmist_live_laps").update({ driver_name: name }))
+      .eq("car_number", num).gte("lap_number", from).lte("lap_number", to).select("lap_number");
+    if (error) throw error;
+    // RLS rejections come back as zero rows, not an error.
+    if (!updated?.length) throw new Error(`No laps were updated for #${num} — check the range, or that lap edits are enabled for engineers.`);
+
+    // Stops touching the range: outgoing = driver on the in-lap, incoming =
+    // driver on the lap after, from the corrected laps.
+    const byLap = {};
+    laps.forEach(l => { byLap[l.lap_number] = l.driver_name; });
+    for (let L = from; L <= to; L++) if (L in byLap) byLap[L] = name;
+    const lapNums = Object.keys(byLap).map(Number).sort((a, b) => a - b);
+    const atOrBefore = L => { for (let i = lapNums.length - 1; i >= 0; i--) if (lapNums[i] <= L && byLap[lapNums[i]]) return byLap[lapNums[i]]; return null; };
+    const atOrAfter = L => { for (const n of lapNums) if (n >= L && byLap[n]) return byLap[n]; return null; };
+    const stops = await fetchAllRows(() => scope(supabase.from("redmist_live_pit_stops")
+      .select("stop_num, lap_number, driver_out, driver_in, driver_change, penalty_served")).eq("car_number", num));
+    for (const st of stops){
+      if (rmIsPenaltyStop(st) || st.lap_number < from - 1 || st.lap_number > to) continue;
+      const out = atOrBefore(st.lap_number), inn = atOrAfter(st.lap_number + 1);
+      const change = !!(out && inn && !sameDriverName(out, inn));
+      if (out === st.driver_out && inn === st.driver_in && change === (st.driver_change === true)) continue;
+      const { error: e2 } = await scope(supabase.from("redmist_live_pit_stops").update({ driver_out: out, driver_in: inn, driver_change: change }))
+        .eq("car_number", num).eq("stop_num", st.stop_num).eq("lap_number", st.lap_number);
+      if (e2) throw e2;
+    }
+
+    // Rebuild everything that reads driver names.
+    const [archive, pits] = await Promise.all([buildRedmistArchive(race, { save: true }), loadArchivePitStops(race)]);
+    if (archive) race.archiveResults = archive;
+    if (pits) race.redmistPitCycles = pits;
+    racePaceCache.delete(race.id);
+    state.lapFix = { carId: f.carId, from: "", to: "", driver: "", saving: false, ok: true,
+      msg: `Laps ${from}–${to} set to ${name} (${updated.length} lap${updated.length === 1 ? "" : "s"}).` };
+  } catch (e){
+    console.error("[lap-fix] failed:", e);
+    f.saving = false; f.ok = false; f.msg = e.message || "Save failed.";
+  }
+  render();
 }
 
 // Real pit-in/pit-out cycle times for one car, from Red Mist Timing (see
@@ -5776,6 +5870,9 @@ function bindEvents(){
     });
   }
   bindLiveInput("customTrack", v=> state.customTrack=v);
+  bindLiveInput("lapFixFrom", v=>{ if (state.lapFix) state.lapFix.from = v; });
+  bindLiveInput("lapFixTo", v=>{ if (state.lapFix) state.lapFix.to = v; });
+  bindLiveInput("lapFixDriver", v=>{ if (state.lapFix) state.lapFix.driver = v; }, null, "change");
   bindLiveInput("loginEmail", v=> state.loginEmail = v, ()=>{
     const btn = document.getElementById("magicSendBtn");
     if (btn) btn.disabled = !state.loginEmail.trim();
@@ -5997,6 +6094,13 @@ async function handleAction(act, el){
       state.page = "home"; render(); break;
     case "nav-back":
       requestBack(); break;
+    case "lapfix-open":
+      state.lapFix = { carId: el.getAttribute("data-car"), from: "", to: "", driver: "", saving: false, msg: "", ok: false };
+      render(); break;
+    case "lapfix-close":
+      state.lapFix = null; render(); break;
+    case "lapfix-save":
+      await saveLapFix(); break;
     case "open-stint-adjust": {
       // Tapping the start time opens that stint's panel, where the ±15
       // steppers live.
