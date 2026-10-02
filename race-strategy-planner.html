@@ -1471,11 +1471,6 @@ function debriefDriverProfile(stints){
   const sortedAdj = cleanLaps.map(A).sort((a, b) => a - b);
   const p25 = sortedAdj[Math.floor(sortedAdj.length * 0.25)];
   const smoothMax = p25 * (1 + DEBRIEF.DISRUPT_PCT);
-  // Off-pace: traffic time per hour driven, same method as the stint
-  // card's Traffic, stint by stint.
-  const drivenMin = stints.reduce((a, s) => a + s.minutes, 0);
-  const traffic = stints.map(s => debriefTraffic(s.laps, base)).filter(Boolean);
-  const lossPerHour = drivenMin > 0 ? traffic.reduce((a, t) => a + t.loss, 0) / (drivenMin / 60) : 0;
   // Race pace: every lap except pit laps (traffic and cautions included),
   // each against the class field's average lap at the same moment.
   // Seconds per lap; negative = quicker than the field.
@@ -1534,7 +1529,7 @@ function debriefDriverProfile(stints){
   const confidence = fullStints >= 2 && cleanLaps.length >= DEBRIEF.HIGH_CONF_LAPS ? "high"
     : cleanLaps.length >= DEBRIEF.MED_CONF_LAPS ? "medium" : "low";
   return {
-    base, adjBase, stdev, lossPerHour, fadeMin, fadePct, heldThrough, longestMin, bins,
+    base, adjBase, stdev, fadeMin, fadePct, heldThrough, longestMin, bins,
     confidence, stints: stints.length, fullStints, cleanLaps: cleanLaps.length,
     raceDelta, lapRanges,
   };
@@ -2285,7 +2280,6 @@ function renderDebriefPanel(){
       stat("Clean lap", fmtLapTime(p.adjBase)),
       stat("Race Pace", p.raceDelta != null ? fmtSec(p.raceDelta) : "—"),
       stat("Consistency", p.stdev != null ? `±${p.stdev.toFixed(2)}s` : "—"),
-      stat("Off-Pace", `${p.lossPerHour.toFixed(1)}s/hr`),
     ].join(`<span style="color:var(--border);margin:0 6px;">|</span>`);
     return `
       <div style="padding:10px 0;border-top:1px solid var(--border);">
@@ -2323,7 +2317,6 @@ function renderDebriefPanel(){
     const worst = w.total >= 5 ? w : null;
     const planName = satName => (c.drivers.find(d => d.satName === satName) || {}).name || satName;
     const fmtLoss = s => { const a = Math.round(Math.abs(s)); return a >= 60 ? `${Math.floor(a / 60)}:${String(a % 60).padStart(2, "0")}` : `${a}s`; };
-    const fmtClock = x => { const a = Math.round(x); return a >= 60 ? `${Math.floor(a / 60)}m ${String(a % 60).padStart(2, "0")}s` : `${a}s`; };
     const row = r => {
       const isWorst = r === worst;
       const parts = [["Pace", r.pace], ["Pit stop", r.pit], ["Traffic", r.traffic]].filter(p => p[1] != null);
@@ -2332,8 +2325,8 @@ function renderDebriefPanel(){
         const isTop = isWorst && label === top[0] && v > 0;
         const color = isTop ? T.red : v < -0.5 ? T.green : "var(--textMuted)";
         const lapsTxt = ls => ls.length > 6 ? `${ls.slice(0, 6).map(L => `L${L}`).join(", ")} +${ls.length - 6}` : ls.map(L => `L${L}`).join(", ");
-        const extra = label === "Pit stop" && r.stopSec != null
-          ? ` <span style="color:var(--textFaint);">(${r.stopRepair ? "\uD83D\uDD27 " : ""}${fmtClock(r.stopSec)}${r.stopRef != null ? ` vs ${fmtClock(r.stopRef)}` : ""})</span>`
+        const extra = label === "Pit stop"
+          ? (r.stopRepair ? ` <span style="color:var(--textFaint);">(\uD83D\uDD27)</span>` : "")
           : label === "Traffic" && r.trafficLapList?.length
           ? ` <span style="color:var(--textFaint);">(${lapsTxt(r.trafficLapList)})</span>` : "";
         return `<span style="white-space:nowrap;"><span style="color:var(--textFaint);">${label}</span> <span style="font-weight:${isTop ? 700 : 600};color:${color};">${v < -0.5 ? "−" : ""}${fmtLoss(v)}</span>${extra}</span>`;
