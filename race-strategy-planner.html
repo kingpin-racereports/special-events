@@ -216,6 +216,7 @@
   .pit-table td.pit-time{font-family:'JetBrains Mono',monospace;font-weight:600;text-align:right;}
   .pit-table td.pit-driver{color:var(--textMuted);white-space:normal;}
   .pit-table td.pit-flag{text-align:center;}
+  .pit-table td.pit-lap{font-family:'JetBrains Mono',monospace;color:var(--textMuted);}
   /* Phones: surname only in the pit stop table (full name stays in the title). */
   @media(max-width:560px){ .pit-table .dn-first{display:none;} }
   .chip{border-radius:12px;background:var(--panel);border:1px solid var(--border);padding:10px 12px;display:flex;align-items:center;gap:8px;}
@@ -1231,16 +1232,52 @@ function rmPitTimes(classification, pitStops, lapRows, redPeriods){
 // Driver in the car for each lap. Uses the driver recorded on the lap row
 // when there is one; otherwise rebuilds it from the pit-stop log (driver
 // out before each driver change, driver in after it).
+// A car's real service stops (no penalties, no sub-15s timing noise), in
+// lap order. These are the only places a stint can end or a driver change.
+function rmCarStops(carNumber, pitStops){
+  return (pitStops || []).filter(st => st.car_number === carNumber && !rmIsPenaltyStop(st)
+      && (Number(st.pit_duration_ms) >= RM_MIN_PIT_MS || st.driver_change === true))
+    .sort((a, b) => a.lap_number - b.lap_number);
+}
+
+// Driver for each lap. Red Mist's per-lap driver name lags or sticks at
+// real swaps, so the driver can only change at a stop: laps are split at
+// the car's stops, and each stint gets one driver — the stop's incoming
+// driver when the stop records a change, otherwise whoever Red Mist named
+// for most of that stint's laps. Name flicker within a car (same surname,
+// different first name) resolves to the last name Red Mist reported.
 function rmDriverForLaps(carNumber, laps, lapRows, pitStops, finalDriver){
-  const recorded = {};
-  lapRows.forEach(l => { if (l.car_number === carNumber && l.driver_name) recorded[l.lap_number] = l.driver_name; });
-  const changes = pitStops.filter(s => s.car_number === carNumber && s.driver_change).sort((a, b) => a.lap_number - b.lap_number);
-  return laps.map(l => {
-    if (recorded[l.lap]) return recorded[l.lap];
-    if (!changes.length) return finalDriver || null;
-    for (const ch of changes){ if (l.lap <= ch.lap_number) return ch.driver_out || null; }
-    return changes[changes.length - 1].driver_in || finalDriver || null;
+  const recorded = {}, lastFull = {};
+  lapRows.forEach(l => {
+    if (l.car_number !== carNumber || !l.driver_name) return;
+    recorded[l.lap_number] = l.driver_name;
   });
+  Object.keys(recorded).map(Number).sort((a, b) => a - b)
+    .forEach(n => { lastFull[driverSurname(recorded[n]).toLowerCase()] = recorded[n]; });
+  const canon = n => n ? (lastFull[driverSurname(n).toLowerCase()] || n) : null;
+
+  const stops = rmCarStops(carNumber, pitStops);
+  const segOf = lap => stops.filter(st => st.lap_number < lap).length;
+  const segLaps = Array.from({ length: stops.length + 1 }, () => []);
+  laps.forEach(l => segLaps[segOf(l.lap)].push(l.lap));
+
+  const segDriver = [];
+  segLaps.forEach((ls, k) => {
+    const before = k > 0 ? stops[k - 1] : null;
+    let d = null;
+    if (before && before.driver_change === true && before.driver_in) d = canon(before.driver_in);
+    if (!d){
+      const count = {};
+      ls.forEach(L => { const n = canon(recorded[L]); if (n) count[n] = (count[n] || 0) + 1; });
+      const top = Object.entries(count).sort((a, b) => b[1] - a[1])[0];
+      if (top) d = top[0];
+    }
+    if (!d && before?.driver_in) d = canon(before.driver_in);
+    if (!d && k === 0 && stops[0]?.driver_out) d = canon(stops[0].driver_out);
+    if (!d) d = segDriver[k - 1] || canon(finalDriver) || null;
+    segDriver.push(d);
+  });
+  return laps.map(l => segDriver[segOf(l.lap)]);
 }
 
 // Per-driver lap-time standard deviation for this team's cars, over clean
@@ -1319,12 +1356,18 @@ function debriefCarStints(car, lapsByPos, lapRows, pitStops, finalDriver){
   const pitLaps = new Set();
   lapRows.forEach(l => { if (l.car_number === car.startNumber && l.is_pit_lap === true) pitLaps.add(l.lap_number); });
   pitStops.forEach(s => { if (s.car_number === car.startNumber) pitLaps.add(s.lap_number); });
+  // Stint boundaries: the car's real stops only. Pit-flagged laps (in-lap
+  // and out-lap are often both flagged) never start a stint on their own.
+  // Without stop rows, each run of consecutive pit laps counts once.
+  const stops = rmCarStops(car.startNumber, pitStops);
+  const endLaps = new Set(stops.length ? stops.map(s => s.lap_number)
+    : [...pitLaps].filter(L => !pitLaps.has(L + 1)));
 
   const stints = [];
   let cur = null;
   laps.forEach((l, i) => {
     const d = drivers[i] || null;
-    if (!cur || d !== cur.driver || pitLaps.has(l.lap - 1)){
+    if (!cur || d !== cur.driver || endLaps.has(l.lap - 1)){
       cur = { driver: d, laps: [], minutes: 0 };
       stints.push(cur);
     }
@@ -2496,6 +2539,7 @@ async function loadLivePitStopsForRace(race, carNumbers){
     const list = (byCarNumber[num] ||= []);
     list.push({
       stopNum: list.length + 1,
+      lap: s.lap_number ?? null,
       pdmSeconds: Number(s.pit_duration_ms) / 1000,
       clockGapSeconds: null,
       redFlagOverlap,
@@ -2527,6 +2571,7 @@ async function loadRedmistPitCyclesFromSupabase(raceId){
     if (!byCarNumber[row.car_number]) byCarNumber[row.car_number] = [];
     byCarNumber[row.car_number].push({
       stopNum: row.stop_num,
+      lap: row.pit_in_lap_estimated ?? null,
       pdmSeconds: row.duration_pdm_seconds != null ? Number(row.duration_pdm_seconds) : null,
       clockGapSeconds: row.duration_clockgap_seconds != null ? Number(row.duration_clockgap_seconds) : null,
       redFlagOverlap: row.red_flag_overlap,
@@ -5203,6 +5248,7 @@ function pitCycleBlock(car){
 
     return `<tr>
       <td>${s.stopNum}${wrench}</td>
+      <td class="pit-lap">${s.lap != null ? s.lap : "—"}</td>
       <td class="pit-driver">${driverCell}</td>
       <td class="pit-flag">${flagCell}</td>
       <td class="pit-time">${timeCell}</td>
@@ -5223,7 +5269,7 @@ function pitCycleBlock(car){
         <span class="fin-label" style="margin:0;">${icon("timer",12)} Pit Stop Times</span>
       </div>
       <table class="pit-table">
-        <thead><tr><th>Stop</th><th>Driver</th><th>Flag</th><th style="text-align:right;">Time</th></tr></thead>
+        <thead><tr><th>Stop</th><th>Lap</th><th>Driver</th><th>Flag</th><th style="text-align:right;">Time</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
       ${avgRow}
