@@ -5038,7 +5038,7 @@ function archiveCarHeaderBlock(car){
         ${tile("Overall Position", `P${m.position}`)}
         ${tile("Fastest Lap", m.bestTime && m.bestTime!=="00.000" ? esc(m.bestTime) : "—")}
         ${tile("Average Lap", race.archiveResults.avgLapByNumber?.[car.number] ? fmtLapTime(race.archiveResults.avgLapByNumber[car.number]) : "—")}
-        ${tile("Pit Stops", m.pitStops)}
+        ${tile("Pit", m.pitStops)}
         ${tile("Laps Completed", m.numberOfLaps)}
       </div>
     </div>`;
