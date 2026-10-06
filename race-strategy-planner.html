@@ -2306,10 +2306,8 @@ function renderDebriefPanel(){
   };
 
   // The stint that cost the most time against the class, split into pace,
-  // pit stop and traffic so the cause is obvious at a glance.
-  // Every stint's time lost to the class, split into pace, pit stop and
-  // traffic, with the worst one flagged. TEMP: all stints are listed so the
-  // numbers can be checked; later this goes back to the worst stint only.
+  // pit stop and traffic so the cause is obvious at a glance. Only that
+  // stint is shown (none if no stint lost 5s or more).
   const stintsBlock = c => {
     const rep = (c.sat.stintReport || []).filter(Boolean);
     if (!rep.length) return "";
@@ -2340,7 +2338,7 @@ function renderDebriefPanel(){
           <div style="font-size:12px;display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px;">${parts.map(chip).join("")}</div>
         </div>`;
     };
-    return `<div style="margin:10px 0 6px;">${rep.map(row).join("")}</div>`;
+    return worst ? `<div style="margin:10px 0 6px;">${row(worst)}</div>` : "";
   };
 
   const carBlocks = db.cars.map(c => `
@@ -5038,7 +5036,7 @@ function archiveCarHeaderBlock(car){
         ${tile("Overall Position", `P${m.position}`)}
         ${tile("Fastest Lap", m.bestTime && m.bestTime!=="00.000" ? esc(m.bestTime) : "—")}
         ${tile("Average Lap", race.archiveResults.avgLapByNumber?.[car.number] ? fmtLapTime(race.archiveResults.avgLapByNumber[car.number]) : "—")}
-        ${tile("Pit", m.pitStops)}
+        ${tile("Pit Stops", m.pitStops)}
         ${tile("Laps Completed", m.numberOfLaps)}
       </div>
     </div>`;
@@ -5067,22 +5065,107 @@ function sameDriverName(a, b){
 // re-fetch (startApp) doesn't throw it away.
 const racePaceCache = new Map(); // race.id -> { status: "loading" | "ready" | "none", ... }
 
+// Class pace charts for one loaded session.
+function racePaceChartsFor(session){
+  const { classification, stintsByNum, flagCautions, flagReds, checkered } = session;
+  const clsByNum = Object.fromEntries(classification.map(c => [c.startNumber, c.resultClass]));
+  const charts = {};
+  [...new Set(classification.map(c => c.resultClass))].forEach(cls => {
+    const nums = classification.filter(c => c.resultClass === cls).map(c => c.startNumber);
+    charts[cls] = debriefPaceSeries(Object.fromEntries(nums.map(n => [n, stintsByNum[n]])), { cautions: flagCautions, redFlags: flagReds, checkered });
+  });
+  return { charts, clsByNum, stintsByNum };
+}
+
+// The race's local day ("YYYY-MM-DD"): plan start, else the session date.
+function racePaceRaceDay(race, resultRows){
+  if (race.plan?.startDateTimeISO){
+    const d = new Date(race.plan.startDateTimeISO);
+    if (!isNaN(d)) return d.toLocaleDateString("en-CA");
+  }
+  const sd = resultRows?.[0]?.session_date;
+  return sd ? String(sd).slice(0, 10) : String(race.eventDateISO || "").slice(0, 10) || null;
+}
+const racePaceIsSunday = day => !!day && new Date(day + "T12:00:00").getDay() === 0;
+function racePacePrevDay(day){
+  const d = new Date(day + "T12:00:00");
+  d.setDate(d.getDate() - 1);
+  return d.toLocaleDateString("en-CA");
+}
+
+// Saturday's race session for a Sunday race: same Red Mist event (one id
+// spans the weekend), the day before, never Sunday's own session. Falls
+// back to a plan in the list that ran the day before at the same track.
+async function racePaceSaturdayRows(race, sunRows, satDay){
+  const { event_id, session_id, session_name } = sunRows[0];
+  const { data, error } = await supabase.from("redmist_race_results").select("*").eq("event_id", event_id);
+  if (error) throw error;
+  const localDay = ms => ms ? new Date(ms).toLocaleDateString("en-CA") : "";
+  const groups = {};
+  (data || []).forEach(r => {
+    if (Number(r.session_id) === Number(session_id) && r.session_name === session_name) return;
+    const key = `${r.session_id}|${r.session_name}`;
+    const g = (groups[key] ||= { name: r.session_name, rows: [], at: 0, date: r.session_date || null });
+    g.rows.push(r);
+    g.at = Math.max(g.at, new Date(r.checkered_at || r.updated_at || 0).getTime());
+  });
+  const cands = Object.values(groups).filter(g => classifySession(g.name) !== "Qualifying");
+  let sat = cands.filter(g => (g.date ? String(g.date).slice(0, 10) : localDay(g.at)) === satDay);
+  if (!sat.length) sat = cands.filter(g => String(g.name || "").toLowerCase().includes("saturday"));
+  if (sat.length) return sat.sort((a, b) => b.at - a.at)[0].rows;
+
+  const satRace = (state.races || []).find(r => r.id !== race.id && r.track === race.track
+    && racePaceRaceDay(r, null) === satDay);
+  return satRace ? fetchRedmistResultRows(satRace, true) : null;
+}
+
+// Show/Hide Saturday's field line — one switch for every car's chart.
+// Inline onclick (not data-act) because the slot is re-filled in place
+// after laps load, which bindEvents() never sees.
+let racePaceShowSat = false;
+function racePaceToggleSat(e){
+  e?.preventDefault(); e?.stopPropagation();
+  racePaceShowSat = !racePaceShowSat;
+  refreshRacePaceSlots(state.currentRaceId);
+}
+
+// Fill caution / no-data gaps inside each [from, to] window by straight
+// interpolation, so a driver's line runs unbroken through their own time
+// in the car. Nothing is drawn outside their windows.
+function racePaceBridge(points, field, windows){
+  const out = points.slice();
+  windows.forEach(w => {
+    const idx = field.map((p, k) => p.m >= w.from && p.m <= w.to ? k : -1).filter(k => k >= 0);
+    const known = idx.filter(k => out[k]);
+    for (let i = 1; i < known.length; i++){
+      const a = known[i - 1], b = known[i];
+      for (let k = a + 1; k < b; k++){
+        const f = (field[k].m - out[a].m) / (out[b].m - out[a].m);
+        out[k] = { m: field[k].m, t: out[a].t + (out[b].t - out[a].t) * f };
+      }
+    }
+  });
+  return out;
+}
+
 async function loadRacePace(race){
   const key = race.id;
   racePaceCache.set(key, { status: "loading" });
   try {
     const resultRows = await fetchRedmistResultRows(race);
-    const session = resultRows ? await rmLoadSessionStints(resultRows) : null;
+    const day = resultRows ? racePaceRaceDay(race, resultRows) : null;
+    // Sunday only: Saturday's class field pace, an optional comparison line.
+    // Loaded alongside Sunday's laps; a failure here just leaves it off.
+    const satLoad = racePaceIsSunday(day)
+      ? racePaceSaturdayRows(race, resultRows, racePacePrevDay(day))
+          .then(rows => rows ? rmLoadSessionStints(rows) : null)
+          .then(s => s ? racePaceChartsFor(s) : null)
+          .catch(e => { console.warn("[race-pace] Saturday comparison unavailable:", e); return null; })
+      : Promise.resolve(null);
+    const [session, sat] = await Promise.all([resultRows ? rmLoadSessionStints(resultRows) : null, satLoad]);
     if (!session){ racePaceCache.set(key, { status: "none" }); }
     else {
-      const { classification, stintsByNum, flagCautions, flagReds, checkered } = session;
-      const clsByNum = Object.fromEntries(classification.map(c => [c.startNumber, c.resultClass]));
-      const charts = {};
-      [...new Set(classification.map(c => c.resultClass))].forEach(cls => {
-        const nums = classification.filter(c => c.resultClass === cls).map(c => c.startNumber);
-        charts[cls] = debriefPaceSeries(Object.fromEntries(nums.map(n => [n, stintsByNum[n]])), { cautions: flagCautions, redFlags: flagReds, checkered });
-      });
-      racePaceCache.set(key, { status: "ready", charts, clsByNum, stintsByNum, carLines: {} });
+      racePaceCache.set(key, { status: "ready", ...racePaceChartsFor(session), sat, carLines: {} });
     }
   } catch (e){
     console.error("[race-pace] load failed:", e);
@@ -5143,7 +5226,8 @@ function racePaceBlock(cp){
 function racePaceInner(race, cp){
   if (!racePaceCache.has(race.id)) loadRacePace(race);
   const entry = racePaceCache.get(race.id);
-  const head = `<div style="padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:10px;"><span class="fin-label" style="margin:0;">${icon("activity",12)} Race Pace</span></div>`;
+  const headWith = right => `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:10px;"><span class="fin-label" style="margin:0;">${icon("activity",12)} Race Pace</span>${right || ""}</div>`;
+  const head = headWith("");
   if (entry.status === "loading"){
     return `<div class="summary-box">${head}<div style="font-size:12px;color:var(--textFaint);padding:6px 0;">Loading lap data…</div></div>`;
   }
@@ -5202,12 +5286,26 @@ function racePaceInner(race, cp){
     { label: `${cls} field`, color: T.textMuted, points: chart.field, dash: "5 4", width: 2 },
     ...drivers.map(d => ({
       label: who[d].name, color: who[d].color, width: 2.2,
-      points: chart.field.map((_, k) => { const s = segs.find(x => x.driver === d && x.points[k]); return s ? s.points[k] : null; }),
+      points: racePaceBridge(
+        chart.field.map((_, k) => { const s = segs.find(x => x.driver === d && x.points[k]); return s ? s.points[k] : null; }),
+        chart.field, bands.filter(b => b.driver === d)),
     })),
   ];
+
+  // Sunday: Saturday's class field pace by race hour, behind a Show/Hide
+  // toggle. The field line is already continuous (cautions bridged); it's
+  // cut at Sunday's length since Saturday runs longer.
+  const satCls = entry.sat?.clsByNum[num];
+  const satChart = satCls ? entry.sat.charts[satCls] : null;
+  const satToggle = satChart
+    ? `<button type="button" onclick="racePaceToggleSat(event)" style="font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:0.04em;text-transform:uppercase;padding:3px 8px;border-radius:4px;cursor:pointer;border:1px solid ${racePaceShowSat ? "#F472D0" : "var(--border)"};background:${racePaceShowSat ? "rgba(244,114,208,0.12)" : "transparent"};color:${racePaceShowSat ? "#F472D0" : "var(--textMuted)"};">${racePaceShowSat ? "Hide" : "Show"} Saturday Pace</button>`
+    : "";
+  if (satChart && racePaceShowSat){
+    lines.push({ label: `Saturday ${satCls} field`, color: "#F472D0", points: satChart.field.filter(p => p.m <= chart.minutes), dash: "2 4", width: 2 });
+  }
   const svg = debriefPaceChartSvg(chart, lines, { bands: bandOpts, height: 220, ariaLabel: `#${car.number} race pace against the ${cls} field, by driver` });
   if (!svg) return "";
-  return `<div class="summary-box">${head}${svg}</div>`;
+  return `<div class="summary-box">${headWith(satToggle)}${svg}</div>`;
 }
 // =============== end Race Pace chart ===============
 
@@ -5505,7 +5603,7 @@ function pitCycleBlock(car){
   return `
     <div class="summary-box">
       <table class="pit-table">
-        <thead><tr><th>Pit</th><th>Lap</th><th>Driver</th><th>Flag</th><th style="text-align:right;">Time</th></tr></thead>
+        <thead><tr><th>Pit Stops</th><th>Lap</th><th>Driver</th><th>Flag</th><th style="text-align:right;">Time</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
       ${avgRow}
