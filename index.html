@@ -4007,11 +4007,11 @@ function renderHome(){
   ].filter(Boolean).join(", or ");
   const archerEmpty = `
           <div class="archer-empty">
-            <div class="archer" role="img" aria-label="Archer, the Kingpin Racing mascot, wagging his tail">
+            <div class="archer" role="img" aria-label="Archer, the most important of the crew, wagging his tail">
               <div class="archer-tail"></div><div class="archer-body"></div>
             </div>
             <p class="archer-title">Archer's waiting on the green flag.</p>
-            <p class="archer-sub">No races on the plan, so he's chasing the only thing left on track: his tail.${archerNext ? ` ${archerNext.charAt(0).toUpperCase()+archerNext.slice(1)}.` : ""}</p>
+            <p class="archer-sub">No races on the schedule, so he's chasing the only thing left on track, his tail!${archerNext ? ` ${archerNext.charAt(0).toUpperCase()+archerNext.slice(1)}.` : ""}</p>
           </div>`;
 
   const strip = `
