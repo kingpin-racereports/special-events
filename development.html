@@ -69,6 +69,10 @@
   .home-wrap{min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:40px 24px;}
   .home-main{flex:1;width:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;}
   .races-strip{width:100%;max-width:768px;margin-bottom:40px;}
+  /* Live event standings on Home — same width rules as the races strip.
+     Qualifying sessions sit side by side once there's room for two. */
+  .event-standings{width:100%;max-width:768px;margin-bottom:40px;}
+  .event-standings-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));column-gap:24px;}
   .races-head{display:flex;align-items:center;justify-content:between;justify-content:space-between;margin-bottom:12px;padding:0 4px;}
   .archive-link{display:flex;align-items:center;gap:4px;font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.14em;color:var(--gold);background:none;border:none;}
   .tile-row{display:flex;gap:16px;overflow-x:auto;padding:4px 4px 8px;}
@@ -562,7 +566,7 @@
   }
   .ff-panel{margin-top:40px;}
   @media (min-width:900px){
-    .page,.page-wide,.local-banner,.races-strip{max-width:1120px;}
+    .page,.page-wide,.local-banner,.races-strip,.event-standings{max-width:1120px;}
     .page{padding-left:32px;padding-right:32px;}
     .car-plans-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:32px;align-items:start;}
     /* Race Overview tiles: three rows at this width, two rows from 1440px,
@@ -572,7 +576,7 @@
     .pit-times-bar{max-width:none;}
   }
   @media (min-width:1280px){
-    .page,.page-wide,.local-banner,.races-strip{max-width:1600px;}
+    .page,.page-wide,.local-banner,.races-strip,.event-standings{max-width:1600px;}
     .page{padding-left:40px;padding-right:40px;}
     .page.page-setup{max-width:1120px;}
     .plan-cols{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:32px;align-items:start;margin-top:24px;}
@@ -780,6 +784,7 @@ let state = {
   // Home's race tiles can show a pulsating LIVE badge on the matching
   // race even when no one has opened it. See subscribeHomeLiveWatch().
   homeLive: { eventId: null, watchEventId: null, flag: null, timeToGo: null, lapsToGo: null },
+  homeStandings: null, // live WRL event standings on Home, independent of any race plan — see syncHomeStandings()
   finishedRaceIds: new Set(), // plans with saved Red Mist final results (took the checkered) — see loadFinishedRaceIds()
   liveSession: null, // { id, name, type } of the attached Red Mist session — scopes every live query and drives header + standings mode // eventId = event whose SESSION is live (drives badge + data); watchEventId = event Red Mist lists as live (may be between sessions)
 };
@@ -1930,10 +1935,14 @@ function debriefPaceChartSvg(chart, lines, opts = {}){
   // Plot area inset: room for the lap-time labels on the left and the hour labels below.
   const PL = 50, PR = 8, PT = bands.length ? 24 : 8, PB = 22;
   const wash = (hex, a) => { const [r, g, b] = hexToRgb(hex); return `rgba(${r},${g},${b},${a})`; };
-  const bandHtml = bands.map(b => {
+  // Driver windows: no colour wash — the plot keeps one plain background so
+  // the driver lines and flag shading carry the colour. Each window is just
+  // a neutral divider at the driver change plus a muted name label (and a
+  // hover title), enough to see who was in the car when.
+  const bandHtml = bands.map((b, i) => {
     const x0 = fx(b.from), w = Math.max(0, fx(b.to) - x0);
-    return `<div title="${esc(b.title || b.label || "")}" style="position:absolute;top:0;bottom:0;left:${pct(x0)};width:${pct(w)};background:${wash(b.color, 0.12)};border-left:1px solid ${wash(b.color, 0.5)};">
-      ${b.label && w >= 0.045 ? `<span style="position:absolute;left:4px;top:-18px;font-size:10px;font-weight:700;letter-spacing:0.04em;color:${b.color};${mono}white-space:nowrap;">${esc(b.label)}</span>` : ""}
+    return `<div title="${esc(b.title || b.label || "")}" style="position:absolute;top:0;bottom:0;left:${pct(x0)};width:${pct(w)};${i ? `border-left:1px dashed ${T.borderLight};` : ""}">
+      ${b.label && w >= 0.045 ? `<span style="position:absolute;left:4px;top:-18px;font-size:10px;font-weight:700;letter-spacing:0.04em;color:${T.textFaint};${mono}white-space:nowrap;">${esc(b.label)}</span>` : ""}
     </div>`;
   }).join("");
   return `
@@ -3205,7 +3214,7 @@ function flagLabel(flag){
 // so — a long garage repair looks identical until the car comes back out,
 // and the badge clears itself the moment it completes a lap.
 const INACTIVE_AFTER_MIN = 12;
-function liveCarStatus(pos, leaderLaps){
+function liveCarStatus(pos, leaderLaps, opts = {}){
   if (!pos) return null;
   const mcs = (pos.car_status || "").trim();
   if (mcs && !/^(active|in pits?)$/i.test(mcs)) return { label: mcs, tone: "dnf" };
@@ -3216,7 +3225,8 @@ function liveCarStatus(pos, leaderLaps){
   // that Red Mist marks stale, fall through to Inactive.
   // After the checkered every car ends up in the pits, so In Pit means
   // nothing there — skipped until the race is archived.
-  if (pos.in_pit === true && !isRaceFinished(state.races.find(r => r.id === state.currentRaceId))) return { label: "In Pit", tone: "pit" };
+  const finished = opts.finished ?? isRaceFinished(state.races.find(r => r.id === state.currentRaceId));
+  if (pos.in_pit === true && !finished) return { label: "In Pit", tone: "pit" };
   if (pos.is_stale === true) return { label: "Inactive", tone: "dnf" };
   if (pos.last_lap_at && Number(state.homeLive.flag) !== 3){
     const mins = (liveNowMs() - new Date(pos.last_lap_at).getTime()) / 60000;
@@ -3333,7 +3343,7 @@ let homeLiveChannel = null;
 // subscription below.
 async function loadHomeLiveStatus(){
   const { data: watch, error: watchErr } = await supabase
-    .from("redmist_event_watch").select("event_id, is_live").eq("id", 1).maybeSingle();
+    .from("redmist_event_watch").select("event_id, event_name, is_live").eq("id", 1).maybeSingle();
   if (watchErr) console.error("[home-live] redmist_event_watch fetch failed:", watchErr);
   const watchEventId = watch?.is_live ? watch.event_id : null;
 
@@ -3353,6 +3363,7 @@ async function loadHomeLiveStatus(){
     lapsToGo: sessionLive ? (session.laps_to_go ?? null) : null,
   };
   console.log("[home-live] watch event:", watchEventId, "| session:", session, "| session live:", sessionLive);
+  syncHomeStandings(watchEventId, watch?.event_name ?? null, session);
 
   if (watchEventId){
     // The server auto-links a race to the live event (maybeAutoLinkRace),
@@ -3405,6 +3416,198 @@ async function loadHomeLiveStatus(){
   scheduleRender();
 }
 let liveAttachInFlight = false;
+
+// ===================== Live event standings on Home =====================
+// Shows qualifying and race standings for whichever WRL event the poller
+// has found live (redmist_event_watch) — no race plan needed. Lets drivers
+// follow Friday qualifying before a plan exists, and anyone follow the
+// rest of the field. Data comes straight from redmist_live_positions /
+// redmist_live_pit_stops by event + session, so it's independent of the
+// plan page's live attach (state.redmistEventId / state.liveSession).
+//   Race session (incl. its checkered) -> race standings / final results.
+//   Anything else -> every qualifying session so far, the live one badged.
+let homeStandingsChannel = null, homeStandingsTimer = null, homeStandingsSeq = 0, homeStopsTimer = null;
+
+function syncHomeStandings(eventId, eventName, session){
+  if (!eventId){ stopHomeStandings(); return; }
+  const key = session ? {
+    id: Number(session.session_id ?? 0), name: session.session_name ?? "",
+    type: sessionTypeOf(session), flag: session.current_flag ?? null,
+    active: isSessionActive(session),
+  } : null;
+  const hs = state.homeStandings;
+  if (!hs || String(hs.eventId) !== String(eventId)){
+    stopHomeStandings();
+    state.homeStandings = { eventId, eventName, session: key, field: [], stops: {}, quali: [] };
+    subscribeHomeStandings(eventId); // loads on SUBSCRIBED
+    return;
+  }
+  const sessionChanged = !key || !hs.session || hs.session.id !== key.id || hs.session.name !== key.name;
+  hs.eventName = eventName ?? hs.eventName;
+  hs.session = key; // flag / active changes ride along without a refetch
+  if (sessionChanged){ hs.field = []; hs.stops = {}; loadHomeStandings(); }
+}
+
+function stopHomeStandings(){
+  if (homeStandingsChannel){ supabase.removeChannel(homeStandingsChannel); homeStandingsChannel = null; }
+  clearInterval(homeStandingsTimer); homeStandingsTimer = null;
+  clearTimeout(homeStopsTimer); homeStopsTimer = null;
+  state.homeStandings = null;
+}
+
+function isHomeRaceSessionRow(hs, row){
+  const s = hs?.session;
+  return !!(s && s.type === "Race" && Number(row.session_id) === s.id && row.session_name === s.name);
+}
+
+function groupQualiSessions(rows){
+  const bySession = {};
+  (rows || []).forEach(r => {
+    const key = `${r.session_id}|${r.session_name}`;
+    const g = (bySession[key] ||= { key, id: Number(r.session_id), name: r.session_name, rows: [], latest: 0 });
+    g.rows.push(r);
+    g.latest = Math.max(g.latest, new Date(r.fetched_at || 0).getTime());
+  });
+  return Object.values(bySession);
+}
+
+function countServiceStops(stops){
+  const counts = {};
+  rmServiceStops(stops || []).forEach(r => { counts[r.car_number] = (counts[r.car_number] || 0) + 1; });
+  return counts;
+}
+
+// Full reload. Latest call wins — a slower earlier response (e.g. from
+// before a session switch) is dropped rather than overwriting newer data.
+async function loadHomeStandings(){
+  const hs = state.homeStandings;
+  if (!hs) return;
+  const seq = ++homeStandingsSeq;
+  const s = hs.session;
+  const wantRace = !!(s && s.type === "Race");
+  const scoped = q => q.eq("event_id", hs.eventId).eq("session_id", s.id).eq("session_name", s.name);
+  try {
+    const [quali, field, stops] = await Promise.all([
+      supabase.from("redmist_live_positions").select("*").eq("event_id", hs.eventId).eq("session_type", "Qualifying"),
+      wantRace ? scoped(supabase.from("redmist_live_positions").select("*")) : Promise.resolve({ data: [] }),
+      wantRace ? scoped(supabase.from("redmist_live_pit_stops").select("car_number, penalty_served")) : Promise.resolve({ data: [] }),
+    ]);
+    if (seq !== homeStandingsSeq || state.homeStandings !== hs) return;
+    [quali, field, stops].forEach(r => { if (r.error) console.error("[home-standings] fetch failed:", r.error); });
+    hs.quali = groupQualiSessions(quali.data);
+    hs.field = field.data || [];
+    hs.stops = countServiceStops(stops.data);
+    if (state.page === "home") scheduleLiveRender();
+  } catch (e){
+    console.error("[home-standings] load failed:", e);
+  }
+}
+
+async function refreshHomeStops(){
+  const hs = state.homeStandings;
+  if (!hs || !hs.session || hs.session.type !== "Race") return;
+  const s = hs.session;
+  const { data, error } = await supabase.from("redmist_live_pit_stops").select("car_number, penalty_served")
+    .eq("event_id", hs.eventId).eq("session_id", s.id).eq("session_name", s.name);
+  if (error){ console.error("[home-standings] stops fetch failed:", error); return; }
+  if (state.homeStandings !== hs || hs.session !== s) return;
+  hs.stops = countServiceStops(data);
+  if (state.page === "home") scheduleLiveRender();
+}
+
+function upsertByCar(arr, row){
+  const i = arr.findIndex(r => r.car_number === row.car_number);
+  if (i >= 0) arr[i] = row; else arr.push(row);
+}
+
+function mergeHomeStandingsRow(row){
+  const hs = state.homeStandings;
+  if (!hs || !row || String(row.event_id) !== String(hs.eventId)) return;
+  let touched = false;
+  if (isHomeRaceSessionRow(hs, row)){ upsertByCar(hs.field, row); touched = true; }
+  if (row.session_type === "Qualifying"){
+    const key = `${row.session_id}|${row.session_name}`;
+    let g = hs.quali.find(x => x.key === key);
+    if (!g){ g = { key, id: Number(row.session_id), name: row.session_name, rows: [], latest: 0 }; hs.quali.push(g); }
+    upsertByCar(g.rows, row);
+    g.latest = Math.max(g.latest, new Date(row.fetched_at || 0).getTime());
+    touched = true;
+  }
+  // Rows keep merging while another page is open, so Home is current the
+  // moment someone navigates back — but only Home re-renders for them.
+  if (touched && state.page === "home") scheduleLiveRender();
+}
+
+function subscribeHomeStandings(eventId){
+  homeStandingsChannel = supabase
+    .channel(`home-standings-${eventId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'redmist_live_positions', filter: `event_id=eq.${eventId}` }, payload => {
+      mergeHomeStandingsRow(payload.new);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'redmist_live_pit_stops', filter: `event_id=eq.${eventId}` }, payload => {
+      if (!isHomeRaceSessionRow(state.homeStandings, payload.new || {})) return;
+      clearTimeout(homeStopsTimer);
+      homeStopsTimer = setTimeout(refreshHomeStops, 500); // a stop opens and closes in bursts
+    })
+    .subscribe((status) => {
+      // First connect and every reconnect — anything missed while
+      // disconnected was never delivered, so reload in full.
+      if (status === "SUBSCRIBED") loadHomeStandings();
+      else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") console.warn("[home-standings] channel", status);
+    });
+  // Same backstop as the plan page's resync, only while Home is showing.
+  homeStandingsTimer = setInterval(() => {
+    if (!document.hidden && state.page === "home") loadHomeStandings();
+  }, LIVE_RESYNC_MS);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && state.homeStandings && state.page === "home") loadHomeStandings();
+});
+
+// Our cars for the gold row highlight: anything on a non-archived plan,
+// plus any car Red Mist lists under a Kingpin team name — so the highlight
+// works on Friday before a plan exists.
+function homeStandingsOurCars(hs){
+  const nums = new Set();
+  state.races.filter(r => r.status !== "archived").forEach(r => (r.cars || []).forEach(c => c.number && nums.add(c.number)));
+  const scan = rows => (rows || []).forEach(r => { if (/kingpin/i.test(r.team_name || "")) nums.add(r.car_number); });
+  scan(hs.field); hs.quali.forEach(g => scan(g.rows));
+  return [...nums].map(number => ({ number }));
+}
+
+function renderHomeStandings(){
+  const hs = state.homeStandings;
+  if (!hs) return "";
+  const who = { cars: homeStandingsOurCars(hs) };
+  const ourNumbers = new Set(who.cars.map(c => c.number));
+  const s = hs.session;
+  const panels = [];
+
+  if (s && s.type === "Race" && s.active && hs.field.length){
+    panels.push(Number(s.flag) === 5
+      ? renderFinalResultsPanel(who, hs.field, hs.stops, s.name)
+      : renderLiveStandingsTable(who, hs.field, hs.stops, { subtitle: s.name, finished: false }));
+  } else {
+    const liveKey = s && s.type === "Qualifying" && s.active ? `${s.id}|${s.name}` : null;
+    const hasOurs = g => g.rows.some(r => ourNumbers.has(r.car_number));
+    [...hs.quali]
+      .filter(g => g.rows.length)
+      // live session first, then our class's session, then most recent
+      .sort((a, b) => ((b.key === liveKey) - (a.key === liveKey)) || (hasOurs(b) - hasOurs(a)) || (b.latest - a.latest))
+      .forEach(g => panels.push(renderLiveQualifyingTable(who, g.rows, { title: g.name, status: g.key === liveKey ? "Live" : "Finished" })));
+  }
+  if (!panels.length) return ""; // event live but nothing captured yet (practice / HPDE only)
+
+  return `
+      <section class="event-standings fade-in">
+        <div class="races-head">
+          <span class="eyebrow">${esc(hs.eventName || "Live Event")}</span>
+        </div>
+        <div class="event-standings-grid">${panels.join("")}</div>
+      </section>`;
+}
+// =================== end live event standings on Home ===================
 
 // Kept running for the life of the tab (started once at boot, not tied to
 // Home specifically) — cheap single-row tables, and it means the badge is
@@ -4024,13 +4227,24 @@ function renderHome(){
     archivedCount>0 ? "check the archive" : "",
     state.isEngineer ? "create a new one below" : ""
   ].filter(Boolean).join(", or ");
+  // A live event with timing captured but no Kingpin team in it gets its
+  // own line — otherwise "no races on the plan" reads like we forgot to
+  // make one. Unknown until timing exists (practice/HPDE only), so the
+  // default copy holds until then.
+  const hs = state.homeStandings;
+  const hsRows = hs ? [...hs.field, ...hs.quali.flatMap(g => g.rows)] : [];
+  const notEntered = hsRows.length > 0 && !hsRows.some(r => /kingpin/i.test(r.team_name || ""));
+  const archerTitle = notEntered ? "Archer's sitting this one out." : "Archer's waiting on the green flag.";
+  const archerLine = notEntered
+    ? "Kingpin Racing isn't entered in this weekend's event, so he's watching the rest of the field from the paddock."
+    : "No races on the plan, so he's chasing the only thing left on track: his tail.";
   const archerEmpty = `
           <div class="archer-empty">
             <div class="archer" role="img" aria-label="Archer, the Kingpin Racing mascot, wagging his tail">
               <div class="archer-tail"></div><div class="archer-body"></div>
             </div>
-            <p class="archer-title">Archer's waiting on the green flag.</p>
-            <p class="archer-sub">No races on the plan, so he's chasing the only thing left on track: his tail.${archerNext ? ` ${archerNext.charAt(0).toUpperCase()+archerNext.slice(1)}.` : ""}</p>
+            <p class="archer-title">${archerTitle}</p>
+            <p class="archer-sub">${archerLine}${archerNext ? ` ${archerNext.charAt(0).toUpperCase()+archerNext.slice(1)}.` : ""}</p>
           </div>`;
 
   const strip = `
@@ -4061,6 +4275,7 @@ function renderHome(){
     <div class="home-wrap">
       <div class="home-main">
         ${strip}
+        ${renderHomeStandings()}
         <div style="width:100%;max-width:420px;display:flex;flex-direction:column;align-items:center;text-align:center;" class="fade-in">
           ${(!(active.length>0)) ? `<div class="create-circle">${icon("flag",22)}</div>` : ""}
           ${nameFlow}
@@ -4937,7 +5152,9 @@ function renderFinalResultsPanel(race, rows, stopCounts, subtitle){
       <td class="num">${gap}</td>
       <td class="num">${r.last_lap_completed ?? 0}</td>
       <td class="stops">${stopCounts[r.car_number] ?? 0}</td>
-      <td class="results-cls" style="white-space:nowrap;">${esc(r.class || "—")}${r.class_position ? ` <span style="color:${podium || "var(--textFaint)"};${podium ? "font-weight:700;" : ""}">${podium ? `<span style="display:inline-flex;vertical-align:-2px;margin-right:2px;">${icon("trophy",12)}</span>` : ""}P${r.class_position}</span>` : ""}</td>
+      <td class="results-cls" style="white-space:nowrap;">${esc(r.class || "—")}${r.class_position ? (podium
+        ? ` <span style="display:inline-flex;vertical-align:-2px;color:${podium};" title="Class P${r.class_position}">${icon("trophy",12)}</span>`
+        : ` <span style="color:var(--textFaint);">P${r.class_position}</span>`) : ""}</td>
     </tr>`;
   }).join("");
   return `
@@ -5000,9 +5217,15 @@ function renderLiveStandingsPanel(race){
     return renderFinalResultsPanel(race, race.redmistLive?.fullField || [], race.redmistLive?.stopCountsByCarNumber || {}, state.liveSession?.name);
   }
 
-  const fullField = race.redmistLive?.fullField || [];
-  const stopCounts = race.redmistLive?.stopCountsByCarNumber || {};
+  return renderLiveStandingsTable(race, race.redmistLive?.fullField || [], race.redmistLive?.stopCountsByCarNumber || {});
+}
 
+// The live standings table itself. `race` only supplies .cars, for the
+// gold highlight on our own cars — Home passes a stand-in with just the
+// car numbers, since it has no plan. opts.finished overrides the open
+// race's finished state for the In Pit badge; opts.subtitle shows the
+// session name in the header.
+function renderLiveStandingsTable(race, fullField, stopCounts, opts = {}){
   // Sorted and numbered by OVERALL position, not class position — class
   // position alone would give every class its own P1/P2/P3, which reads
   // as duplicate positions across a mixed-class field. Class is still
@@ -5020,10 +5243,10 @@ function renderLiveStandingsPanel(race){
     return String(a.car_number).localeCompare(String(b.car_number), undefined, { numeric: true });
   });
 
-  const leaderLaps = liveLeaderLaps(race);
+  const leaderLaps = fullField.reduce((m, r) => Math.max(m, r.last_lap_completed || 0), 0);
   const fieldRows = sorted.map(pos => {
     const isOurs = race.cars.some(c=>c.number===pos.car_number);
-    const carStatus = liveCarStatus(pos, leaderLaps);
+    const carStatus = liveCarStatus(pos, leaderLaps, opts.finished === undefined ? {} : { finished: opts.finished });
     // Overall gap (Red Mist `og`) — this table is in overall order. It
     // used to show current_gap, which is the IN-CLASS gap: blank for every
     // class leader (#118 GP1, #83 GP2) and measured to the wrong car for
@@ -5042,8 +5265,9 @@ function renderLiveStandingsPanel(race){
 
   return `
     <div class="results-panel live-panel fade-in">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
         <span class="eyebrow" style="color:${T.red};">Live Standings</span>
+        ${opts.subtitle ? `<span style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--textFaint);">${esc(opts.subtitle)}</span>` : ""}
       </div>
       <div class="results-table-wrap">
       <table class="results-table live-table">
