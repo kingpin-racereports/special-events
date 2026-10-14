@@ -3026,6 +3026,8 @@ async function resyncLiveData(reason){
     await Promise.all([
       loadRedmistFullField(race, state.redmistEventId, /*skipRender=*/true),
       ...carNumbers.map(n => refreshRedmistCar(race, n, /*skipRender=*/true)),
+      state.liveSession?.type === "Race"
+        ? loadPaceTrend(state.redmistEventId, state.liveSession.id, state.liveSession.name) : null,
     ]);
     // Full-field rows are the fresher copy of our own cars' positions.
     (race.redmistLive?.fullField || []).forEach(r => {
@@ -3491,6 +3493,7 @@ async function loadHomeStandings(){
       supabase.from("redmist_live_positions").select("*").eq("event_id", hs.eventId).eq("session_type", "Qualifying"),
       wantRace ? scoped(supabase.from("redmist_live_positions").select("*")) : Promise.resolve({ data: [] }),
       wantRace ? scoped(supabase.from("redmist_live_pit_stops").select("car_number, penalty_served")) : Promise.resolve({ data: [] }),
+      wantRace ? loadPaceTrend(hs.eventId, s.id, s.name) : null,
     ]);
     if (seq !== homeStandingsSeq || state.homeStandings !== hs) return;
     [quali, field, stops].forEach(r => { if (r.error) console.error("[home-standings] fetch failed:", r.error); });
@@ -3587,7 +3590,7 @@ function renderHomeStandings(){
   if (s && s.type === "Race" && s.active && hs.field.length){
     panels.push(Number(s.flag) === 5
       ? renderFinalResultsPanel(who, hs.field, hs.stops, s.name)
-      : renderLiveStandingsTable(who, hs.field, hs.stops, { subtitle: s.name, finished: false }));
+      : renderLiveStandingsTable(who, hs.field, hs.stops, { subtitle: s.name, finished: false, trendKey: paceTrendKey(hs.eventId, s.id, s.name) }));
   } else {
     const liveKey = s && s.type === "Qualifying" && s.active ? `${s.id}|${s.name}` : null;
     const hasOurs = g => g.rows.some(r => ourNumbers.has(r.car_number));
@@ -5217,8 +5220,104 @@ function renderLiveStandingsPanel(race){
     return renderFinalResultsPanel(race, race.redmistLive?.fullField || [], race.redmistLive?.stopCountsByCarNumber || {}, state.liveSession?.name);
   }
 
-  return renderLiveStandingsTable(race, race.redmistLive?.fullField || [], race.redmistLive?.stopCountsByCarNumber || {});
+  const ls = state.liveSession;
+  return renderLiveStandingsTable(race, race.redmistLive?.fullField || [], race.redmistLive?.stopCountsByCarNumber || {},
+    { trendKey: ls?.type === "Race" ? paceTrendKey(state.redmistEventId, ls.id, ls.name) : null });
 }
+
+// ===================== Live pace trend (test run) =====================
+// Closing / losing on the same-class car directly ahead, from lap times
+// already in redmist_live_laps. Each car's pace = average of its last 3
+// clean laps (no pit lap, no out-lap after a stop, no caution lap) in the
+// last 15 minutes. Shown inside the Last Lap cell of the live standings.
+const PACE_TREND_LAPS = 3;          // clean laps averaged per car
+const PACE_TREND_THRESHOLD = 0.2;   // s/lap — inside this reads as "holding", nothing shown
+const PACE_TREND_WINDOW_MIN = 15;   // only laps captured this recently count
+let paceTrend = { key: null, byCar: {} };
+let paceTrendInFlight = false;
+
+function paceTrendKey(eventId, sessionId, sessionName){
+  return eventId && sessionId ? `${eventId}|${sessionId}|${sessionName}` : null;
+}
+
+async function loadPaceTrend(eventId, sessionId, sessionName){
+  const key = paceTrendKey(eventId, sessionId, sessionName);
+  if (!key || paceTrendInFlight) return;
+  paceTrendInFlight = true;
+  try {
+    const since = new Date(Date.now() - PACE_TREND_WINDOW_MIN * 60000).toISOString();
+    const { data, error } = await supabase.from("redmist_live_laps")
+      .select("car_number, lap_number, lap_time_seconds, is_pit_lap, caution_lap")
+      .eq("event_id", eventId).eq("session_id", sessionId).eq("session_name", sessionName)
+      .gte("captured_at", since)
+      .order("car_number").order("lap_number", { ascending: false })
+      .limit(1000);
+    if (error){ console.error("[pace-trend] laps fetch failed:", error); return; }
+    const byCarLaps = {};
+    (data || []).forEach(r => (byCarLaps[r.car_number] ||= []).push(r));
+    const byCar = {};
+    Object.entries(byCarLaps).forEach(([num, laps]) => {
+      const pitLaps = new Set(laps.filter(l => l.is_pit_lap).map(l => l.lap_number));
+      const clean = laps.filter(l =>
+        !l.is_pit_lap && !l.caution_lap && !pitLaps.has(l.lap_number - 1)
+        && Number(l.lap_time_seconds) > 0
+      ).slice(0, PACE_TREND_LAPS);
+      if (clean.length < PACE_TREND_LAPS) return;
+      byCar[num] = { avg: clean.reduce((a, l) => a + Number(l.lap_time_seconds), 0) / clean.length };
+    });
+    paceTrend = { key, byCar };
+  } catch (e){
+    console.error("[pace-trend] load failed:", e);
+  } finally {
+    paceTrendInFlight = false;
+  }
+}
+
+// { delta, ahead, catchLaps } or null. delta > 0 = this car is faster
+// (closing), < 0 = slower (losing). Null when either car lacks 3 clean
+// laps, there's no class car ahead, or it's inside the threshold.
+function paceTrendFor(pos, sorted, key){
+  if (!key || paceTrend.key !== key || pos.overall_position == null) return null;
+  const me = paceTrend.byCar[pos.car_number];
+  if (!me) return null;
+  const ahead = sorted.filter(r => r.class === pos.class && r.overall_position != null
+    && r.overall_position < pos.overall_position).pop();
+  const them = ahead && paceTrend.byCar[ahead.car_number];
+  if (!them) return null;
+  const delta = them.avg - me.avg;
+  if (Math.abs(delta) < PACE_TREND_THRESHOLD) return null;
+  // current_gap is Red Mist's in-class gap; "1 lap" etc. won't parse, and
+  // then there's no laps-to-catch, only the pace comparison.
+  const gapSec = rmTimeToSeconds(pos.current_gap);
+  const catchLaps = delta > 0 && gapSec ? Math.ceil(gapSec / delta) : null;
+  return { delta, ahead, catchLaps };
+}
+
+// Tap (or click) the arrow to open a one-line detail under the lap time —
+// hover tooltips don't exist on touch screens. Open cars are kept here so
+// the detail survives the live re-renders; desktop hover still works too.
+const paceTrendOpen = new Set();
+function togglePaceTrend(e, carNumber){
+  e.stopPropagation();
+  if (paceTrendOpen.has(carNumber)) paceTrendOpen.delete(carNumber); else paceTrendOpen.add(carNumber);
+  scheduleLiveRender();
+}
+
+function paceTrendBadge(t, carNumber){
+  if (!t) return "";
+  const closing = t.delta > 0;
+  const rate = Math.abs(t.delta).toFixed(1);
+  const color = closing ? T.green : T.red;
+  const title = `${closing ? "Closing on" : "Losing ground to"} #${t.ahead.car_number} by ${rate}s/lap over the last ${PACE_TREND_LAPS} clean laps`
+    + (t.catchLaps ? ` · ~${t.catchLaps} laps to catch` : "");
+  const open = paceTrendOpen.has(carNumber);
+  const detail = open
+    ? `<div style="font-size:10px;font-weight:600;color:${color};white-space:normal;line-height:1.3;margin-top:2px;">${closing ? "Closing on" : "Losing to"} #${esc(t.ahead.car_number)} · ${rate}s/lap${t.catchLaps ? ` · ~${t.catchLaps} laps` : ""}</div>`
+    : "";
+  return ` <button type="button" onclick="togglePaceTrend(event, ${esc(JSON.stringify(String(carNumber)))})" title="${esc(title)}" aria-expanded="${open}"
+      style="font:inherit;font-size:10px;font-weight:700;white-space:nowrap;color:${color};background:${open ? `${color}1F` : "none"};border:0;border-radius:4px;padding:3px 5px;margin:-3px -5px -3px 0;cursor:pointer;">${closing ? "▲" : "▼"} ${rate}</button>${detail}`;
+}
+// =================== end live pace trend ===================
 
 // The live standings table itself. `race` only supplies .cars, for the
 // gold highlight on our own cars — Home passes a stand-in with just the
@@ -5255,7 +5354,7 @@ function renderLiveStandingsTable(race, fullField, stopCounts, opts = {}){
     return `<tr style="${isOurs?`background:${T.gold}17;border-left:2px solid ${T.gold};`:""}">
       <td class="num">P${pos.overall_position ?? "—"}</td>
       <td><span class="num">#${esc(pos.car_number)}</span> - <span style="font-weight:600;">${esc(pos.team_name || "—")}</span></td>
-      <td class="num">${carStatus ? liveStatusBadge(carStatus, false) : fmtLapTime(rmTimeToSeconds(pos.last_lap_time))}</td>
+      <td class="num">${carStatus ? liveStatusBadge(carStatus, false) : fmtLapTime(rmTimeToSeconds(pos.last_lap_time)) + paceTrendBadge(paceTrendFor(pos, sorted, opts.trendKey), pos.car_number)}</td>
       <td class="num">${esc(gapLabel)}</td>
       <td class="num">${pos.last_lap_completed ?? 0}</td>
       <td class="stops">${stopCounts[pos.car_number] ?? 0}</td>
