@@ -91,7 +91,6 @@
      to scroll horizontally but still blocks vertical touch scrolling of the
      page. Restore normal touch panning for that wrapped variant. */
   .tile-row.tile-row-wrap{touch-action:auto;cursor:default;}
-  .create-circle{width:56px;height:56px;border-radius:999px;border:1px solid var(--borderLight);color:var(--textMuted);display:flex;align-items:center;justify-content:center;margin-bottom:32px;}
   .create-btn{display:flex;align-items:center;gap:12px;border-radius:999px;padding:16px 28px;background:var(--panel);border:1px solid var(--borderLight);color:var(--text);transition:border-color .15s;}
   .create-btn:hover{border-color:var(--blue);}
   .create-btn span{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:20px;}
@@ -597,6 +596,34 @@
   @media (min-width:1440px){
     .results-overview-grid{grid-template-columns:repeat(var(--c2,6),minmax(0,1fr));}
   }
+
+  /* ---- Main action buttons: kingpinracing.com style ----
+     Square, transparent, thin white border, small bold uppercase with wide
+     tracking; fills white with navy text on hover. Applies to the main
+     action buttons only — flag, retire/finish, back and inline text links
+     keep their own look. Placed last so it overrides the earlier rules. */
+  .create-btn, .continue-btn, .btn-primary, .btn-gold, .google-btn, .magic-btn{
+    border-radius:0; background:transparent; border:1px solid rgba(255,255,255,0.85); color:#FFFFFF;
+    font-family:'Inter',sans-serif; font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:0.2em;
+    padding:16px 32px; transition:background-color .2s, color .2s, border-color .2s;
+  }
+  .create-btn span{font-family:inherit; font-weight:inherit; font-size:inherit;}
+  .create-btn svg, .btn-gold svg, .btn-primary svg, .continue-btn svg{color:currentColor !important;}
+  .create-btn:hover, .continue-btn:hover:not(:disabled), .btn-primary:hover:not(:disabled), .btn-gold:hover:not(:disabled),
+  .google-btn:hover:not(:disabled), .magic-btn:hover:not(:disabled){
+    background:#FFFFFF; color:#0C1030; border-color:#FFFFFF;
+  }
+  .continue-btn:disabled, .btn-primary:disabled, .btn-gold:disabled, .google-btn:disabled, .magic-btn:disabled{
+    background:transparent; color:var(--textFaint); border:1px solid var(--borderLight); opacity:1; cursor:not-allowed;
+  }
+  .btn-primary, .google-btn, .magic-btn{padding-left:0; padding-right:0;}
+  /* Race Archive: same outline look, sized down to sit in the strip header. */
+  .archive-link{
+    gap:8px; border-radius:0; background:transparent; border:1px solid rgba(255,255,255,0.85); color:#FFFFFF;
+    font-family:'Inter',sans-serif; font-weight:600; font-size:11px; letter-spacing:0.2em;
+    padding:10px 18px; transition:background-color .2s, color .2s, border-color .2s;
+  }
+  .archive-link:hover{background:#FFFFFF; color:#0C1030; border-color:#FFFFFF;}
 </style>
 </head>
 <body>
@@ -4473,12 +4500,12 @@ function renderHome(){
       <div class="name-flow fade-in">
         <span class="eyebrow">${state.duplicateSource ? `Duplicating "${esc(state.duplicateSource.eventName)}"` : "Event Name"}</span>
         <input id="nameDraft" class="name-input" placeholder="e.g. Sebring 12 Hour" value="${esc(state.nameDraft)}" enterkeyhint="go" autofocus />
-        <button class="continue-btn" id="confirmName" data-act="confirmName" ${state.nameDraft.trim()?"":"disabled"}>Continue ${icon("arrowRight",18)}</button>
+        <button class="continue-btn" id="confirmName" data-act="confirmName" ${state.nameDraft.trim()?"":"disabled"}>Continue ${icon("arrowRight",15)}</button>
         <p style="font-size:12px;color:var(--textFaint);margin:0;">${state.duplicateSource ? "Cars, drivers, track, and timing carry over — you'll verify everything on the next page." : "Today's date is captured automatically for your records."}</p>
       </div>`
     : (state.isEngineer
         ? `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;">
-             <button class="create-btn" id="startCreate" data-act="startCreate">${icon("plus",20,"color:"+T.blue)}<span>Create a Race</span></button>
+             <button class="create-btn" id="startCreate" data-act="startCreate">${icon("plus",14)}<span>Create a Race</span></button>
              <div class="auth-row"><span class="auth-status">${icon("flag",13,"color:"+T.blue)} Signed in as Engineer</span><button class="auth-link" data-act="engineer-sign-out">Sign Out</button></div>
            </div>`
         : "");
@@ -4489,7 +4516,6 @@ function renderHome(){
         ${strip}
         ${renderHomeStandings()}
         <div style="width:100%;max-width:420px;display:flex;flex-direction:column;align-items:center;text-align:center;" class="fade-in">
-          ${(!(active.length>0)) ? `<div class="create-circle">${icon("flag",22)}</div>` : ""}
           ${nameFlow}
         </div>
       </div>
@@ -4636,7 +4662,7 @@ function renderSetup(){
             <input class="field" style="padding:6px 10px;font-size:13px;" placeholder="Manufacturer" id="ncManufacturer" value="${esc(state.newCar.manufacturer)}" />
             <input class="field" style="padding:6px 10px;font-size:13px;" placeholder="Model" id="ncModel" value="${esc(state.newCar.model)}" />
             <div style="display:flex;gap:8px;margin-top:4px;">
-              <button class="btn-primary" style="padding:8px 0;font-size:14px;" data-act="submit-new-car">Add to Race</button>
+              <button class="btn-primary" style="padding:10px 0;" data-act="submit-new-car">Add to Race</button>
               <button style="background:transparent;border:1px solid var(--borderLight);color:var(--textMuted);border-radius:8px;padding:8px 12px;" data-act="cancel-custom-car">${icon("x",14)}</button>
             </div>
           </div>` : ""}
@@ -4715,7 +4741,7 @@ function renderSetup(){
         </div>
       </section>
 
-      <button class="btn-primary" id="createPlan" data-act="createPlan" ${canCreatePlan?"":"disabled"}>Create Race Plan ${icon("arrowRight",19)}</button>
+      <button class="btn-primary" id="createPlan" data-act="createPlan" ${canCreatePlan?"":"disabled"}>Create Race Plan ${icon("arrowRight",15)}</button>
     </div>`;
 }
 
@@ -4958,7 +4984,7 @@ function renderArchiveResultsPanel(race){
           </p>
         ` : `
           <div style="display:flex;flex-direction:column;align-items:center;gap:10px;">
-            <button class="btn-gold" style="display:inline-flex;padding:10px 18px;" data-act="rm-archive-build">${icon("timer",14)} Build Results from Red Mist</button>
+            <button class="btn-gold" style="display:inline-flex;padding:14px 24px;" data-act="rm-archive-build">${icon("timer",14)} Build Results from Red Mist</button>
             ${state.archiveError ? `<p style="color:${T.red};font-size:12px;margin:0;">${esc(state.archiveError)}</p>` : ""}
           </div>
         `}
@@ -6610,7 +6636,7 @@ function carPlanSection(cp, plan, archived){
         ${state.addingReserve.has(car.id) ? `
           <div style="display:flex;gap:8px;align-items:center;margin-top:10px;">
             <input class="field" style="font-size:13px;" placeholder="Reserve driver name" value="${esc(state.reserveDraft[car.id]||'')}" data-act="update-reserve-draft" data-car="${car.id}" />
-            <button class="btn-primary" style="padding:8px 14px;font-size:13px;white-space:nowrap;" data-act="confirm-add-reserve" data-car="${car.id}">Add</button>
+            <button class="btn-primary" style="padding:8px 14px;white-space:nowrap;" data-act="confirm-add-reserve" data-car="${car.id}">Add</button>
             <button style="background:none;border:none;color:var(--textFaint);display:flex;" data-act="cancel-add-reserve" data-car="${car.id}">${icon("x",15)}</button>
           </div>
         ` : `<button class="add-driver" style="color:${car.accent};margin-top:10px;" data-act="start-add-reserve" data-car="${car.id}">${icon("plus",14)} Add Reserve Driver</button>`}
