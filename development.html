@@ -5293,29 +5293,13 @@ function paceTrendFor(pos, sorted, key){
   return { delta, ahead, catchLaps };
 }
 
-// Tap (or click) the arrow to open a one-line detail under the lap time —
-// hover tooltips don't exist on touch screens. Open cars are kept here so
-// the detail survives the live re-renders; desktop hover still works too.
-const paceTrendOpen = new Set();
-function togglePaceTrend(e, carNumber){
-  e.stopPropagation();
-  if (paceTrendOpen.has(carNumber)) paceTrendOpen.delete(carNumber); else paceTrendOpen.add(carNumber);
-  scheduleLiveRender();
-}
-
-function paceTrendBadge(t, carNumber){
+function paceTrendBadge(t){
   if (!t) return "";
   const closing = t.delta > 0;
   const rate = Math.abs(t.delta).toFixed(1);
-  const color = closing ? T.green : T.red;
   const title = `${closing ? "Closing on" : "Losing ground to"} #${t.ahead.car_number} by ${rate}s/lap over the last ${PACE_TREND_LAPS} clean laps`
     + (t.catchLaps ? ` · ~${t.catchLaps} laps to catch` : "");
-  const open = paceTrendOpen.has(carNumber);
-  const detail = open
-    ? `<div style="font-size:10px;font-weight:600;color:${color};white-space:normal;line-height:1.3;margin-top:2px;">${closing ? "Closing on" : "Losing to"} #${esc(t.ahead.car_number)} · ${rate}s/lap${t.catchLaps ? ` · ~${t.catchLaps} laps` : ""}</div>`
-    : "";
-  return ` <button type="button" onclick="togglePaceTrend(event, ${esc(JSON.stringify(String(carNumber)))})" title="${esc(title)}" aria-expanded="${open}"
-      style="font:inherit;font-size:10px;font-weight:700;white-space:nowrap;color:${color};background:${open ? `${color}1F` : "none"};border:0;border-radius:4px;padding:3px 5px;margin:-3px -5px -3px 0;cursor:pointer;">${closing ? "▲" : "▼"} ${rate}</button>${detail}`;
+  return ` <span title="${esc(title)}" style="font-size:10px;font-weight:700;white-space:nowrap;color:${closing ? T.green : T.red};">${closing ? "▲" : "▼"} ${rate}</span>`;
 }
 // =================== end live pace trend ===================
 
@@ -5354,7 +5338,7 @@ function renderLiveStandingsTable(race, fullField, stopCounts, opts = {}){
     return `<tr style="${isOurs?`background:${T.gold}17;border-left:2px solid ${T.gold};`:""}">
       <td class="num">P${pos.overall_position ?? "—"}</td>
       <td><span class="num">#${esc(pos.car_number)}</span> - <span style="font-weight:600;">${esc(pos.team_name || "—")}</span></td>
-      <td class="num">${carStatus ? liveStatusBadge(carStatus, false) : fmtLapTime(rmTimeToSeconds(pos.last_lap_time)) + paceTrendBadge(paceTrendFor(pos, sorted, opts.trendKey), pos.car_number)}</td>
+      <td class="num">${carStatus ? liveStatusBadge(carStatus, false) : fmtLapTime(rmTimeToSeconds(pos.last_lap_time)) + paceTrendBadge(paceTrendFor(pos, sorted, opts.trendKey))}</td>
       <td class="num">${esc(gapLabel)}</td>
       <td class="num">${pos.last_lap_completed ?? 0}</td>
       <td class="stops">${stopCounts[pos.car_number] ?? 0}</td>
