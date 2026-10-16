@@ -4039,9 +4039,9 @@ function trackStripContent(track, accent){
 // SOMETHING, since a plan always has a track), a missing detail image
 // here just hides the whole section — this is a supplementary extra, not
 // something every track necessarily has a file for yet.
-function trackDetailSection(trackName){
+function trackDetailSection(trackName, standingsShown){
   const race = state.races.find(r => r.id === state.currentRaceId);
-  const live = LIVE_TRACK_MAP_ENABLED ? liveTrackMapSection(race) : "";
+  const live = LIVE_TRACK_MAP_ENABLED ? liveTrackMapSection(race, standingsShown) : "";
   if (live) return live;
   const slug = trackSlug(trackName);
   if (!slug || imgKnownMissing(`images/tracks/${slug}-detail.png`)) return "";
@@ -4069,11 +4069,10 @@ function trackDetailSection(trackName){
 // map Red Mist learns mid-session (or its start/finish calibration), and
 // rendering can call this freely without a query per render.
 const TRACK_MAP_RECHECK_MS = 60_000;
-// Live map (outline + GPS car dots) is only switched on in the staging
-// copy while it's being tested. index.html always shows the static
-// -detail.png and never loads the map or subscribes to GPS. When it's
-// proven, delete this check (set to true) and promote as usual.
-const LIVE_TRACK_MAP_ENABLED = /development\.html$/i.test(location.pathname);
+// Live map (outline + GPS car dots) on every copy of the page, shown
+// wherever a standings table is. Set false to fall back to the static
+// -detail.png everywhere (no map load, no GPS subscription).
+const LIVE_TRACK_MAP_ENABLED = true;
 let liveTrackMap = { eventId: null, map: null, loading: false, checkedAt: 0 };
 
 async function loadLiveTrackMap(eventId){
@@ -4145,10 +4144,12 @@ function trackMapProject(map, lat, lon){
   return { x: (lon - b.minLon) * mLon, y: (b.maxLat - lat) * mLat };
 }
 
-// Our cars with a live row (never #53x), in plan order.
+// Our cars (never #53x), in plan order — those with a live row while
+// attached, every plan car otherwise (their dots appear once GPS does).
 function trackMapCars(race){
   const by = race?.redmistLive?.byCarNumber || {};
-  return (race?.cars || []).filter(c => c.number && String(c.number).toLowerCase() !== "53x" && by[c.number])
+  const attached = isLiveAttached(race);
+  return (race?.cars || []).filter(c => c.number && String(c.number).toLowerCase() !== "53x" && (!attached || by[c.number]))
     .map(c => ({ ...c, accent: c.accent || T.blue }));
 }
 
@@ -4160,16 +4161,26 @@ function trackMapInk(hex){
   } catch { return "#FFFFFF"; }
 }
 
-function liveTrackMapSection(race){
-  if (!race || race.status === "archived" || !isLiveAttached(race) || race.redmistLive?.finished) return "";
-  loadLiveTrackMap(state.redmistEventId);
-  const map = liveTrackMap.eventId === String(state.redmistEventId) ? liveTrackMap.map : null;
+// Plan page: the live map in place of the static image whenever this
+// plan's standings / qualifying / results tables are on screen (not just
+// while attached to a live session). The event is the attached one, else
+// the one the plan is linked to; with nothing on track it's the outline
+// alone until GPS starts flowing.
+function liveTrackMapSection(race, standingsShown){
+  if (!race || race.status === "archived" || !standingsShown) return "";
+  // Live sessions only (attached to a running quali / race, not yet at the
+  // checkered) — otherwise the static track image.
+  if (!isLiveAttached(race) || race.redmistLive?.finished || (state.liveSession?.type === "Race" && isCheckered())) return "";
+  const eventId = state.redmistEventId ?? race.redmistEventId;
+  if (eventId == null) return "";
+  loadLiveTrackMap(eventId);
+  const map = liveTrackMap.eventId === String(eventId) ? liveTrackMap.map : null;
   if (!map) return "";
   const ours = trackMapCars(race);
   const cars = [...ours, ...tmSelectedCars(new Set(ours.map(c => c.number)))];
-  const by = race.redmistLive.byCarNumber;
-  const field = race.redmistLive.fullField || [];
-  return trackMapBox(map, state.redmistEventId, cars, c => by[c.number] || field.find(r => r.car_number === c.number), { showField: true });
+  const by = race.redmistLive?.byCarNumber || {};
+  const field = race.redmistLive?.fullField || [];
+  return trackMapBox(map, eventId, cars, c => by[c.number] || field.find(r => r.car_number === c.number), { showField: true });
 }
 
 // Red Mist's centreline is learned from GPS, and its points are unevenly
@@ -4390,6 +4401,10 @@ function renderHomeTrackMap(standingsShown){
   const hs = state.homeStandings;
   if (!hs) return "";
   const s = hs.session;
+  // Only while a qualifying or race session is actually running — once
+  // sessions are finished (or the race has the checkered) the tables stay
+  // up but there's nothing on track to show.
+  if (!s || !s.active || !(s.type === "Qualifying" || s.type === "Race") || Number(s.flag) === 5) return "";
   loadLiveTrackMap(hs.eventId);
   const map = liveTrackMap.eventId === String(hs.eventId) ? liveTrackMap.map : null;
   if (!map) return "";
@@ -5148,6 +5163,7 @@ function renderPlan(){
   // side column, which widens when there's a table in it.
   const fullFieldPanel = archived ? renderArchiveFullFieldPanel(race) : "";
   const sidePanels = (!archived ? renderLiveStandingsPanel(race) : (race?.archiveResults ? "" : savedResultsPanel(race))).trim();
+  const finalTop = !archived ? renderFinalStandingsTop(race) : "";
 
   return `
     <div class="page page-wide fade-in">
@@ -5180,7 +5196,7 @@ function renderPlan(){
       ${archived ? `<div class="archive-top">${renderArchiveResultsPanel(race)}${competitorPitTimesPanel(race)}</div>` : ""}
 
       ${!archived ? renderLiveRaceSummary(race) : ""}
-      ${!archived ? renderFinalStandingsTop(race) : ""}
+      ${finalTop}
 
       <div class="plan-cols ${(sidePanels || fullFieldPanel) ? "side-wide" : ""}">
         <div class="plan-main">
@@ -5199,7 +5215,7 @@ function renderPlan(){
             ${infoChip("timer","Checkered Flag",formatTime(plan.endDateTime))}
           </div>
 
-          ${trackDetailSection(plan.track)}
+          ${trackDetailSection(plan.track, !archived && !!(sidePanels || finalTop.trim()))}
 
           ${sidePanels}
         </div>
@@ -5563,8 +5579,12 @@ function rankByBestLap(rows){
 // Qualifying order: rank by best lap, number each class 1..n, then group
 // the classes together (the class with the fastest car first). Untimed
 // cars sit at the back of their class.
+// Hardship / admin entries ("112x", "216x", Kingpin's "53x"): extra laps
+// after major repairs, not part of qualifying.
+function isHardshipCar(n){ return /x$/i.test(String(n ?? "")); }
+
 function qualiRankByClass(rows){
-  const ranked = rankByBestLap(rows);
+  const ranked = rankByBestLap(rows.filter(r => !isHardshipCar(r.car_number)));
   const count = {};
   ranked.forEach(x => { const c = x.p.class || ""; count[c] = (count[c] || 0) + 1; x.clsPos = count[c]; });
   const order = [...new Set(ranked.map(x => x.p.class || ""))];
@@ -5579,7 +5599,7 @@ function qualiClassStartPos(race, carNumber){
   const session = sessions.find(s => s.rows.some(r => r.car_number === carNumber));
   if (!session) return null;
   const me = session.rows.find(r => r.car_number === carNumber);
-  const ranked = rankByBestLap(session.rows.filter(r => (r.class || "") === (me.class || "")));
+  const ranked = rankByBestLap(session.rows.filter(r => (r.class || "") === (me.class || "") && !isHardshipCar(r.car_number)));
   const idx = ranked.findIndex(x => x.p.car_number === carNumber);
   return idx >= 0 && ranked[idx].best != null ? idx + 1 : null;
 }
