@@ -340,6 +340,8 @@
   .tm-legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textMuted);}
   .tm-legend .sw{width:9px;height:9px;border-radius:999px;display:inline-block;margin-right:6px;vertical-align:-1px;}
   .tm-legend b{color:var(--text);font-weight:700;}
+  .tm-other circle{fill:var(--textMuted);stroke:var(--bg);}
+  .home-track-map .track-detail-box{margin:0;}
   .trend-line{display:block;margin-top:2px;}
   .fin-label{font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.04em;color:var(--textFaint);display:flex;align-items:center;gap:6px;margin-bottom:4px;}
   .btn-gold{border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;padding:10px 0;display:flex;align-items:center;justify-content:center;gap:6px;border:none;background:var(--gold);color:#0A0C10;}
@@ -3062,8 +3064,8 @@ async function resyncLiveData(reason){
       ...carNumbers.map(n => refreshRedmistCar(race, n, /*skipRender=*/true)),
       state.liveSession?.type === "Race"
         ? loadPaceTrend(state.redmistEventId, state.liveSession.id, state.liveSession.name) : null,
-      loadLiveTrackMap(state.redmistEventId),
-      loadLiveGps(state.redmistEventId),
+      LIVE_TRACK_MAP_ENABLED ? loadLiveTrackMap(state.redmistEventId) : null,
+      LIVE_TRACK_MAP_ENABLED ? loadLiveGps(state.redmistEventId) : null,
     ]);
     // Full-field rows are the fresher copy of our own cars' positions.
     (race.redmistLive?.fullField || []).forEach(r => {
@@ -3105,13 +3107,11 @@ function subscribeFullFieldChannel(raceId, race, eventId){
       if (status === "SUBSCRIBED") resyncLiveData("channel subscribed");
       else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") console.warn("[redmist-live] full-field channel", status);
     });
-  subscribeGpsChannel(eventId);
   startLiveResync();
 }
 
 function unsubscribeFullFieldChannel(){
   if (fullFieldChannel){ supabase.removeChannel(fullFieldChannel); fullFieldChannel = null; }
-  unsubscribeGpsChannel();
   stopLiveResync();
 }
 
@@ -4036,7 +4036,7 @@ function trackStripContent(track, accent){
 // something every track necessarily has a file for yet.
 function trackDetailSection(trackName){
   const race = state.races.find(r => r.id === state.currentRaceId);
-  const live = liveTrackMapSection(race);
+  const live = LIVE_TRACK_MAP_ENABLED ? liveTrackMapSection(race) : "";
   if (live) return live;
   const slug = trackSlug(trackName);
   if (!slug || imgKnownMissing(`images/tracks/${slug}-detail.png`)) return "";
@@ -4064,6 +4064,11 @@ function trackDetailSection(trackName){
 // map Red Mist learns mid-session (or its start/finish calibration), and
 // rendering can call this freely without a query per render.
 const TRACK_MAP_RECHECK_MS = 60_000;
+// Live map (outline + GPS car dots) is only switched on in the staging
+// copy while it's being tested. index.html always shows the static
+// -detail.png and never loads the map or subscribes to GPS. When it's
+// proven, delete this check (set to true) and promote as usual.
+const LIVE_TRACK_MAP_ENABLED = /development\.html$/i.test(location.pathname);
 let liveTrackMap = { eventId: null, map: null, loading: false, checkedAt: 0 };
 
 async function loadLiveTrackMap(eventId){
@@ -4092,12 +4097,12 @@ async function loadLiveTrackMap(eventId){
 let liveGps = { eventId: null, byCar: {} };
 const GPS_STALE_MS = 60_000; // no fix this long (car left the feed) -> no dot
 function applyGpsRow(row){
-  if (!row || String(row.event_id) !== String(state.redmistEventId)) return;
-  if (liveGps.eventId !== String(row.event_id)) liveGps = { eventId: String(row.event_id), byCar: {} };
+  if (!row || String(row.event_id) !== liveGps.eventId) return;
   liveGps.byCar[row.car_number] = { lat: Number(row.latitude), lon: Number(row.longitude), inPit: row.in_pit === true, at: new Date(row.fetched_at).getTime() };
 }
 async function loadLiveGps(eventId){
-  if (!eventId) return;
+  if (!LIVE_TRACK_MAP_ENABLED || !eventId) return;
+  if (liveGps.eventId !== String(eventId)) liveGps = { eventId: String(eventId), byCar: {} };
   try {
     const { data, error } = await supabase.from("redmist_live_gps")
       .select("event_id, car_number, latitude, longitude, in_pit, fetched_at").eq("event_id", String(eventId));
@@ -4107,9 +4112,17 @@ async function loadLiveGps(eventId){
     console.error("[track-map] gps load failed:", e);
   }
 }
-let gpsChannel = null;
+// The GPS channel streams a row per car every second, so it only runs
+// while a live map is actually on screen (Home or plan page) — opened and
+// closed by startTrackMapTicker() after every render, for whichever event
+// that map shows.
+let gpsChannel = null, gpsChannelEvent = null;
 function subscribeGpsChannel(eventId){
-  if (gpsChannel || !eventId) return;
+  if (!LIVE_TRACK_MAP_ENABLED || !eventId) return;
+  if (gpsChannel && gpsChannelEvent === String(eventId)) return;
+  unsubscribeGpsChannel();
+  gpsChannelEvent = String(eventId);
+  if (liveGps.eventId !== gpsChannelEvent) liveGps = { eventId: gpsChannelEvent, byCar: {} };
   gpsChannel = supabase
     .channel(`redmist-gps-${eventId}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'redmist_live_gps', filter: `event_id=eq.${eventId}` }, payload => applyGpsRow(payload.new))
@@ -4117,6 +4130,7 @@ function subscribeGpsChannel(eventId){
 }
 function unsubscribeGpsChannel(){
   if (gpsChannel){ supabase.removeChannel(gpsChannel); gpsChannel = null; }
+  gpsChannelEvent = null;
 }
 
 function trackMapProject(map, lat, lon){
@@ -4146,11 +4160,88 @@ function liveTrackMapSection(race){
   loadLiveTrackMap(state.redmistEventId);
   const map = liveTrackMap.eventId === String(state.redmistEventId) ? liveTrackMap.map : null;
   if (!map) return "";
+  const cars = trackMapCars(race);
+  const by = race.redmistLive.byCarNumber;
+  return trackMapBox(map, state.redmistEventId, cars, c => by[c.number], { showField: true });
+}
 
+// Red Mist's centreline is learned from GPS, and its points are unevenly
+// spaced: long gaps on straights, clusters in some corners. A spline
+// through them can't fix that — where a corner is only a few points (or a
+// tight cluster between two long segments) it still comes out as a sharp
+// vertex, e.g. Sebring's Sunset Bend drawing as two points instead of one
+// big sweeping arc. So the outline is rebuilt instead:
+//   1. resample the closed loop at even spacing along its length, so
+//      every stretch of track has the same point density;
+//   2. smooth it with a circular Gaussian (TRACK_MAP_SMOOTH * span as the
+//      sigma). Straights stay straight; any corner sharper than that
+//      radius becomes a rounded arc.
+// The drawn line can sit a few metres inside the raw points at a corner
+// apex. Car dots come from GPS, and real cars trace the rounded line, so
+// they sit on it at least as well as on the raw polygon.
+const TRACK_MAP_SMOOTH = 0.03;    // Gaussian sigma, fraction of the map's larger side
+function trackMapSmoothPath(pts, span){
+  span = span || pts.reduce((m, p) => Math.max(m, Math.abs(p.x), Math.abs(p.y)), 0) || 1;
+  const f = v => v.toFixed(1);
+  // Clean: drop exact/near duplicates and an explicit closing point.
+  const minGap = span * 0.001;
+  const P = [];
+  for (const p of pts){
+    const q = P[P.length - 1];
+    if (!q || Math.hypot(p.x - q.x, p.y - q.y) > minGap) P.push({ x: p.x, y: p.y });
+  }
+  if (P.length > 2 && Math.hypot(P[0].x - P[P.length - 1].x, P[0].y - P[P.length - 1].y) <= minGap) P.pop();
+  const n = P.length;
+  if (n < 4) return P.map((p, i) => `${i ? "L" : "M"}${f(p.x)} ${f(p.y)}`).join("") + "Z";
+
+  // 1. Even resample by arc length around the closed loop.
+  const seg = [];
+  let perim = 0;
+  for (let i = 0; i < n; i++){
+    const a = P[i], b = P[(i + 1) % n];
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    seg.push(len); perim += len;
+  }
+  const N = Math.max(60, Math.min(1500, Math.round(perim / (span / 300))));
+  const step = perim / N;
+  const R = [];
+  let i = 0, acc = 0;
+  for (let k = 0; k < N; k++){
+    const t = k * step;
+    while (i < n - 1 && acc + seg[i] < t){ acc += seg[i]; i++; }
+    const a = P[i], b = P[(i + 1) % n];
+    const u = seg[i] ? (t - acc) / seg[i] : 0;
+    R.push({ x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u });
+  }
+
+  // 2. Circular Gaussian smoothing.
+  const sigma = Math.max(1, (span * TRACK_MAP_SMOOTH) / step); // in samples
+  const W = Math.min(Math.floor(N / 2) - 1, Math.ceil(sigma * 3));
+  const kernel = [];
+  let kSum = 0;
+  for (let j = -W; j <= W; j++){ const w = Math.exp(-(j * j) / (2 * sigma * sigma)); kernel.push(w); kSum += w; }
+  const S = R.map((_, k) => {
+    let x = 0, y = 0;
+    for (let j = -W; j <= W; j++){
+      const q = R[(k + j + N) % N], w = kernel[j + W];
+      x += q.x * w; y += q.y * w;
+    }
+    return { x: x / kSum, y: y / kSum };
+  });
+
+  return S.map((p, k) => `${k ? "L" : "M"}${f(p.x)} ${f(p.y)}`).join("") + "Z";
+}
+
+// The live map box: outline, start/finish, our cars as numbered accent
+// dots, and every other car on track as a small muted dot. The
+// field dots aren't rendered here — the ticker adds one for each car it
+// has a GPS fix for, so cars joining the session appear without a render.
+// posOf(car) -> that car's current positions row, for the legend.
+function trackMapBox(map, eventId, cars, posOf, opts = {}){
   const { w, h } = map.bounds;
   const span = Math.max(w, h);
   const pad = span * 0.06;
-  const line = map.pts.map((p, i) => `${i ? "L" : "M"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join("") + "Z";
+  const line = trackMapSmoothPath(map.pts, span);
 
   // Start/finish: a short bar across the track, perpendicular to travel.
   let sf = "";
@@ -4162,21 +4253,23 @@ function liveTrackMapSection(race){
             stroke="${T.white}" stroke-width="${(span * 0.008).toFixed(1)}" stroke-linecap="round"></line>`;
   }
 
-  const cars = trackMapCars(race);
   const r = span * 0.024;
-  // Dots are placed by the ticker; the morph patcher leaves this group
-  // alone while its key is unchanged, so live ticks don't reset them.
+  // Dots are placed by the ticker; the morph patcher leaves these groups
+  // alone while their key is unchanged, so live ticks don't reset them.
   const key = cars.map(c => `${c.number}:${c.accent}`).join(",") + "|" + (map.built || "") + (map.sf ? "|sf" : "");
   const dots = cars.map(c => `
         <g class="tm-car" data-tm-car="${esc(c.number)}" transform="translate(0 0)" style="opacity:0;">
           <circle r="${r.toFixed(1)}" fill="${c.accent}" stroke="#0B1030" stroke-width="${(r * 0.18).toFixed(1)}"></circle>
           <text font-size="${(r * (String(c.number).length > 2 ? 0.8 : 0.95)).toFixed(1)}" style="fill:${trackMapInk(c.accent)};">${esc(c.number)}</text>
         </g>`).join("");
+  const field = opts.showField
+    ? `<g class="tm-field" data-morph-skip data-morph-key="${esc("field|" + key)}" data-tm-ours="${esc(cars.map(c => c.number).join(","))}" data-tm-r="${(r * 0.5).toFixed(1)}" data-tm-sw="${(r * 0.12).toFixed(1)}"></g>`
+    : "";
 
   const legend = cars.length ? `
       <div class="tm-legend">
         ${cars.map(c => {
-          const pos = race.redmistLive.byCarNumber[c.number];
+          const pos = posOf(c) || {};
           const where = pos.in_pit === true ? "In pit" : `P${pos.class_position ?? "—"}`;
           return `<span><span class="sw" style="background:${c.accent};"></span><b>#${esc(c.number)}</b> ${where}</span>`;
         }).join("")}
@@ -4185,15 +4278,61 @@ function liveTrackMapSection(race){
   return `
     <div class="track-detail-box" id="trackDetailBox">
       <div class="track-detail-head">${icon("mapPin",13)} Track Map</div>
-      <svg class="tm-map" id="tmLiveSvg" viewBox="${(-pad).toFixed(1)} ${(-pad).toFixed(1)} ${(w + pad * 2).toFixed(1)} ${(h + pad * 2).toFixed(1)}"
-           role="img" aria-label="${esc(map.track || "Track")} map with Kingpin car positions">
+      <svg class="tm-map" id="tmLiveSvg" data-tm-event="${esc(String(eventId))}" viewBox="${(-pad).toFixed(1)} ${(-pad).toFixed(1)} ${(w + pad * 2).toFixed(1)} ${(h + pad * 2).toFixed(1)}"
+           role="img" aria-label="${esc(map.track || "Track")} map with live car positions">
         <path d="${line}" fill="none" stroke="${T.border}" stroke-width="${(span * 0.03).toFixed(1)}" stroke-linejoin="round"></path>
         <path d="${line}" fill="none" stroke="${T.panelRaised}" stroke-width="${(span * 0.018).toFixed(1)}" stroke-linejoin="round"></path>
         ${sf}
+        ${field}
         <g class="tm-dots" data-morph-skip data-morph-key="${esc(key)}">${dots}</g>
       </svg>
       ${legend}
     </div>`;
+}
+
+// Home: the same map beneath the Qualifying / Race standings, for the
+// event the poller has found live — no race plan needed. Shown whenever a
+// standings table is (renderHome passes that in), so it stays up between
+// sessions too: during practice/HPDE the poller writes no GPS, so the
+// outline shows with no dots until the next quali/race goes green. Every
+// car with a fresh GPS fix is drawn; Kingpin cars (plan cars or Kingpin
+// team name) get the numbered accent dots.
+function renderHomeTrackMap(standingsShown){
+  if (!LIVE_TRACK_MAP_ENABLED || !standingsShown) return "";
+  const hs = state.homeStandings;
+  if (!hs) return "";
+  const s = hs.session;
+  loadLiveTrackMap(hs.eventId);
+  const map = liveTrackMap.eventId === String(hs.eventId) ? liveTrackMap.map : null;
+  if (!map) return "";
+  // Legend positions from the table that's on top: the live race, else
+  // the live quali session, else the latest quali session with our cars.
+  const ourNums = new Set(homeStandingsOurCars(hs).map(c => c.number));
+  const liveQuali = s && s.type === "Qualifying" && s.active ? hs.quali.find(g => g.id === s.id && g.name === s.name) : null;
+  const latestOurs = [...hs.quali].filter(g => g.rows.some(r => ourNums.has(r.car_number))).sort((a, b) => b.latest - a.latest)[0];
+  const rows = (s && s.type === "Race" && s.active && hs.field.length) ? hs.field
+    : (liveQuali || latestOurs)?.rows || [];
+  const byCar = {};
+  rows.forEach(r => { byCar[r.car_number] = r; });
+  const cars = homeStandingsOurCars(hs)
+    .filter(c => c.number && String(c.number).toLowerCase() !== "53x" && byCar[c.number])
+    .sort((a, b) => String(a.number).localeCompare(String(b.number), undefined, { numeric: true }))
+    .map((c, i) => ({ number: c.number, accent: homeCarAccent(c.number, i) }));
+  return `
+      <section class="event-standings home-track-map fade-in">
+        ${trackMapBox(map, hs.eventId, cars, c => byCar[c.number], { showField: true })}
+      </section>`;
+}
+
+// A Kingpin car's dot colour on Home: its accent on an active plan if it
+// has one, otherwise the next preset so each car is still distinct.
+function homeCarAccent(number, i){
+  for (const r of state.races){
+    if (r.status === "archived") continue;
+    const c = (r.cars || []).find(c => c.number === number);
+    if (c?.accent) return c.accent;
+  }
+  return ACCENT_PRESETS[i % ACCENT_PRESETS.length];
 }
 
 // Moves the dots toward each car's latest GPS fix every frame while the
@@ -4206,10 +4345,33 @@ function trackMapTick(){
   const svg = document.getElementById("tmLiveSvg");
   const map = liveTrackMap.map;
   if (!svg || !map) return;
+  const gps = liveGps.eventId === svg.getAttribute("data-tm-event") ? liveGps.byCar : {};
+  const field = svg.querySelector(".tm-field");
+  if (field){
+    const ours = new Set((field.getAttribute("data-tm-ours") || "").split(",").filter(Boolean));
+    const have = new Set([...field.children].map(g => g.getAttribute("data-tm-car")));
+    Object.keys(gps).forEach(num => {
+      if (ours.has(num) || have.has(num)) return;
+      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      g.setAttribute("class", "tm-other");
+      g.setAttribute("data-tm-car", num);
+      g.setAttribute("transform", "translate(0 0)");
+      g.style.opacity = "0";
+      const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      c.setAttribute("r", field.getAttribute("data-tm-r"));
+      c.setAttribute("stroke-width", field.getAttribute("data-tm-sw"));
+      const t = document.createElementNS("http://www.w3.org/2000/svg", "title");
+      t.textContent = "#" + num;
+      c.appendChild(t);
+      g.appendChild(c);
+      field.appendChild(g);
+    });
+  }
   const now = performance.now();
   svg.querySelectorAll("[data-tm-car]").forEach(g => {
     const num = g.getAttribute("data-tm-car");
-    const fix = liveGps.eventId === String(state.redmistEventId) ? liveGps.byCar[num] : null;
+    const other = g.classList.contains("tm-other");
+    const fix = gps[num];
     if (!fix || !Number.isFinite(fix.lat) || !Number.isFinite(fix.lon) || Date.now() - fix.at > GPS_STALE_MS){
       g.style.opacity = "0"; delete trackMapGlide[num]; return;
     }
@@ -4230,12 +4392,17 @@ function trackMapTick(){
     const k = Math.min(1, (now - st.t0) / TRACK_MAP_GLIDE_MS);
     const x = st.fromX + (st.toX - st.fromX) * k, y = st.fromY + (st.toY - st.fromY) * k;
     g.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)})`);
-    g.style.opacity = fix.inPit ? "0.6" : "1";
+    g.style.opacity = other ? (fix.inPit ? "0.3" : "0.75") : (fix.inPit ? "0.6" : "1");
   });
   trackMapRaf = requestAnimationFrame(trackMapTick);
 }
+// Runs after every render: GPS streams only while a live map is on screen,
+// for the event that map shows, and the dots animate only while it is.
 function startTrackMapTicker(){
-  if (!trackMapRaf && document.getElementById("tmLiveSvg")) trackMapRaf = requestAnimationFrame(trackMapTick);
+  const svg = LIVE_TRACK_MAP_ENABLED ? document.getElementById("tmLiveSvg") : null;
+  if (svg) subscribeGpsChannel(svg.getAttribute("data-tm-event"));
+  else unsubscribeGpsChannel();
+  if (svg && !trackMapRaf) trackMapRaf = requestAnimationFrame(trackMapTick);
 }
 // =================== end live track map ===================
 
@@ -4486,6 +4653,8 @@ function renderHome(){
             <p class="archer-sub">${archerLine}${archerNext ? ` ${archerNext.charAt(0).toUpperCase()+archerNext.slice(1)}.` : ""}</p>
           </div>`;
 
+  const homeStandingsHtml = renderHomeStandings();
+
   const strip = `
       <div class="races-strip fade-in">
         <div class="races-head">
@@ -4514,7 +4683,8 @@ function renderHome(){
     <div class="home-wrap">
       <div class="home-main">
         ${strip}
-        ${renderHomeStandings()}
+        ${homeStandingsHtml}
+        ${renderHomeTrackMap(!!homeStandingsHtml)}
         <div style="width:100%;max-width:420px;display:flex;flex-direction:column;align-items:center;text-align:center;" class="fade-in">
           ${nameFlow}
         </div>
