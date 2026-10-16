@@ -91,7 +91,6 @@
      to scroll horizontally but still blocks vertical touch scrolling of the
      page. Restore normal touch panning for that wrapped variant. */
   .tile-row.tile-row-wrap{touch-action:auto;cursor:default;}
-  .create-circle{width:56px;height:56px;border-radius:999px;border:1px solid var(--borderLight);color:var(--textMuted);display:flex;align-items:center;justify-content:center;margin-bottom:32px;}
   .create-btn{display:flex;align-items:center;gap:12px;border-radius:999px;padding:16px 28px;background:var(--panel);border:1px solid var(--borderLight);color:var(--text);transition:border-color .15s;}
   .create-btn:hover{border-color:var(--blue);}
   .create-btn span{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:20px;}
@@ -335,6 +334,13 @@
   .track-detail-box{margin-top:24px;margin-bottom:40px;border-radius:16px;background:var(--panel);border:1px solid var(--border);padding:16px;}
   .track-detail-head{display:flex;align-items:center;gap:8px;font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--textFaint);margin-bottom:12px;}
   .track-detail-img{width:100%;height:auto;display:block;border-radius:10px;}
+  /* Live track map: Red Mist GPS outline + Kingpin cars (see liveTrackMapSection) */
+  .tm-map{width:100%;height:auto;display:block;max-height:420px;}
+  .tm-car text{font-family:'JetBrains Mono',monospace;font-weight:700;text-anchor:middle;dominant-baseline:central;pointer-events:none;}
+  .tm-legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textMuted);}
+  .tm-legend .sw{width:9px;height:9px;border-radius:999px;display:inline-block;margin-right:6px;vertical-align:-1px;}
+  .tm-legend b{color:var(--text);font-weight:700;}
+  .trend-line{display:block;margin-top:2px;}
   .fin-label{font-family:'JetBrains Mono',monospace;font-size:11px;text-transform:uppercase;letter-spacing:0.04em;color:var(--textFaint);display:flex;align-items:center;gap:6px;margin-bottom:4px;}
   .btn-gold{border-radius:8px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;padding:10px 0;display:flex;align-items:center;justify-content:center;gap:6px;border:none;background:var(--gold);color:#0A0C10;}
 
@@ -590,6 +596,34 @@
   @media (min-width:1440px){
     .results-overview-grid{grid-template-columns:repeat(var(--c2,6),minmax(0,1fr));}
   }
+
+  /* ---- Main action buttons: kingpinracing.com style ----
+     Square, transparent, thin white border, small bold uppercase with wide
+     tracking; fills white with navy text on hover. Applies to the main
+     action buttons only — flag, retire/finish, back and inline text links
+     keep their own look. Placed last so it overrides the earlier rules. */
+  .create-btn, .continue-btn, .btn-primary, .btn-gold, .google-btn, .magic-btn{
+    border-radius:0; background:transparent; border:1px solid rgba(255,255,255,0.85); color:#FFFFFF;
+    font-family:'Inter',sans-serif; font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:0.2em;
+    padding:16px 32px; transition:background-color .2s, color .2s, border-color .2s;
+  }
+  .create-btn span{font-family:inherit; font-weight:inherit; font-size:inherit;}
+  .create-btn svg, .btn-gold svg, .btn-primary svg, .continue-btn svg{color:currentColor !important;}
+  .create-btn:hover, .continue-btn:hover:not(:disabled), .btn-primary:hover:not(:disabled), .btn-gold:hover:not(:disabled),
+  .google-btn:hover:not(:disabled), .magic-btn:hover:not(:disabled){
+    background:#FFFFFF; color:#0C1030; border-color:#FFFFFF;
+  }
+  .continue-btn:disabled, .btn-primary:disabled, .btn-gold:disabled, .google-btn:disabled, .magic-btn:disabled{
+    background:transparent; color:var(--textFaint); border:1px solid var(--borderLight); opacity:1; cursor:not-allowed;
+  }
+  .btn-primary, .google-btn, .magic-btn{padding-left:0; padding-right:0;}
+  /* Race Archive: same outline look, sized down to sit in the strip header. */
+  .archive-link{
+    gap:8px; border-radius:0; background:transparent; border:1px solid rgba(255,255,255,0.85); color:#FFFFFF;
+    font-family:'Inter',sans-serif; font-weight:600; font-size:11px; letter-spacing:0.2em;
+    padding:10px 18px; transition:background-color .2s, color .2s, border-color .2s;
+  }
+  .archive-link:hover{background:#FFFFFF; color:#0C1030; border-color:#FFFFFF;}
 </style>
 </head>
 <body>
@@ -3028,6 +3062,8 @@ async function resyncLiveData(reason){
       ...carNumbers.map(n => refreshRedmistCar(race, n, /*skipRender=*/true)),
       state.liveSession?.type === "Race"
         ? loadPaceTrend(state.redmistEventId, state.liveSession.id, state.liveSession.name) : null,
+      loadLiveTrackMap(state.redmistEventId),
+      loadLiveGps(state.redmistEventId),
     ]);
     // Full-field rows are the fresher copy of our own cars' positions.
     (race.redmistLive?.fullField || []).forEach(r => {
@@ -3069,11 +3105,13 @@ function subscribeFullFieldChannel(raceId, race, eventId){
       if (status === "SUBSCRIBED") resyncLiveData("channel subscribed");
       else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") console.warn("[redmist-live] full-field channel", status);
     });
+  subscribeGpsChannel(eventId);
   startLiveResync();
 }
 
 function unsubscribeFullFieldChannel(){
   if (fullFieldChannel){ supabase.removeChannel(fullFieldChannel); fullFieldChannel = null; }
+  unsubscribeGpsChannel();
   stopLiveResync();
 }
 
@@ -3997,6 +4035,9 @@ function trackStripContent(track, accent){
 // here just hides the whole section — this is a supplementary extra, not
 // something every track necessarily has a file for yet.
 function trackDetailSection(trackName){
+  const race = state.races.find(r => r.id === state.currentRaceId);
+  const live = liveTrackMapSection(race);
+  if (live) return live;
   const slug = trackSlug(trackName);
   if (!slug || imgKnownMissing(`images/tracks/${slug}-detail.png`)) return "";
   return `
@@ -4006,6 +4047,197 @@ function trackDetailSection(trackName){
            onerror="missingImages.add(this.getAttribute('src')); this.closest('#trackDetailBox').style.display='none';" />
     </div>`;
 }
+
+// ===================== Live track map (Red Mist GPS) =====================
+// While a session is live, the Track Map box draws the circuit Red Mist
+// learned from GPS (v2 LoadTrackMap, stored per event in
+// redmist_track_maps by live-poll) and puts each Kingpin car on it at its
+// last GPS fix (redmist_live_gps — its own table and channel, so GPS
+// moving every second never touches the positions rows or re-renders
+// the page; fixes go straight to the ticker below). Car fixes
+// are projected exactly as Red Mist projects the outline: metres from the
+// map's north-west corner, y down, one scale taken at the map's centre.
+// Dots glide between fixes rather than jumping once a second.
+// No map yet for the event (Red Mist hasn't learned it) -> the static
+// detail image, same as before.
+// Re-read every TRACK_MAP_RECHECK_MS at most: often enough to pick up a
+// map Red Mist learns mid-session (or its start/finish calibration), and
+// rendering can call this freely without a query per render.
+const TRACK_MAP_RECHECK_MS = 60_000;
+let liveTrackMap = { eventId: null, map: null, loading: false, checkedAt: 0 };
+
+async function loadLiveTrackMap(eventId){
+  if (!eventId || liveTrackMap.loading) return;
+  if (liveTrackMap.eventId === String(eventId) && Date.now() - liveTrackMap.checkedAt < TRACK_MAP_RECHECK_MS) return;
+  liveTrackMap.loading = true;
+  try {
+    const { data, error } = await supabase.from("redmist_track_maps")
+      .select("event_id, map, built_utc").eq("event_id", String(eventId)).maybeSingle();
+    if (error) throw error;
+    const m = data?.map;
+    const ok = m?.pts?.length >= 3 && m.bounds && (m.bounds.w > 0 || m.bounds.h > 0);
+    const changed = liveTrackMap.eventId !== String(eventId) || !!liveTrackMap.map !== ok
+      || (ok && liveTrackMap.map?.built !== m.built) || (ok && !!liveTrackMap.map?.sf !== !!m.sf);
+    if (changed) for (const k in trackMapGlide) delete trackMapGlide[k];
+    liveTrackMap = { eventId: String(eventId), map: ok ? m : null, loading: false, checkedAt: Date.now() };
+    if (changed) scheduleRender();
+  } catch (e){
+    console.error("[track-map] load failed:", e);
+    liveTrackMap.loading = false;
+    liveTrackMap.checkedAt = Date.now();
+  }
+}
+
+// car number -> { lat, lon, inPit, at } for the current event.
+let liveGps = { eventId: null, byCar: {} };
+const GPS_STALE_MS = 60_000; // no fix this long (car left the feed) -> no dot
+function applyGpsRow(row){
+  if (!row || String(row.event_id) !== String(state.redmistEventId)) return;
+  if (liveGps.eventId !== String(row.event_id)) liveGps = { eventId: String(row.event_id), byCar: {} };
+  liveGps.byCar[row.car_number] = { lat: Number(row.latitude), lon: Number(row.longitude), inPit: row.in_pit === true, at: new Date(row.fetched_at).getTime() };
+}
+async function loadLiveGps(eventId){
+  if (!eventId) return;
+  try {
+    const { data, error } = await supabase.from("redmist_live_gps")
+      .select("event_id, car_number, latitude, longitude, in_pit, fetched_at").eq("event_id", String(eventId));
+    if (error) throw error;
+    (data || []).forEach(applyGpsRow);
+  } catch (e){
+    console.error("[track-map] gps load failed:", e);
+  }
+}
+let gpsChannel = null;
+function subscribeGpsChannel(eventId){
+  if (gpsChannel || !eventId) return;
+  gpsChannel = supabase
+    .channel(`redmist-gps-${eventId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'redmist_live_gps', filter: `event_id=eq.${eventId}` }, payload => applyGpsRow(payload.new))
+    .subscribe(status => { if (status === "SUBSCRIBED") loadLiveGps(eventId); });
+}
+function unsubscribeGpsChannel(){
+  if (gpsChannel){ supabase.removeChannel(gpsChannel); gpsChannel = null; }
+}
+
+function trackMapProject(map, lat, lon){
+  const b = map.bounds;
+  const mLat = 6371000 * Math.PI / 180;
+  const mLon = mLat * Math.cos(b.cLat * Math.PI / 180);
+  return { x: (lon - b.minLon) * mLon, y: (b.maxLat - lat) * mLat };
+}
+
+// Our cars with a live row (never #53x), in plan order.
+function trackMapCars(race){
+  const by = race?.redmistLive?.byCarNumber || {};
+  return (race?.cars || []).filter(c => c.number && String(c.number).toLowerCase() !== "53x" && by[c.number])
+    .map(c => ({ ...c, accent: c.accent || T.blue }));
+}
+
+// Number colour on a car's dot: dark on light accents (amber, cyan), white otherwise.
+function trackMapInk(hex){
+  try {
+    const [r, g, b] = hexToRgb(hex);
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6 ? "#0B1030" : "#FFFFFF";
+  } catch { return "#FFFFFF"; }
+}
+
+function liveTrackMapSection(race){
+  if (!race || race.status === "archived" || !isLiveAttached(race) || race.redmistLive?.finished) return "";
+  loadLiveTrackMap(state.redmistEventId);
+  const map = liveTrackMap.eventId === String(state.redmistEventId) ? liveTrackMap.map : null;
+  if (!map) return "";
+
+  const { w, h } = map.bounds;
+  const span = Math.max(w, h);
+  const pad = span * 0.06;
+  const line = map.pts.map((p, i) => `${i ? "L" : "M"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join("") + "Z";
+
+  // Start/finish: a short bar across the track, perpendicular to travel.
+  let sf = "";
+  if (map.sf){
+    const rad = map.sf.hdg * Math.PI / 180;      // compass: 0 = north (−y), 90 = east (+x)
+    const px = Math.cos(rad), py = Math.sin(rad); // perpendicular to (sin, −cos)
+    const half = span * 0.025;
+    sf = `<line x1="${(map.sf.x - px * half).toFixed(1)}" y1="${(map.sf.y - py * half).toFixed(1)}" x2="${(map.sf.x + px * half).toFixed(1)}" y2="${(map.sf.y + py * half).toFixed(1)}"
+            stroke="${T.white}" stroke-width="${(span * 0.008).toFixed(1)}" stroke-linecap="round"></line>`;
+  }
+
+  const cars = trackMapCars(race);
+  const r = span * 0.024;
+  // Dots are placed by the ticker; the morph patcher leaves this group
+  // alone while its key is unchanged, so live ticks don't reset them.
+  const key = cars.map(c => `${c.number}:${c.accent}`).join(",") + "|" + (map.built || "") + (map.sf ? "|sf" : "");
+  const dots = cars.map(c => `
+        <g class="tm-car" data-tm-car="${esc(c.number)}" transform="translate(0 0)" style="opacity:0;">
+          <circle r="${r.toFixed(1)}" fill="${c.accent}" stroke="#0B1030" stroke-width="${(r * 0.18).toFixed(1)}"></circle>
+          <text font-size="${(r * (String(c.number).length > 2 ? 0.8 : 0.95)).toFixed(1)}" style="fill:${trackMapInk(c.accent)};">${esc(c.number)}</text>
+        </g>`).join("");
+
+  const legend = cars.length ? `
+      <div class="tm-legend">
+        ${cars.map(c => {
+          const pos = race.redmistLive.byCarNumber[c.number];
+          const where = pos.in_pit === true ? "In pit" : `P${pos.class_position ?? "—"}`;
+          return `<span><span class="sw" style="background:${c.accent};"></span><b>#${esc(c.number)}</b> ${where}</span>`;
+        }).join("")}
+      </div>` : "";
+
+  return `
+    <div class="track-detail-box" id="trackDetailBox">
+      <div class="track-detail-head">${icon("mapPin",13)} Track Map</div>
+      <svg class="tm-map" id="tmLiveSvg" viewBox="${(-pad).toFixed(1)} ${(-pad).toFixed(1)} ${(w + pad * 2).toFixed(1)} ${(h + pad * 2).toFixed(1)}"
+           role="img" aria-label="${esc(map.track || "Track")} map with Kingpin car positions">
+        <path d="${line}" fill="none" stroke="${T.border}" stroke-width="${(span * 0.03).toFixed(1)}" stroke-linejoin="round"></path>
+        <path d="${line}" fill="none" stroke="${T.panelRaised}" stroke-width="${(span * 0.018).toFixed(1)}" stroke-linejoin="round"></path>
+        ${sf}
+        <g class="tm-dots" data-morph-skip data-morph-key="${esc(key)}">${dots}</g>
+      </svg>
+      ${legend}
+    </div>`;
+}
+
+// Moves the dots toward each car's latest GPS fix every frame while the
+// live map is on screen; stops by itself when it isn't.
+const TRACK_MAP_GLIDE_MS = 900;
+const trackMapGlide = {}; // car number -> { fromX, fromY, toX, toY, t0, lat, lon }
+let trackMapRaf = null;
+function trackMapTick(){
+  trackMapRaf = null;
+  const svg = document.getElementById("tmLiveSvg");
+  const map = liveTrackMap.map;
+  if (!svg || !map) return;
+  const now = performance.now();
+  svg.querySelectorAll("[data-tm-car]").forEach(g => {
+    const num = g.getAttribute("data-tm-car");
+    const fix = liveGps.eventId === String(state.redmistEventId) ? liveGps.byCar[num] : null;
+    if (!fix || !Number.isFinite(fix.lat) || !Number.isFinite(fix.lon) || Date.now() - fix.at > GPS_STALE_MS){
+      g.style.opacity = "0"; delete trackMapGlide[num]; return;
+    }
+    const { lat, lon } = fix;
+    let st = trackMapGlide[num];
+    if (!st || st.lat !== lat || st.lon !== lon){
+      const to = trackMapProject(map, lat, lon);
+      if (!st){
+        st = { fromX: to.x, fromY: to.y };
+      } else {
+        // Start the new glide from wherever the dot is right now.
+        const k = Math.min(1, (now - st.t0) / TRACK_MAP_GLIDE_MS);
+        st = { fromX: st.fromX + (st.toX - st.fromX) * k, fromY: st.fromY + (st.toY - st.fromY) * k };
+      }
+      Object.assign(st, { toX: to.x, toY: to.y, t0: now, lat, lon });
+      trackMapGlide[num] = st;
+    }
+    const k = Math.min(1, (now - st.t0) / TRACK_MAP_GLIDE_MS);
+    const x = st.fromX + (st.toX - st.fromX) * k, y = st.fromY + (st.toY - st.fromY) * k;
+    g.setAttribute("transform", `translate(${x.toFixed(1)} ${y.toFixed(1)})`);
+    g.style.opacity = fix.inPit ? "0.6" : "1";
+  });
+  trackMapRaf = requestAnimationFrame(trackMapTick);
+}
+function startTrackMapTicker(){
+  if (!trackMapRaf && document.getElementById("tmLiveSvg")) trackMapRaf = requestAnimationFrame(trackMapTick);
+}
+// =================== end live track map ===================
 
 // ---- car header image, same convention/fallback as the track image ----
 // Expects images at images/cars/<number>-<team-slug>.png. If that image is
@@ -4070,6 +4302,10 @@ function morphNode(a, b){
     return;
   }
   if (a.nodeType !== 1 || a.isEqualNode(b)) return;
+  // Subtrees driven by their own ticker (live track-map dots) are left
+  // alone while their key is unchanged.
+  if (a.hasAttribute("data-morph-skip") && b.hasAttribute("data-morph-skip")
+    && a.getAttribute("data-morph-key") === b.getAttribute("data-morph-key")) return;
   if ((a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT") && a === document.activeElement) return;
   for (const { name, value } of [...b.attributes]){
     if (a.getAttribute(name) !== value) a.setAttribute(name, value);
@@ -4264,12 +4500,12 @@ function renderHome(){
       <div class="name-flow fade-in">
         <span class="eyebrow">${state.duplicateSource ? `Duplicating "${esc(state.duplicateSource.eventName)}"` : "Event Name"}</span>
         <input id="nameDraft" class="name-input" placeholder="e.g. Sebring 12 Hour" value="${esc(state.nameDraft)}" enterkeyhint="go" autofocus />
-        <button class="continue-btn" id="confirmName" data-act="confirmName" ${state.nameDraft.trim()?"":"disabled"}>Continue ${icon("arrowRight",18)}</button>
+        <button class="continue-btn" id="confirmName" data-act="confirmName" ${state.nameDraft.trim()?"":"disabled"}>Continue ${icon("arrowRight",15)}</button>
         <p style="font-size:12px;color:var(--textFaint);margin:0;">${state.duplicateSource ? "Cars, drivers, track, and timing carry over — you'll verify everything on the next page." : "Today's date is captured automatically for your records."}</p>
       </div>`
     : (state.isEngineer
         ? `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;">
-             <button class="create-btn" id="startCreate" data-act="startCreate">${icon("plus",20,"color:"+T.blue)}<span>Create a Race</span></button>
+             <button class="create-btn" id="startCreate" data-act="startCreate">${icon("plus",14)}<span>Create a Race</span></button>
              <div class="auth-row"><span class="auth-status">${icon("flag",13,"color:"+T.blue)} Signed in as Engineer</span><button class="auth-link" data-act="engineer-sign-out">Sign Out</button></div>
            </div>`
         : "");
@@ -4280,7 +4516,6 @@ function renderHome(){
         ${strip}
         ${renderHomeStandings()}
         <div style="width:100%;max-width:420px;display:flex;flex-direction:column;align-items:center;text-align:center;" class="fade-in">
-          ${(!(active.length>0)) ? `<div class="create-circle">${icon("flag",22)}</div>` : ""}
           ${nameFlow}
         </div>
       </div>
@@ -4427,7 +4662,7 @@ function renderSetup(){
             <input class="field" style="padding:6px 10px;font-size:13px;" placeholder="Manufacturer" id="ncManufacturer" value="${esc(state.newCar.manufacturer)}" />
             <input class="field" style="padding:6px 10px;font-size:13px;" placeholder="Model" id="ncModel" value="${esc(state.newCar.model)}" />
             <div style="display:flex;gap:8px;margin-top:4px;">
-              <button class="btn-primary" style="padding:8px 0;font-size:14px;" data-act="submit-new-car">Add to Race</button>
+              <button class="btn-primary" style="padding:10px 0;" data-act="submit-new-car">Add to Race</button>
               <button style="background:transparent;border:1px solid var(--borderLight);color:var(--textMuted);border-radius:8px;padding:8px 12px;" data-act="cancel-custom-car">${icon("x",14)}</button>
             </div>
           </div>` : ""}
@@ -4506,7 +4741,7 @@ function renderSetup(){
         </div>
       </section>
 
-      <button class="btn-primary" id="createPlan" data-act="createPlan" ${canCreatePlan?"":"disabled"}>Create Race Plan ${icon("arrowRight",19)}</button>
+      <button class="btn-primary" id="createPlan" data-act="createPlan" ${canCreatePlan?"":"disabled"}>Create Race Plan ${icon("arrowRight",15)}</button>
     </div>`;
 }
 
@@ -4749,7 +4984,7 @@ function renderArchiveResultsPanel(race){
           </p>
         ` : `
           <div style="display:flex;flex-direction:column;align-items:center;gap:10px;">
-            <button class="btn-gold" style="display:inline-flex;padding:10px 18px;" data-act="rm-archive-build">${icon("timer",14)} Build Results from Red Mist</button>
+            <button class="btn-gold" style="display:inline-flex;padding:14px 24px;" data-act="rm-archive-build">${icon("timer",14)} Build Results from Red Mist</button>
             ${state.archiveError ? `<p style="color:${T.red};font-size:12px;margin:0;">${esc(state.archiveError)}</p>` : ""}
           </div>
         `}
@@ -5273,24 +5508,70 @@ async function loadPaceTrend(eventId, sessionId, sessionName){
   }
 }
 
+// Seconds/lap `myNum` is faster than `theirNum` (> 0 = faster, < 0 =
+// slower) from the current pace-trend snapshot. Null when the snapshot is
+// for another session, either car lacks 3 clean laps, or the difference
+// is inside the threshold (reads as "holding", nothing shown).
+function paceTrendDelta(myNum, theirNum, key){
+  if (!key || paceTrend.key !== key) return null;
+  const me = paceTrend.byCar[myNum], them = paceTrend.byCar[theirNum];
+  if (!me || !them) return null;
+  const delta = them.avg - me.avg;
+  return Math.abs(delta) < PACE_TREND_THRESHOLD ? null : delta;
+}
+// Laps for a gap to close at `rate` s/lap. current_gap is Red Mist's
+// in-class gap; "1 lap" etc. won't parse, and then there's no estimate.
+// Anything past 99 laps isn't a useful number for anyone.
+function paceTrendLaps(gapStr, rate){
+  const gapSec = rmTimeToSeconds(gapStr);
+  if (!gapSec || !(rate > 0)) return null;
+  const n = Math.ceil(gapSec / rate);
+  return n <= 99 ? n : null;
+}
+
 // { delta, ahead, catchLaps } or null. delta > 0 = this car is faster
 // (closing), < 0 = slower (losing). Null when either car lacks 3 clean
 // laps, there's no class car ahead, or it's inside the threshold.
 function paceTrendFor(pos, sorted, key){
-  if (!key || paceTrend.key !== key || pos.overall_position == null) return null;
-  const me = paceTrend.byCar[pos.car_number];
-  if (!me) return null;
+  if (!key || pos.overall_position == null) return null;
   const ahead = sorted.filter(r => r.class === pos.class && r.overall_position != null
     && r.overall_position < pos.overall_position).pop();
-  const them = ahead && paceTrend.byCar[ahead.car_number];
-  if (!them) return null;
-  const delta = them.avg - me.avg;
-  if (Math.abs(delta) < PACE_TREND_THRESHOLD) return null;
-  // current_gap is Red Mist's in-class gap; "1 lap" etc. won't parse, and
-  // then there's no laps-to-catch, only the pace comparison.
-  const gapSec = rmTimeToSeconds(pos.current_gap);
-  const catchLaps = delta > 0 && gapSec ? Math.ceil(gapSec / delta) : null;
+  if (!ahead) return null;
+  const delta = paceTrendDelta(pos.car_number, ahead.car_number, key);
+  if (delta == null) return null;
+  const catchLaps = delta > 0 ? paceTrendLaps(pos.current_gap, delta) : null;
   return { delta, ahead, catchLaps };
+}
+
+// Car tile Car Ahead / Car Behind trend. `good` = the gap is moving our
+// way (catching the car ahead, or pulling away from the car behind).
+// Returns { arrow, line } HTML, or null when there's no trend to show.
+//   Ahead,  we're faster:  ▲  "Catching #4 · ~14 laps"
+//   Ahead,  we're slower:  ▼  "Losing #4 · 0.6s/lap"
+//   Behind, they're faster: ▼ "#18 catching · ~10 laps"
+//   Behind, we're faster:  ▲  "Pulling away from #18"
+function neighbourTrend(myNum, r, gapStr, role, key){
+  if (!r) return null;
+  const delta = paceTrendDelta(myNum, r.car_number, key);
+  if (delta == null) return null;
+  const rate = Math.abs(delta);
+  const n = `#${esc(r.car_number)}`;
+  let good, text;
+  if (role === "ahead"){
+    good = delta > 0;
+    const laps = good ? paceTrendLaps(gapStr, rate) : null;
+    text = good ? `Catching ${n}${laps ? ` · ~${laps} laps` : ""}` : `Losing ${n} · ${rate.toFixed(1)}s/lap`;
+  } else {
+    good = delta > 0; // we're faster than the car behind
+    const laps = good ? null : paceTrendLaps(gapStr, rate);
+    text = good ? `Pulling away from ${n}` : `${n} catching${laps ? ` · ~${laps} laps` : ""}`;
+  }
+  const color = good ? T.green : T.red;
+  const title = `${role === "ahead" ? "Car ahead" : "Car behind"}: ${rate.toFixed(1)}s/lap over the last ${PACE_TREND_LAPS} clean laps`;
+  return {
+    arrow: ` <span title="${esc(title)}" style="font-size:12px;font-weight:700;white-space:nowrap;color:${color};">${good ? "▲" : "▼"} ${rate.toFixed(1)}</span>`,
+    line: `<span class="trend-line" style="color:${color};">${text}</span>`,
+  };
 }
 
 function paceTrendBadge(t){
@@ -6033,11 +6314,20 @@ function liveTimingBlock(car){
   // and the gap to the car behind is THEIR current_gap.
   // Gap is the headline; car number + team (and any Inactive/DNS badge)
   // go in the small line underneath.
+  // Pace trend (same snapshot as the standings' Last Lap arrows): arrow
+  // beside the gap, and a line under the car saying which way it's going.
+  // Skipped while either car is in the pit / inactive — a catch estimate
+  // means nothing then.
+  const ls = state.liveSession;
+  const trendKey = ls?.type === "Race" && !isCheckered() ? paceTrendKey(state.redmistEventId, ls.id, ls.name) : null;
+  const ownStatus = liveCarStatus(pos, leaderLaps);
   const neighbourTile = (label, r, gap) => {
     if (!r) return tile(label, "—", label === "Car Ahead" && pos.class_position === 1 ? "Class leader" : null);
     const st = liveCarStatus(r, leaderLaps);
-    const sub = `#${esc(r.car_number)}${r.team_name ? ` · ${esc(r.team_name)}` : ""}${st ? liveStatusBadge(st) : ""}`;
-    return tile(label, gap ? esc(gap) : "—", sub);
+    const trend = (st || ownStatus) ? null
+      : neighbourTrend(pos.car_number, r, gap, label === "Car Ahead" ? "ahead" : "behind", trendKey);
+    const sub = `#${esc(r.car_number)}${r.team_name ? ` · ${esc(r.team_name)}` : ""}${st ? liveStatusBadge(st) : ""}${trend ? trend.line : ""}`;
+    return tile(label, (gap ? esc(gap) : "—") + (trend ? trend.arrow : ""), sub);
   };
 
   // Class Pace = median last lap of class cars that are actually running
@@ -6346,7 +6636,7 @@ function carPlanSection(cp, plan, archived){
         ${state.addingReserve.has(car.id) ? `
           <div style="display:flex;gap:8px;align-items:center;margin-top:10px;">
             <input class="field" style="font-size:13px;" placeholder="Reserve driver name" value="${esc(state.reserveDraft[car.id]||'')}" data-act="update-reserve-draft" data-car="${car.id}" />
-            <button class="btn-primary" style="padding:8px 14px;font-size:13px;white-space:nowrap;" data-act="confirm-add-reserve" data-car="${car.id}">Add</button>
+            <button class="btn-primary" style="padding:8px 14px;white-space:nowrap;" data-act="confirm-add-reserve" data-car="${car.id}">Add</button>
             <button style="background:none;border:none;color:var(--textFaint);display:flex;" data-act="cancel-add-reserve" data-car="${car.id}">${icon("x",15)}</button>
           </div>
         ` : `<button class="add-driver" style="color:${car.accent};margin-top:10px;" data-act="start-add-reserve" data-car="${car.id}">${icon("plus",14)} Add Reserve Driver</button>`}
@@ -6437,6 +6727,7 @@ function renderConfirmModal(){
 // ============================================================================
 function bindEvents(){
   const app = document.getElementById("app");
+  startTrackMapTicker();
 
   app.querySelectorAll("[data-act]").forEach(el=>{
     const act = el.getAttribute("data-act");
