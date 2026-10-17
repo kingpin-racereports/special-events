@@ -1400,14 +1400,22 @@ function rmCarStops(carNumber, pitStops){
 // for most of that stint's laps. Name flicker within a car (same surname,
 // different first name) resolves to the last name Red Mist reported.
 function rmDriverForLaps(carNumber, laps, lapRows, pitStops, finalDriver){
-  const recorded = {}, lastFull = {};
+  const recorded = {};
   lapRows.forEach(l => {
     if (l.car_number !== carNumber || !l.driver_name) return;
     recorded[l.lap_number] = l.driver_name;
   });
-  Object.keys(recorded).map(Number).sort((a, b) => a - b)
-    .forEach(n => { lastFull[driverSurname(recorded[n]).toLowerCase()] = recorded[n]; });
-  const canon = n => n ? (lastFull[driverSurname(n).toLowerCase()] || n) : null;
+  // Fold a variant spelling (a bare "Sharinn", or a stop row's surname-only
+  // name) into the one full name it matches. Was keyed on surname alone,
+  // which folded Marc Sharinn into Tyler Sharinn on #81. Ambiguous names
+  // (a bare surname two drivers share) are left as they are.
+  const fullNames = [...new Set(Object.values(recorded))];
+  const canon = n => {
+    if (!n) return null;
+    if (fullNames.includes(n)) return n;
+    const hits = fullNames.filter(f => sameDriverName(f, n));
+    return hits.length === 1 ? hits[0] : n;
+  };
 
   const stops = rmCarStops(carNumber, pitStops);
   const segOf = lap => stops.filter(st => st.lap_number < lap).length;
@@ -1493,6 +1501,8 @@ const DEBRIEF = {
   BAR_RED_GAP: 2.0,    // driver bar: s/lap behind the field line that reads full red (at/ahead of it = green) // no flag data: most of the field this far off pace = caution
   TRAFFIC_PCT: 0.015,  // lap this far over the stint's typical field-relative lap = traffic lap
   FIELD_WINDOW_MIN: 5, // field pace at a moment = other class cars' laps this many minutes either side
+  WARM_LAPS: 5,        // laps after a stop compared with the rest of that stint (tyres, new driver settling in)
+  RARE_CHANGE_PCT: 0.3, // a driver change at a stop number this few of the class also made reads as unusual
 };
 
 function debriefMedian(xs){
@@ -1641,8 +1651,7 @@ function debriefProfilesFor(stints){
 function debriefMatchDriver(planName, profiles){
   const n = String(planName || "").trim();
   if (!n) return null;
-  const hit = Object.keys(profiles).find(k => sameDriverName(n, k))
-    || Object.keys(profiles).find(k => driverSurname(k).toLowerCase() === driverSurname(n).toLowerCase());
+  const hit = findDriverMatch(n, Object.keys(profiles));
   return hit ? { name: hit, profile: profiles[hit] } : null;
 }
 
@@ -1742,6 +1751,25 @@ function debriefTrackFactor(stintsByCar){
     for (let k = lo; k < pts.length && pts[k].ts <= ts + W; k++) win.push(pts[k].r);
     return win.length >= 8 ? debriefMedian(win) : 1;
   };
+}
+
+// Time lost settling in after each stop: the first WARM_LAPS green laps of
+// a stint vs. the rest of the same stint, both against the class field
+// at the time. Measured against the stint's own settled pace, so it's the
+// cost of the stop (cold tyres, a new driver getting up to speed), not
+// how quick the driver is. change = the stint began with a driver change.
+function debriefWarmups(stints){
+  const out = [];
+  stints.forEach((s, i) => {
+    if (!i) return;
+    const d = s.laps.filter(l => l.f && !l.pit && !l.flagged && l.t).map(l => l.t - l.f.mean);
+    if (d.length < DEBRIEF.WARM_LAPS + 5) return;
+    out.push({
+      change: s.driver !== stints[i - 1].driver,
+      cost: debriefMean(d.slice(0, DEBRIEF.WARM_LAPS)) - debriefMedian(d.slice(DEBRIEF.WARM_LAPS)),
+    });
+  });
+  return out;
 }
 
 function debriefStintReport(stints, field, num, stops, stopRef, stopTime){
@@ -2149,6 +2177,28 @@ async function buildSaturdayDebrief(src){
     stopRefByClass[cls] = { change: ch.length >= 3 ? debriefMedian(ch) : all, service: sv.length >= 3 ? debriefMedian(sv) : all };
   });
 
+  // Key takeaways: how each class approached its stops — per stop number,
+  // how many cars stopped and how many of those changed drivers — plus
+  // every car's settling-in cost after its stops.
+  const classKeys = {};
+  [...new Set(classification.map(c => c.resultClass))].forEach(cls => {
+    const nums = classification.filter(c => c.resultClass === cls && c.status !== "DNS").map(c => c.startNumber);
+    const byCar = Object.fromEntries(nums.map(n => [n,
+      pitStops.filter(s => s.car_number === n && keptStop(s)).sort((a, b) => a.lap_number - b.lap_number)]));
+    const most = Math.max(0, ...Object.values(byCar).map(l => l.length));
+    const byIndex = Array.from({ length: most }, (_, k) => {
+      const at = nums.filter(n => byCar[n][k]);
+      return { cars: at.length, changes: at.filter(n => byCar[n][k].driver_change).length };
+    });
+    classKeys[cls] = {
+      cars: nums.length,
+      changedCars: nums.filter(n => byCar[n].some(s => s.driver_change)).length,
+      byIndex,
+      stopRef: stopRefByClass[cls],
+      warmByCar: Object.fromEntries(nums.map(n => [n, debriefWarmups(stintsByNum[n] || [])])),
+    };
+  });
+
   const cars = {};
   classification.forEach(c => {
     const stints = stintsByNum[c.startNumber];
@@ -2181,6 +2231,11 @@ async function buildSaturdayDebrief(src){
       netPerStop: moves.length ? debriefMean(moves) : null,
       avgStintMin: debriefMean(full.map(s => s.minutes)),
       closer: closing ? closing.driver : null,
+      // Key takeaways inputs: this car's stops in order (driver change or
+      // not, time stationary) and the class picture they're judged against.
+      keyStops: stops.slice().sort((a, b) => a.lap_number - b.lap_number)
+        .map(st => { const t = stopTime(st); return { change: !!st.driver_change, sec: t.sec, repair: t.repair }; }),
+      classKeys: classKeys[c.resultClass] || null,
     };
   });
   return { sourceName: src.eventName, cars, paceCharts };
@@ -2262,6 +2317,67 @@ function applySaturdayDebrief(debrief){
     };
   });
   return summary;
+}
+
+// Duplicating: drivers live timing put on a source car who never actually
+// drove it. When Red Mist names the wrong driver after a stop, the poller
+// adds that name to the car's roster ("…but X got in the car") and puts
+// them on the next stint; Red Mist fixes the name a lap or two later, but
+// the roster entry stays and would carry into every copy of the race.
+// A driver is dropped from the copy when live timing added them AND they
+// have no laps in the source race's session — or, with no session to
+// check, no stint left in its plan. Drivers the engineer entered are
+// never touched. Returns true if any car changed.
+async function pruneGhostDrivers(src, cars){
+  const srcCars = (src.cars || []).filter(c => c.id);
+  if (!srcCars.length) return false;
+  const ids = srcCars.map(c => c.id);
+  const [logRes, stintRes] = await Promise.all([
+    supabase.from("stint_log").select("car_id, message").in("car_id", ids).eq("entry_key", "redmist-driver-swap"),
+    supabase.from("stints").select("car_id, driver").in("car_id", ids),
+  ]);
+  if (logRes.error) throw logRes.error;
+  const autoAdded = {}; // source car id -> names live timing put in the car
+  (logRes.data || []).forEach(l => {
+    const m = /but (.+?) got in the car/.exec(l.message || "");
+    if (m) (autoAdded[l.car_id] ||= []).push(m[1].trim());
+  });
+  if (!Object.keys(autoAdded).length) return false;
+
+  // Who actually drove, per car number, from the source session's laps.
+  let lapDrivers = null;
+  if (src.redmistEventId != null && src.redmistSessionId != null){
+    const nums = srcCars.map(c => String(c.number));
+    const rows = await fetchAllRows(() => {
+      let q = supabase.from("redmist_live_laps").select("car_number, driver_name")
+        .eq("event_id", src.redmistEventId).eq("session_id", src.redmistSessionId).in("car_number", nums);
+      if (src.redmistSessionName) q = q.eq("session_name", src.redmistSessionName);
+      return q.order("car_number").order("lap_number");
+    });
+    if (rows.length){
+      lapDrivers = {};
+      rows.forEach(r => { if (r.driver_name) (lapDrivers[r.car_number] ||= new Set()).add(r.driver_name); });
+    }
+  }
+  const stintDrivers = {};
+  (stintRes.data || []).forEach(r => { if (r.driver) (stintDrivers[r.car_id] ||= []).push(r.driver); });
+
+  let changed = false;
+  srcCars.forEach(sc => {
+    const added = autoAdded[sc.id];
+    const car = cars.find(c => String(c.number) === String(sc.number));
+    if (!added || !car) return;
+    const drove = lapDrivers
+      ? d => [...(lapDrivers[String(sc.number)] || [])].some(n => sameDriverName(n, d))
+      : d => (stintDrivers[sc.id] || []).some(n => sameDriverName(n, d));
+    const keep = car.drivers.map(d => !(added.some(a => sameDriverName(a, d)) && !drove(d)));
+    if (keep.every(Boolean)) return;
+    console.log(`[duplicate] #${car.number}: dropping`, car.drivers.filter((_, i) => !keep[i]), "— added by live timing, never drove");
+    car.drivers = car.drivers.filter((_, i) => keep[i]);
+    car.driverStintMode = (car.driverStintMode || []).filter((_, i) => keep[i]);
+    changed = true;
+  });
+  return changed;
 }
 
 // Kicked off from "confirmName" when duplicating. Async so Setup appears
@@ -2439,9 +2555,64 @@ function renderDebriefPanel(){
     return worst ? `<div style="margin:10px 0 6px;">${row(worst)}</div>` : "";
   };
 
+  // Key takeaways: where this car lost time against its class, and how its
+  // stop strategy differed from the field's — car-level only, no driver
+  // named, so the point is what to change, not who.
+  const ourNums = new Set(db.cars.map(c => String(c.number)));
+  const fmtDur = s => { const a = Math.round(Math.abs(s)); return a >= 60 ? `${Math.floor(a / 60)}:${String(a % 60).padStart(2, "0")}` : `${a}s`; };
+  const keyTakeaways = c => {
+    const sat = c.sat, ck = sat.classKeys, out = [];
+    const red = t => `<span style="font-weight:600;color:${T.red};">${t}</span>`;
+    const ourStops = sat.keyStops || [];
+
+    // 1. Biggest time loss vs. the class, by kind, over the whole race.
+    const rep = (sat.stintReport || []).filter(Boolean);
+    const sum = k => rep.reduce((a, r) => a + Math.max(0, r[k] || 0), 0);
+    const kinds = [["Pit stops", sum("pit")], ["Pace", sum("pace")], ["Traffic", sum("traffic")]]
+      .filter(k => k[1] >= 5).sort((a, b) => b[1] - a[1]);
+    if (kinds.length) out.push(`Most time lost to the class: ${kinds.map((k, i) => i ? `${k[0]} ${fmtDur(k[1])}` : red(`${k[0]} ${fmtDur(k[1])}`)).join(" · ")}`);
+
+    if (ck){
+      // 2. Driver changes the class mostly didn't make, stop by stop.
+      ourStops.forEach((st, k) => {
+        const at = ck.byIndex[k];
+        if (!st.change || !at || at.cars < 3) return;
+        if (at.changes / at.cars <= DEBRIEF.RARE_CHANGE_PCT)
+          out.push(`Pit stop ${k + 1}: ${red("driver change")} — only ${at.changes} of ${at.cars} ${esc(sat.cls)} cars changed drivers at that stop`);
+      });
+      const ourChanges = ourStops.filter(st => st.change).length;
+      if (ourChanges && ck.changedCars / ck.cars <= 0.5)
+        out.push(`${ourChanges} driver change${ourChanges === 1 ? "" : "s"} — ${ck.changedCars} of ${ck.cars} ${esc(sat.cls)} cars changed drivers at all`);
+
+      // 3. Extra time stationary for a driver change vs. a fuel-only stop.
+      const changeSecs = ourStops.filter(st => st.change && !st.repair).map(st => st.sec);
+      const svc = ck.stopRef?.service;
+      if (changeSecs.length && svc != null){
+        const extra = debriefMedian(changeSecs) - svc;
+        if (extra >= 3) out.push(`Each driver change stopped the car ${red(`~${Math.round(extra)}s longer`)} than the class's fuel-only stops (${fmtDur(extra * changeSecs.length)} over the race)`);
+      }
+
+      // 4. Settling in after a driver change vs. the class after its stops.
+      const ours = (ck.warmByCar[c.number] || []).filter(w => w.change).map(w => w.cost);
+      const field = Object.entries(ck.warmByCar).filter(([n]) => !ourNums.has(n)).flatMap(([, ws]) => ws.map(w => w.cost));
+      if (ours.length && field.length){
+        const o = debriefMean(ours), f = debriefMean(field);
+        if (o - f >= 0.3) out.push(`First ${DEBRIEF.WARM_LAPS} laps after our driver changes ran ${red(`+${o.toFixed(1)}s/lap`)} off the rest of the stint — the class averaged ${f >= 0 ? "+" : "−"}${Math.abs(f).toFixed(1)}s/lap after its stops`);
+      }
+    }
+
+    // 5. More stops than the class top 3.
+    const top = db.classes[sat.cls]?.top;
+    if (top && sat.stops && !top.nums.includes(String(c.number)) && sat.stops >= top.stops + 0.75)
+      out.push(`${sat.stops} stops — the ${esc(sat.cls)} top 3 averaged ${top.stops.toFixed(1)}`);
+
+    return out.length ? `<div style="margin:6px 0 10px;"><span class="eyebrow">Key Takeaways</span>${out.map(line).join("")}</div>` : "";
+  };
+
   const carBlocks = db.cars.map(c => `
     <div style="border-left:3px solid ${c.accent};padding-left:12px;margin-bottom:16px;">
       <div class="font-display" style="font-weight:600;font-size:14px;margin-bottom:4px;">#${esc(c.number)}</div>
+      ${keyTakeaways(c)}
       ${closerLine(c)}
       ${racePositionsLine(c)}
       ${stintsBlock(c)}
@@ -3306,12 +3477,30 @@ function liveCarStatus(pos, leaderLaps, opts = {}){
   // nothing there — skipped until the race is archived.
   const finished = opts.finished ?? isRaceFinished(state.races.find(r => r.id === state.currentRaceId));
   if (pos.in_pit === true && !finished) return { label: "In Pit", tone: "pit" };
+  if (finished){
+    // After the checkered the field parks: Red Mist marks parked cars stale
+    // and every last lap ages past the timer, so neither means retired. A
+    // car is out only if it stopped lapping INACTIVE_AFTER_MIN+ before the
+    // last car took the flag — same rule live-poll uses for result_status.
+    const ref = opts.fieldLastLapMs ?? fieldLastLapMs(state.races.find(r => r.id === state.currentRaceId)?.redmistLive?.fullField);
+    const t = pos.last_lap_at ? new Date(pos.last_lap_at).getTime() : NaN;
+    if (ref && Number.isFinite(t) && (ref - t) / 60000 >= INACTIVE_AFTER_MIN) return { label: "Inactive", tone: "dnf" };
+    return null;
+  }
   if (pos.is_stale === true) return { label: "Inactive", tone: "dnf" };
   if (pos.last_lap_at && Number(state.homeLive.flag) !== 3){
     const mins = (liveNowMs() - new Date(pos.last_lap_at).getTime()) / 60000;
     if (mins >= INACTIVE_AFTER_MIN) return { label: `Inactive ${Math.floor(mins)}m`, tone: "dnf" };
   }
   return null;
+}
+// Latest lap completion anywhere in the field — the post-checkered
+// reference for "stopped before the end".
+function fieldLastLapMs(field){
+  return (field || []).reduce((m, r) => {
+    const t = r.last_lap_at ? new Date(r.last_lap_at).getTime() : NaN;
+    return Number.isFinite(t) && t > m ? t : m;
+  }, 0);
 }
 // "Now" for the no-lap timer. In the finished (post-checkered) view this is
 // the moment the session's data stopped, not the wall clock — otherwise,
@@ -3504,7 +3693,9 @@ let liveAttachInFlight = false;
 // redmist_live_pit_stops by event + session, so it's independent of the
 // plan page's live attach (state.redmistEventId / state.liveSession).
 //   Race session (incl. its checkered) -> race standings / final results.
-//   Anything else -> every qualifying session so far, the live one badged.
+//   Anything else -> whichever finished most recently: the last race's saved
+//   final results (redmist_race_results), or every qualifying session so
+//   far, the live one badged.
 let homeStandingsChannel = null, homeStandingsTimer = null, homeStandingsSeq = 0, homeStopsTimer = null;
 
 function syncHomeStandings(eventId, eventName, session){
@@ -3517,14 +3708,18 @@ function syncHomeStandings(eventId, eventName, session){
   const hs = state.homeStandings;
   if (!hs || String(hs.eventId) !== String(eventId)){
     stopHomeStandings();
-    state.homeStandings = { eventId, eventName, session: key, field: [], stops: {}, quali: [] };
+    state.homeStandings = { eventId, eventName, session: key, field: [], stops: {}, quali: [], lastRace: null };
     subscribeHomeStandings(eventId); // loads on SUBSCRIBED
     return;
   }
   const sessionChanged = !key || !hs.session || hs.session.id !== key.id || hs.session.name !== key.name;
+  // A race session going inactive after its checkered: reload so the saved
+  // final results take over from the live field straight away.
+  const raceEnded = !sessionChanged && hs.session?.type === "Race" && hs.session.active && key && !key.active;
   hs.eventName = eventName ?? hs.eventName;
   hs.session = key; // flag / active changes ride along without a refetch
   if (sessionChanged){ hs.field = []; hs.stops = {}; loadHomeStandings(); }
+  else if (raceEnded) loadHomeStandings();
 }
 
 function stopHomeStandings(){
@@ -3550,6 +3745,23 @@ function groupQualiSessions(rows){
   return Object.values(bySession);
 }
 
+// Most recent race session with saved final results for this event.
+// Rows are normalised to the live-position field names the results panel
+// reads (laps -> last_lap_completed), stops come from the saved count.
+function latestSavedRace(rows){
+  const bySession = {};
+  (rows || []).forEach(r => {
+    const key = `${r.session_id}|${r.session_name}`;
+    const g = (bySession[key] ||= { key, id: Number(r.session_id), name: r.session_name, rows: [], at: 0 });
+    g.rows.push({ ...r, last_lap_completed: r.laps });
+    g.at = Math.max(g.at, new Date(r.checkered_at || r.updated_at || 0).getTime());
+  });
+  const latest = Object.values(bySession).sort((a, b) => b.at - a.at)[0];
+  if (!latest) return null;
+  latest.stops = Object.fromEntries(latest.rows.map(r => [r.car_number, r.pit_stops ?? 0]));
+  return latest;
+}
+
 function countServiceStops(stops){
   const counts = {};
   rmServiceStops(stops || []).forEach(r => { counts[r.car_number] = (counts[r.car_number] || 0) + 1; });
@@ -3566,15 +3778,17 @@ async function loadHomeStandings(){
   const wantRace = !!(s && s.type === "Race");
   const scoped = q => q.eq("event_id", hs.eventId).eq("session_id", s.id).eq("session_name", s.name);
   try {
-    const [quali, field, stops] = await Promise.all([
+    const [quali, field, stops, , results] = await Promise.all([
       supabase.from("redmist_live_positions").select("*").eq("event_id", hs.eventId).eq("session_type", "Qualifying"),
       wantRace ? scoped(supabase.from("redmist_live_positions").select("*")) : Promise.resolve({ data: [] }),
       wantRace ? scoped(supabase.from("redmist_live_pit_stops").select("car_number, penalty_served")) : Promise.resolve({ data: [] }),
       wantRace ? loadPaceTrend(hs.eventId, s.id, s.name) : null,
+      supabase.from("redmist_race_results").select("*").eq("event_id", hs.eventId),
     ]);
     if (seq !== homeStandingsSeq || state.homeStandings !== hs) return;
-    [quali, field, stops].forEach(r => { if (r.error) console.error("[home-standings] fetch failed:", r.error); });
+    [quali, field, stops, results].forEach(r => { if (r.error) console.error("[home-standings] fetch failed:", r.error); });
     hs.quali = groupQualiSessions(quali.data);
+    hs.lastRace = latestSavedRace(results.data);
     hs.field = field.data || [];
     hs.stops = countServiceStops(stops.data);
     if (state.page === "home") scheduleLiveRender();
@@ -3656,6 +3870,18 @@ function homeStandingsOurCars(hs){
   return [...nums].map(number => ({ number }));
 }
 
+// No race live: the last race's final results win over the qualifying
+// tables if that race finished after the latest qualifying activity — and
+// never while a qualifying session is live.
+function showSavedRace(hs){
+  const lr = hs.lastRace;
+  if (!lr?.rows?.length) return false;
+  const s = hs.session;
+  if (s && s.type === "Qualifying" && s.active) return false;
+  const latestQuali = hs.quali.reduce((m, g) => g.rows.length ? Math.max(m, g.latest) : m, 0);
+  return lr.at >= latestQuali;
+}
+
 function renderHomeStandings(){
   const hs = state.homeStandings;
   if (!hs) return "";
@@ -3668,6 +3894,9 @@ function renderHomeStandings(){
     panels.push(Number(s.flag) === 5
       ? renderFinalResultsPanel(who, hs.field, hs.stops, s.name)
       : renderLiveStandingsTable(who, hs.field, hs.stops, { subtitle: s.name, finished: false, trendKey: paceTrendKey(hs.eventId, s.id, s.name) }));
+  } else if (showSavedRace(hs)){
+    const lr = hs.lastRace;
+    panels.push(renderFinalResultsPanel(who, lr.rows, lr.stops, lr.name));
   } else {
     const liveKey = s && s.type === "Qualifying" && s.active ? `${s.id}|${s.name}` : null;
     const hasOurs = g => g.rows.some(r => ourNumbers.has(r.car_number));
@@ -6027,9 +6256,10 @@ function renderLiveStandingsTable(race, fullField, stopCounts, opts = {}){
   });
 
   const leaderLaps = fullField.reduce((m, r) => Math.max(m, r.last_lap_completed || 0), 0);
+  const fieldLastLap = fieldLastLapMs(fullField);
   const fieldRows = sorted.map(pos => {
     const isOurs = race.cars.some(c=>c.number===pos.car_number);
-    const carStatus = liveCarStatus(pos, leaderLaps, opts.finished === undefined ? {} : { finished: opts.finished });
+    const carStatus = liveCarStatus(pos, leaderLaps, opts.finished === undefined ? { fieldLastLapMs: fieldLastLap } : { finished: opts.finished, fieldLastLapMs: fieldLastLap });
     // Overall gap (Red Mist `og`) — this table is in overall order. It
     // used to show current_gap, which is the IN-CLASS gap: blank for every
     // class leader (#118 GP1, #83 GP2) and measured to the wrong car for
@@ -6097,6 +6327,25 @@ function archiveCarHeaderBlock(car){
 // Loose driver-name match: every word of the shorter name appears in the
 // longer ("Rosso-Orcel" ~ "Tiziano Rosso-Orcel"). Mirrors the poller's
 // sameDriver().
+// Looser match for plan/Red Mist names that aren't a token subset of each
+// other ("Bob Campbell" vs "R. Campbell"): same surname AND the given names
+// don't conflict (one side is surname-only, or the first initials agree).
+// Surname alone is never enough — family members share it (Tyler / Marc
+// Sharinn on #81), and a bare surname match merged them into one driver.
+function looseSameDriver(a, b){
+  if (sameDriverName(a, b)) return true;
+  const tok = n => String(n || "").toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, "").split(/\s+/).filter(Boolean);
+  const A = tok(a), B = tok(b);
+  if (!A.length || !B.length || A[A.length - 1] !== B[B.length - 1]) return false;
+  if (A.length === 1 || B.length === 1) return true;
+  return A[0][0] === B[0][0];
+}
+// Best match for a driver name in a list: exact token match first, then the
+// looser rule above. Null when nothing matches.
+function findDriverMatch(name, candidates){
+  return candidates.find(c => sameDriverName(c, name)) || candidates.find(c => looseSameDriver(c, name)) || null;
+}
+
 function sameDriverName(a, b){
   const tok = n => String(n || "").toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, "").split(/\s+/).filter(Boolean);
   const A = tok(a), B = tok(b);
@@ -6300,8 +6549,7 @@ function racePaceInner(race, cp){
   cp.stints.forEach(s => { if (!s.removed && s.driver && !(s.driver in planIdx)) planIdx[s.driver] = s.driverIndex ?? Object.keys(planIdx).length; });
   const planNames = Object.keys(planIdx);
   const abbrev = buildTimelineAbbrev(car.drivers.filter(d => d.trim()));
-  const toPlan = rm => planNames.find(p => sameDriverName(p, rm))
-    || planNames.find(p => driverSurname(p).toLowerCase() === driverSurname(rm).toLowerCase()) || null;
+  const toPlan = rm => findDriverMatch(rm, planNames);
   const used = new Set(Object.values(planIdx).map(i => i % DRIVER_PALETTE.length));
   const who = {};
   segs.forEach(s => {
@@ -6380,7 +6628,7 @@ function raceSummaryBlock(cp){
   const race = state.races.find(r=>r.id===state.currentRaceId);
   const cons = race?.archiveResults ? (race.archiveResults.driverConsistency?.[cp.car.number] || []) : null;
   const consFor = d => cons ? (cons.find(x => sameDriverName(x.driver, d))
-    || cons.find(x => driverSurname(x.driver).toLowerCase() === driverSurname(d).toLowerCase())) : null;
+    || cons.find(x => looseSameDriver(x.driver, d))) : null;
   const rangesText = c => c?.ranges?.length
     ? "Laps " + c.ranges.map(([a,b]) => a === b ? `${a}` : `${a}–${b}`).join(", ")
     : "";
@@ -6391,8 +6639,7 @@ function raceSummaryBlock(cp){
   if (cons && cons.some(c => c.seconds != null)){
     order.forEach(d => { totals[d] = 0; });
     cons.forEach(c => {
-      let d = order.find(x => sameDriverName(x, c.driver))
-        || order.find(x => driverSurname(x).toLowerCase() === driverSurname(c.driver).toLowerCase());
+      let d = findDriverMatch(c.driver, order);
       if (!d){ d = c.driver; order.push(d); colors[d] = DRIVER_PALETTE[(order.length - 1) % DRIVER_PALETTE.length]; totals[d] = 0; }
       totals[d] += (c.seconds || 0) / 60;
     });
@@ -6491,8 +6738,7 @@ async function saveLapFix(){
     const laps = await fetchAllRows(() => scope(supabase.from("redmist_live_laps").select("lap_number, driver_name")).eq("car_number", num).order("lap_number"));
     const pitLapOf = rmPitInLap; // stop rows record the out-lap — see rmAlignStopLaps
     const seen = [...new Set(laps.map(l => l.driver_name).filter(Boolean))];
-    const name = seen.find(n => sameDriverName(f.driver, n))
-      || seen.find(n => driverSurname(n).toLowerCase() === driverSurname(f.driver).toLowerCase()) || f.driver;
+    const name = findDriverMatch(f.driver, seen) || f.driver;
 
     const { data: updated, error } = await scope(supabase.from("redmist_live_laps").update({ driver_name: name }))
       .eq("car_number", num).gte("lap_number", from).lte("lap_number", to).select("lap_number");
@@ -7378,9 +7624,14 @@ async function handleAction(act, el){
 
       navPush();
       state.page = "setup";
-      // Sets the loading state synchronously, then bakes Saturday's
-      // lessons into Setup once the source race's data is read.
-      if (src) runSaturdayDebrief(src);
+      // Drop any driver Red Mist named by mistake on the source race first,
+      // then bake Saturday's lessons into Setup once its data is read.
+      if (src){
+        const carsAtCopy = state.cars;
+        pruneGhostDrivers(src, carsAtCopy)
+          .catch(e => console.warn("[duplicate] ghost-driver check failed:", e))
+          .then(changed => { if (changed && state.cars === carsAtCopy) render(); runSaturdayDebrief(src); });
+      }
       render(); break;
     }
     case "tm-select-car":
@@ -7832,6 +8083,7 @@ async function openRace(race){
 
   state.currentRaceId = race.id;
   state.currentStatus = race.status;
+
   state.eventName = race.eventName;
   state.eventDate = race.eventDateISO;
   state.cars = JSON.parse(JSON.stringify(race.cars));
