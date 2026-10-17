@@ -337,6 +337,7 @@
   /* Live track map: Red Mist GPS outline + Kingpin cars (see liveTrackMapSection) */
   .tm-map{width:100%;height:auto;display:block;max-height:420px;}
   .tm-car text{font-family:'JetBrains Mono',monospace;font-weight:700;text-anchor:middle;dominant-baseline:central;pointer-events:none;}
+  .tm-turn{font-family:'JetBrains Mono',monospace;font-weight:700;text-anchor:middle;dominant-baseline:central;pointer-events:none;fill:var(--textFaint);}
   .tm-legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textMuted);}
   .tm-legend .sw{width:9px;height:9px;border-radius:999px;display:inline-block;margin-right:6px;vertical-align:-1px;}
   .tm-legend b{color:var(--text);font-weight:700;}
@@ -716,6 +717,39 @@ const TRACKS = [
   "Sebring International Raceway","Virginia International Raceway","Watkins Glen International",
   "Other",
 ];
+
+// Corner numbers per track, keyed by the exact TRACKS entry: [turn
+// number, fraction of the lap from start/finish in the direction of
+// travel]. The live track map places each number that far along Red
+// Mist's GPS outline, so they survive map rebuilds and any drawn size.
+// Numbers are explicit because official numbering can skip (Sebring has
+// no Turn 12). Labels sit on the outside of the bend; an optional third
+// value ("n", "e", "sw" …) forces a side where a kink is too slight to
+// tell, or the outside lands on another part of the track. Tracks not
+// listed get no corner numbers.
+const TRACK_CORNERS = {
+  "Sebring International Raceway": [
+    [1, 0.0778], [2, 0.1341], [3, 0.1589], [4, 0.1728], [5, 0.1920], [6, 0.2347],
+    [7, 0.3402], [8, 0.3577], [9, 0.4108], [10, 0.4742], [11, 0.5148], [13, 0.5561],
+    [14, 0.6236, "e"], [15, 0.6881], [16, 0.7317], [17, 0.9192],
+  ],
+};
+// Red Mist's track names don't always match TRACKS ("Michelin Raceway
+// Road Atlanta"), so a name matches an entry when it contains every
+// distinctive word of it — generic words like "International" ignored.
+const TRACK_NAME_FILLER = new Set(["international","raceway","motorsports","motorsport","park","circuit","speedway","course","sports","car","grand","prix","the","of","de"]);
+function trackCornersFor(...names){
+  for (const name of names){
+    if (!name) continue;
+    if (TRACK_CORNERS[name]) return TRACK_CORNERS[name];
+    const words = String(name).toLowerCase().match(/[a-z]+/g) || [];
+    for (const [key, list] of Object.entries(TRACK_CORNERS)){
+      const keyWords = (key.toLowerCase().match(/[a-z]+/g) || []).filter(w => !TRACK_NAME_FILLER.has(w));
+      if (keyWords.length && keyWords.every(w => words.includes(w))) return list;
+    }
+  }
+  return null;
+}
 
 // ---- scheduled quiet time (automatic, not user-editable) ----
 // Two tracks impose a mandated Sunday pause at a fixed local clock time.
@@ -1459,6 +1493,8 @@ const DEBRIEF = {
   BAR_RED_GAP: 2.0,    // driver bar: s/lap behind the field line that reads full red (at/ahead of it = green) // no flag data: most of the field this far off pace = caution
   TRAFFIC_PCT: 0.015,  // lap this far over the stint's typical field-relative lap = traffic lap
   FIELD_WINDOW_MIN: 5, // field pace at a moment = other class cars' laps this many minutes either side
+  WARM_LAPS: 5,        // laps after a stop compared with the rest of that stint (tyres, new driver settling in)
+  RARE_CHANGE_PCT: 0.3, // a driver change at a stop number this few of the class also made reads as unusual
 };
 
 function debriefMedian(xs){
@@ -1708,6 +1744,25 @@ function debriefTrackFactor(stintsByCar){
     for (let k = lo; k < pts.length && pts[k].ts <= ts + W; k++) win.push(pts[k].r);
     return win.length >= 8 ? debriefMedian(win) : 1;
   };
+}
+
+// Time lost settling in after each stop: the first WARM_LAPS green laps of
+// a stint vs. the rest of the same stint, both against the class field
+// at the time. Measured against the stint's own settled pace, so it's the
+// cost of the stop (cold tyres, a new driver getting up to speed), not
+// how quick the driver is. change = the stint began with a driver change.
+function debriefWarmups(stints){
+  const out = [];
+  stints.forEach((s, i) => {
+    if (!i) return;
+    const d = s.laps.filter(l => l.f && !l.pit && !l.flagged && l.t).map(l => l.t - l.f.mean);
+    if (d.length < DEBRIEF.WARM_LAPS + 5) return;
+    out.push({
+      change: s.driver !== stints[i - 1].driver,
+      cost: debriefMean(d.slice(0, DEBRIEF.WARM_LAPS)) - debriefMedian(d.slice(DEBRIEF.WARM_LAPS)),
+    });
+  });
+  return out;
 }
 
 function debriefStintReport(stints, field, num, stops, stopRef, stopTime){
@@ -2115,6 +2170,28 @@ async function buildSaturdayDebrief(src){
     stopRefByClass[cls] = { change: ch.length >= 3 ? debriefMedian(ch) : all, service: sv.length >= 3 ? debriefMedian(sv) : all };
   });
 
+  // Key takeaways: how each class approached its stops — per stop number,
+  // how many cars stopped and how many of those changed drivers — plus
+  // every car's settling-in cost after its stops.
+  const classKeys = {};
+  [...new Set(classification.map(c => c.resultClass))].forEach(cls => {
+    const nums = classification.filter(c => c.resultClass === cls && c.status !== "DNS").map(c => c.startNumber);
+    const byCar = Object.fromEntries(nums.map(n => [n,
+      pitStops.filter(s => s.car_number === n && keptStop(s)).sort((a, b) => a.lap_number - b.lap_number)]));
+    const most = Math.max(0, ...Object.values(byCar).map(l => l.length));
+    const byIndex = Array.from({ length: most }, (_, k) => {
+      const at = nums.filter(n => byCar[n][k]);
+      return { cars: at.length, changes: at.filter(n => byCar[n][k].driver_change).length };
+    });
+    classKeys[cls] = {
+      cars: nums.length,
+      changedCars: nums.filter(n => byCar[n].some(s => s.driver_change)).length,
+      byIndex,
+      stopRef: stopRefByClass[cls],
+      warmByCar: Object.fromEntries(nums.map(n => [n, debriefWarmups(stintsByNum[n] || [])])),
+    };
+  });
+
   const cars = {};
   classification.forEach(c => {
     const stints = stintsByNum[c.startNumber];
@@ -2147,6 +2224,11 @@ async function buildSaturdayDebrief(src){
       netPerStop: moves.length ? debriefMean(moves) : null,
       avgStintMin: debriefMean(full.map(s => s.minutes)),
       closer: closing ? closing.driver : null,
+      // Key takeaways inputs: this car's stops in order (driver change or
+      // not, time stationary) and the class picture they're judged against.
+      keyStops: stops.slice().sort((a, b) => a.lap_number - b.lap_number)
+        .map(st => { const t = stopTime(st); return { change: !!st.driver_change, sec: t.sec, repair: t.repair }; }),
+      classKeys: classKeys[c.resultClass] || null,
     };
   });
   return { sourceName: src.eventName, cars, paceCharts };
@@ -2405,9 +2487,64 @@ function renderDebriefPanel(){
     return worst ? `<div style="margin:10px 0 6px;">${row(worst)}</div>` : "";
   };
 
+  // Key takeaways: where this car lost time against its class, and how its
+  // stop strategy differed from the field's — car-level only, no driver
+  // named, so the point is what to change, not who.
+  const ourNums = new Set(db.cars.map(c => String(c.number)));
+  const fmtDur = s => { const a = Math.round(Math.abs(s)); return a >= 60 ? `${Math.floor(a / 60)}:${String(a % 60).padStart(2, "0")}` : `${a}s`; };
+  const keyTakeaways = c => {
+    const sat = c.sat, ck = sat.classKeys, out = [];
+    const red = t => `<span style="font-weight:600;color:${T.red};">${t}</span>`;
+    const ourStops = sat.keyStops || [];
+
+    // 1. Biggest time loss vs. the class, by kind, over the whole race.
+    const rep = (sat.stintReport || []).filter(Boolean);
+    const sum = k => rep.reduce((a, r) => a + Math.max(0, r[k] || 0), 0);
+    const kinds = [["Pit stops", sum("pit")], ["Pace", sum("pace")], ["Traffic", sum("traffic")]]
+      .filter(k => k[1] >= 5).sort((a, b) => b[1] - a[1]);
+    if (kinds.length) out.push(`Most time lost to the class: ${kinds.map((k, i) => i ? `${k[0]} ${fmtDur(k[1])}` : red(`${k[0]} ${fmtDur(k[1])}`)).join(" · ")}`);
+
+    if (ck){
+      // 2. Driver changes the class mostly didn't make, stop by stop.
+      ourStops.forEach((st, k) => {
+        const at = ck.byIndex[k];
+        if (!st.change || !at || at.cars < 3) return;
+        if (at.changes / at.cars <= DEBRIEF.RARE_CHANGE_PCT)
+          out.push(`Pit stop ${k + 1}: ${red("driver change")} — only ${at.changes} of ${at.cars} ${esc(sat.cls)} cars changed drivers at that stop`);
+      });
+      const ourChanges = ourStops.filter(st => st.change).length;
+      if (ourChanges && ck.changedCars / ck.cars <= 0.5)
+        out.push(`${ourChanges} driver change${ourChanges === 1 ? "" : "s"} — ${ck.changedCars} of ${ck.cars} ${esc(sat.cls)} cars changed drivers at all`);
+
+      // 3. Extra time stationary for a driver change vs. a fuel-only stop.
+      const changeSecs = ourStops.filter(st => st.change && !st.repair).map(st => st.sec);
+      const svc = ck.stopRef?.service;
+      if (changeSecs.length && svc != null){
+        const extra = debriefMedian(changeSecs) - svc;
+        if (extra >= 3) out.push(`Each driver change stopped the car ${red(`~${Math.round(extra)}s longer`)} than the class's fuel-only stops (${fmtDur(extra * changeSecs.length)} over the race)`);
+      }
+
+      // 4. Settling in after a driver change vs. the class after its stops.
+      const ours = (ck.warmByCar[c.number] || []).filter(w => w.change).map(w => w.cost);
+      const field = Object.entries(ck.warmByCar).filter(([n]) => !ourNums.has(n)).flatMap(([, ws]) => ws.map(w => w.cost));
+      if (ours.length && field.length){
+        const o = debriefMean(ours), f = debriefMean(field);
+        if (o - f >= 0.3) out.push(`First ${DEBRIEF.WARM_LAPS} laps after our driver changes ran ${red(`+${o.toFixed(1)}s/lap`)} off the rest of the stint — the class averaged ${f >= 0 ? "+" : "−"}${Math.abs(f).toFixed(1)}s/lap after its stops`);
+      }
+    }
+
+    // 5. More stops than the class top 3.
+    const top = db.classes[sat.cls]?.top;
+    if (top && sat.stops && !top.nums.includes(String(c.number)) && sat.stops >= top.stops + 0.75)
+      out.push(`${sat.stops} stops — the ${esc(sat.cls)} top 3 averaged ${top.stops.toFixed(1)}`);
+
+    return out.length ? `<div style="margin:6px 0 10px;"><span class="eyebrow">Key Takeaways</span>${out.map(line).join("")}</div>` : "";
+  };
+
   const carBlocks = db.cars.map(c => `
     <div style="border-left:3px solid ${c.accent};padding-left:12px;margin-bottom:16px;">
       <div class="font-display" style="font-weight:600;font-size:14px;margin-bottom:4px;">#${esc(c.number)}</div>
+      ${keyTakeaways(c)}
       ${closerLine(c)}
       ${racePositionsLine(c)}
       ${stintsBlock(c)}
@@ -4180,7 +4317,7 @@ function liveTrackMapSection(race, standingsShown){
   const cars = [...ours, ...tmSelectedCars(new Set(ours.map(c => c.number)))];
   const by = race.redmistLive?.byCarNumber || {};
   const field = race.redmistLive?.fullField || [];
-  return trackMapBox(map, eventId, cars, c => by[c.number] || field.find(r => r.car_number === c.number), { showField: true });
+  return trackMapBox(map, eventId, cars, c => by[c.number] || field.find(r => r.car_number === c.number), { showField: true, track: race.track });
 }
 
 // Red Mist's centreline is learned from GPS, and its points are unevenly
@@ -4297,6 +4434,42 @@ function trackMapAt(geom, s){
   return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u };
 }
 
+// Corner number positions on the drawn line from a TRACK_CORNERS list.
+// Start/finish and travel direction come from Red Mist's calibration
+// (sf point + heading); without it, the outline's first point and its
+// own point order. Each label is pushed to the outside of the bend.
+// Cached per map.
+function trackMapCorners(map, list){
+  if (!list?.length) return [];
+  if (map._cornersFor === list) return map._corners;
+  const geom = trackMapGeom(map);
+  const { span, perim } = geom;
+  let s0 = 0, dir = 1;
+  if (map.sf){
+    s0 = trackMapSnap(geom, map.sf.x, map.sf.y).s;
+    const a = trackMapAt(geom, s0 - span * 0.01), b = trackMapAt(geom, s0 + span * 0.01);
+    const rad = map.sf.hdg * Math.PI / 180;
+    if ((b.x - a.x) * Math.sin(rad) + (b.y - a.y) * -Math.cos(rad) < 0) dir = -1;
+  }
+  const look = span * 0.025;
+  const COMPASS = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0], ne: [1, -1], nw: [-1, -1], se: [1, 1], sw: [-1, 1] };
+  const corners = list.map(([num, f, side]) => {
+    const s = s0 + dir * f * perim;
+    const p = trackMapAt(geom, s), a = trackMapAt(geom, s - dir * look), c = trackMapAt(geom, s + dir * look);
+    const t1x = p.x - a.x, t1y = p.y - a.y, t2x = c.x - p.x, t2y = c.y - p.y;
+    const l1 = Math.hypot(t1x, t1y) || 1, l2 = Math.hypot(t2x, t2y) || 1;
+    let ox = -(t2x / l2 - t1x / l1), oy = -(t2y / l2 - t1y / l1);
+    const lo = Math.hypot(ox, oy);
+    if (lo < 1e-3){ ox = -t2y / l2; oy = t2x / l2; } else { ox /= lo; oy /= lo; }
+    const forced = COMPASS[side];
+    if (forced){ const fl = Math.hypot(forced[0], forced[1]); ox = forced[0] / fl; oy = forced[1] / fl; }
+    return { num, x: p.x, y: p.y, ox, oy };
+  });
+  map._cornersFor = list;
+  map._corners = corners;
+  return corners;
+}
+
 // Cars picked from a standings table to follow on the map. Each gets its
 // own colour and is drawn like a Kingpin car (big numbered dot, in the
 // legend) but with a white ring, so gold still means Kingpin. Kept for the
@@ -4351,6 +4524,13 @@ function trackMapBox(map, eventId, cars, posOf, opts = {}){
             stroke="${T.white}" stroke-width="${(span * 0.008).toFixed(1)}" stroke-linecap="round"></line>`;
   }
 
+  // Corner numbers, just off the outside edge of the line.
+  const cornerList = trackCornersFor(opts.track, map.track);
+  const cornerLabels = cornerList ? trackMapCorners(map, cornerList).map(c => {
+    const d = span * 0.042;
+    return `<text class="tm-turn" x="${(c.x + c.ox * d).toFixed(1)}" y="${(c.y + c.oy * d).toFixed(1)}" font-size="${(span * 0.028).toFixed(1)}">${c.num}</text>`;
+  }).join("") : "";
+
   const r = span * 0.024;
   // Dots are placed by the ticker; the morph patcher leaves these groups
   // alone while their key is unchanged, so live ticks don't reset them.
@@ -4382,6 +4562,7 @@ function trackMapBox(map, eventId, cars, posOf, opts = {}){
         <path d="${line}" fill="none" stroke="${T.border}" stroke-width="${(span * 0.03).toFixed(1)}" stroke-linejoin="round"></path>
         <path d="${line}" fill="none" stroke="${T.panelRaised}" stroke-width="${(span * 0.018).toFixed(1)}" stroke-linejoin="round"></path>
         ${sf}
+        ${cornerLabels}
         ${field}
         <g class="tm-dots" data-morph-skip data-morph-key="${esc(key)}">${dots}</g>
       </svg>
@@ -5888,9 +6069,9 @@ function paceTrendFor(pos, sorted, key){
 // way (catching the car ahead, or pulling away from the car behind).
 // Returns { arrow, line } HTML, or null when there's no trend to show.
 // The car number is already shown on the tile, so the line omits it.
-//   Ahead,  we're faster:  ▲  "Catching · ~14 laps"
-//   Ahead,  we're slower:  ▼  "Losing · 0.6s/lap"
-//   Behind, they're faster: ▼ "Catching · ~10 laps"
+//   Ahead,  we're faster:  ▲  "Catching ~14 laps"
+//   Ahead,  we're slower:  ▼  "Losing 0.6s/lap"
+//   Behind, they're faster: ▼ "Catching ~10 laps"
 //   Behind, we're faster:  ▲  "Pulling away"
 function neighbourTrend(myNum, r, gapStr, role, key){
   if (!r) return null;
@@ -5901,11 +6082,11 @@ function neighbourTrend(myNum, r, gapStr, role, key){
   if (role === "ahead"){
     good = delta > 0;
     const laps = good ? paceTrendLaps(gapStr, rate) : null;
-    text = good ? `Catching${laps ? ` · ~${laps} laps` : ""}` : `Losing · ${rate.toFixed(1)}s/lap`;
+    text = good ? `Catching${laps ? ` ~${laps} laps` : ""}` : `Losing ${rate.toFixed(1)}s/lap`;
   } else {
     good = delta > 0; // we're faster than the car behind
     const laps = good ? null : paceTrendLaps(gapStr, rate);
-    text = good ? `Pulling away` : `Catching${laps ? ` · ~${laps} laps` : ""}`;
+    text = good ? `Pulling away` : `Catching${laps ? ` ~${laps} laps` : ""}`;
   }
   const color = good ? T.green : T.red;
   const title = `${role === "ahead" ? "Car ahead" : "Car behind"}: ${rate.toFixed(1)}s/lap over the last ${PACE_TREND_LAPS} clean laps`;
