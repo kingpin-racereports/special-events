@@ -337,6 +337,7 @@
   /* Live track map: Red Mist GPS outline + Kingpin cars (see liveTrackMapSection) */
   .tm-map{width:100%;height:auto;display:block;max-height:420px;}
   .tm-car text{font-family:'JetBrains Mono',monospace;font-weight:700;text-anchor:middle;dominant-baseline:central;pointer-events:none;}
+  .tm-turn{font-family:'JetBrains Mono',monospace;font-weight:700;text-anchor:middle;dominant-baseline:central;pointer-events:none;fill:var(--textFaint);}
   .tm-legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--textMuted);}
   .tm-legend .sw{width:9px;height:9px;border-radius:999px;display:inline-block;margin-right:6px;vertical-align:-1px;}
   .tm-legend b{color:var(--text);font-weight:700;}
@@ -716,6 +717,39 @@ const TRACKS = [
   "Sebring International Raceway","Virginia International Raceway","Watkins Glen International",
   "Other",
 ];
+
+// Corner numbers per track, keyed by the exact TRACKS entry: [turn
+// number, fraction of the lap from start/finish in the direction of
+// travel]. The live track map places each number that far along Red
+// Mist's GPS outline, so they survive map rebuilds and any drawn size.
+// Numbers are explicit because official numbering can skip (Sebring has
+// no Turn 12). Labels sit on the outside of the bend; an optional third
+// value ("n", "e", "sw" …) forces a side where a kink is too slight to
+// tell, or the outside lands on another part of the track. Tracks not
+// listed get no corner numbers.
+const TRACK_CORNERS = {
+  "Sebring International Raceway": [
+    [1, 0.0778], [2, 0.1341], [3, 0.1589], [4, 0.1728], [5, 0.1920], [6, 0.2347],
+    [7, 0.3402], [8, 0.3577], [9, 0.4108], [10, 0.4742], [11, 0.5148], [13, 0.5561],
+    [14, 0.6236, "e"], [15, 0.6881], [16, 0.7317], [17, 0.9192],
+  ],
+};
+// Red Mist's track names don't always match TRACKS ("Michelin Raceway
+// Road Atlanta"), so a name matches an entry when it contains every
+// distinctive word of it — generic words like "International" ignored.
+const TRACK_NAME_FILLER = new Set(["international","raceway","motorsports","motorsport","park","circuit","speedway","course","sports","car","grand","prix","the","of","de"]);
+function trackCornersFor(...names){
+  for (const name of names){
+    if (!name) continue;
+    if (TRACK_CORNERS[name]) return TRACK_CORNERS[name];
+    const words = String(name).toLowerCase().match(/[a-z]+/g) || [];
+    for (const [key, list] of Object.entries(TRACK_CORNERS)){
+      const keyWords = (key.toLowerCase().match(/[a-z]+/g) || []).filter(w => !TRACK_NAME_FILLER.has(w));
+      if (keyWords.length && keyWords.every(w => words.includes(w))) return list;
+    }
+  }
+  return null;
+}
 
 // ---- scheduled quiet time (automatic, not user-editable) ----
 // Two tracks impose a mandated Sunday pause at a fixed local clock time.
@@ -4180,7 +4214,7 @@ function liveTrackMapSection(race, standingsShown){
   const cars = [...ours, ...tmSelectedCars(new Set(ours.map(c => c.number)))];
   const by = race.redmistLive?.byCarNumber || {};
   const field = race.redmistLive?.fullField || [];
-  return trackMapBox(map, eventId, cars, c => by[c.number] || field.find(r => r.car_number === c.number), { showField: true });
+  return trackMapBox(map, eventId, cars, c => by[c.number] || field.find(r => r.car_number === c.number), { showField: true, track: race.track });
 }
 
 // Red Mist's centreline is learned from GPS, and its points are unevenly
@@ -4297,6 +4331,42 @@ function trackMapAt(geom, s){
   return { x: a.x + (b.x - a.x) * u, y: a.y + (b.y - a.y) * u };
 }
 
+// Corner number positions on the drawn line from a TRACK_CORNERS list.
+// Start/finish and travel direction come from Red Mist's calibration
+// (sf point + heading); without it, the outline's first point and its
+// own point order. Each label is pushed to the outside of the bend.
+// Cached per map.
+function trackMapCorners(map, list){
+  if (!list?.length) return [];
+  if (map._cornersFor === list) return map._corners;
+  const geom = trackMapGeom(map);
+  const { span, perim } = geom;
+  let s0 = 0, dir = 1;
+  if (map.sf){
+    s0 = trackMapSnap(geom, map.sf.x, map.sf.y).s;
+    const a = trackMapAt(geom, s0 - span * 0.01), b = trackMapAt(geom, s0 + span * 0.01);
+    const rad = map.sf.hdg * Math.PI / 180;
+    if ((b.x - a.x) * Math.sin(rad) + (b.y - a.y) * -Math.cos(rad) < 0) dir = -1;
+  }
+  const look = span * 0.025;
+  const COMPASS = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0], ne: [1, -1], nw: [-1, -1], se: [1, 1], sw: [-1, 1] };
+  const corners = list.map(([num, f, side]) => {
+    const s = s0 + dir * f * perim;
+    const p = trackMapAt(geom, s), a = trackMapAt(geom, s - dir * look), c = trackMapAt(geom, s + dir * look);
+    const t1x = p.x - a.x, t1y = p.y - a.y, t2x = c.x - p.x, t2y = c.y - p.y;
+    const l1 = Math.hypot(t1x, t1y) || 1, l2 = Math.hypot(t2x, t2y) || 1;
+    let ox = -(t2x / l2 - t1x / l1), oy = -(t2y / l2 - t1y / l1);
+    const lo = Math.hypot(ox, oy);
+    if (lo < 1e-3){ ox = -t2y / l2; oy = t2x / l2; } else { ox /= lo; oy /= lo; }
+    const forced = COMPASS[side];
+    if (forced){ const fl = Math.hypot(forced[0], forced[1]); ox = forced[0] / fl; oy = forced[1] / fl; }
+    return { num, x: p.x, y: p.y, ox, oy };
+  });
+  map._cornersFor = list;
+  map._corners = corners;
+  return corners;
+}
+
 // Cars picked from a standings table to follow on the map. Each gets its
 // own colour and is drawn like a Kingpin car (big numbered dot, in the
 // legend) but with a white ring, so gold still means Kingpin. Kept for the
@@ -4351,6 +4421,13 @@ function trackMapBox(map, eventId, cars, posOf, opts = {}){
             stroke="${T.white}" stroke-width="${(span * 0.008).toFixed(1)}" stroke-linecap="round"></line>`;
   }
 
+  // Corner numbers, just off the outside edge of the line.
+  const cornerList = trackCornersFor(opts.track, map.track);
+  const cornerLabels = cornerList ? trackMapCorners(map, cornerList).map(c => {
+    const d = span * 0.042;
+    return `<text class="tm-turn" x="${(c.x + c.ox * d).toFixed(1)}" y="${(c.y + c.oy * d).toFixed(1)}" font-size="${(span * 0.028).toFixed(1)}">${c.num}</text>`;
+  }).join("") : "";
+
   const r = span * 0.024;
   // Dots are placed by the ticker; the morph patcher leaves these groups
   // alone while their key is unchanged, so live ticks don't reset them.
@@ -4382,6 +4459,7 @@ function trackMapBox(map, eventId, cars, posOf, opts = {}){
         <path d="${line}" fill="none" stroke="${T.border}" stroke-width="${(span * 0.03).toFixed(1)}" stroke-linejoin="round"></path>
         <path d="${line}" fill="none" stroke="${T.panelRaised}" stroke-width="${(span * 0.018).toFixed(1)}" stroke-linejoin="round"></path>
         ${sf}
+        ${cornerLabels}
         ${field}
         <g class="tm-dots" data-morph-skip data-morph-key="${esc(key)}">${dots}</g>
       </svg>
@@ -5887,25 +5965,25 @@ function paceTrendFor(pos, sorted, key){
 // Car tile Car Ahead / Car Behind trend. `good` = the gap is moving our
 // way (catching the car ahead, or pulling away from the car behind).
 // Returns { arrow, line } HTML, or null when there's no trend to show.
-//   Ahead,  we're faster:  ▲  "Catching #4 · ~14 laps"
-//   Ahead,  we're slower:  ▼  "Losing #4 · 0.6s/lap"
-//   Behind, they're faster: ▼ "#18 catching · ~10 laps"
-//   Behind, we're faster:  ▲  "Pulling away from #18"
+// The car number is already shown on the tile, so the line omits it.
+//   Ahead,  we're faster:  ▲  "Catching ~14 laps"
+//   Ahead,  we're slower:  ▼  "Losing 0.6s/lap"
+//   Behind, they're faster: ▼ "Catching ~10 laps"
+//   Behind, we're faster:  ▲  "Pulling away"
 function neighbourTrend(myNum, r, gapStr, role, key){
   if (!r) return null;
   const delta = paceTrendDelta(myNum, r.car_number, key);
   if (delta == null) return null;
   const rate = Math.abs(delta);
-  const n = `#${esc(r.car_number)}`;
   let good, text;
   if (role === "ahead"){
     good = delta > 0;
     const laps = good ? paceTrendLaps(gapStr, rate) : null;
-    text = good ? `Catching ${n}${laps ? ` · ~${laps} laps` : ""}` : `Losing ${n} · ${rate.toFixed(1)}s/lap`;
+    text = good ? `Catching${laps ? ` ~${laps} laps` : ""}` : `Losing ${rate.toFixed(1)}s/lap`;
   } else {
     good = delta > 0; // we're faster than the car behind
     const laps = good ? null : paceTrendLaps(gapStr, rate);
-    text = good ? `Pulling away from ${n}` : `${n} catching${laps ? ` · ~${laps} laps` : ""}`;
+    text = good ? `Pulling away` : `Catching${laps ? ` ~${laps} laps` : ""}`;
   }
   const color = good ? T.green : T.red;
   const title = `${role === "ahead" ? "Car ahead" : "Car behind"}: ${rate.toFixed(1)}s/lap over the last ${PACE_TREND_LAPS} clean laps`;
