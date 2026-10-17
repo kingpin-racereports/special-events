@@ -1441,15 +1441,44 @@ function rmDriverForLaps(carNumber, laps, lapRows, pitStops, finalDriver){
   return laps.map(l => segDriver[segOf(l.lap)]);
 }
 
+// Track-condition factor for one class: at any moment, the median of every
+// class car's green lap over its own normal lap within FACTOR_WINDOW_MIN
+// either side (1.06 = the field is lapping 6% slower, e.g. a wet track).
+// Hardship "x" entries are left out.
+function rmConditionFactor(classCars, lapsByPos){
+  const pts = [];
+  classCars.filter(c => !/x$/i.test(String(c.startNumber))).forEach(c => {
+    const g = (lapsByPos.get(c.position) || []).filter(l => !l.inPit && l.status === "GREEN" && l.lapTime && l.timeOfDay);
+    const med = debriefMedian(g.map(l => l.lapTime));
+    if (!med) return;
+    g.forEach(l => { const r = l.lapTime / med; if (r < 1 + DEBRIEF.CHART_CAUTION_PCT) pts.push({ ts: l.timeOfDay, r }); });
+  });
+  pts.sort((a, b) => a.ts - b.ts);
+  const W = DEBRIEF.FACTOR_WINDOW_MIN * 60000;
+  return ts => {
+    if (!ts || pts.length < 20) return 1;
+    let lo = 0, hi = pts.length;
+    while (lo < hi){ const m = (lo + hi) >> 1; if (pts[m].ts < ts - W) lo = m + 1; else hi = m; }
+    const win = [];
+    for (let k = lo; k < pts.length && pts[k].ts <= ts + W; k++) win.push(pts[k].r);
+    return win.length >= 8 ? debriefMedian(win) : 1;
+  };
+}
+
 // Per-driver lap-time standard deviation for this team's cars, over clean
 // green-flag laps (no pit / out / caution laps, nothing over 110% of that
-// driver's median) — the same rules as the live Consistency tile.
+// driver's median). Each lap is first adjusted for track conditions (lap ÷
+// the class's condition factor at that moment), so a driver who ran both a
+// dry and a wet spell isn't marked inconsistent for the weather.
 function rmDriverConsistency(ourNumbers, classification, lapsByPos, lapRows, pitStops, resultRows){
   const out = {};
+  const factorByClass = {};
+  const factorFor = cls => (factorByClass[cls] ||= rmConditionFactor(classification.filter(x => x.resultClass === cls), lapsByPos));
   const finalDriver = Object.fromEntries(resultRows.map(r => [String(r.car_number), r.driver_name]));
   classification.filter(c => ourNumbers.has(c.startNumber)).forEach(c => {
     const laps = lapsByPos.get(c.position) || [];
     const drivers = rmDriverForLaps(c.startNumber, laps, lapRows, pitStops, finalDriver[c.startNumber]);
+    const factor = factorFor(c.resultClass);
     const byDriver = {};
     laps.forEach((l, i) => {
       const d = drivers[i]; if (!d) return;
@@ -1459,7 +1488,7 @@ function rmDriverConsistency(ourNumbers, classification, lapsByPos, lapRows, pit
       // Contiguous lap ranges this driver was in the car, e.g. [[1,50],[90,120]].
       const last = g.ranges[g.ranges.length - 1];
       if (last && l.lap === last[1] + 1) last[1] = l.lap; else g.ranges.push([l.lap, l.lap]);
-      if (!l.inPit && l.status === "GREEN" && l.lapTime) g.times.push(l.lapTime);
+      if (!l.inPit && l.status === "GREEN" && l.lapTime) g.times.push(l.lapTime / (factor(l.timeOfDay) || 1));
     });
     out[c.startNumber] = Object.values(byDriver).map(g => {
       const t = [...g.times].sort((a, b) => a - b);
@@ -1467,7 +1496,7 @@ function rmDriverConsistency(ourNumbers, classification, lapsByPos, lapRows, pit
       const clean = med ? t.filter(x => x <= med * 1.10) : [];
       const avg = clean.length ? clean.reduce((a, b) => a + b, 0) / clean.length : null;
       const stdev = clean.length >= 3 ? Math.sqrt(clean.reduce((a, x) => a + (x - avg) ** 2, 0) / (clean.length - 1)) : null;
-      return { driver: g.driver, laps: g.laps, cleanLaps: clean.length, avg, stdev, ranges: g.ranges, seconds: g.seconds };
+      return { driver: g.driver, laps: g.laps, cleanLaps: clean.length, avg, stdev, ranges: g.ranges, seconds: g.seconds, adj: true };
     });
   });
   return out;
@@ -1938,7 +1967,7 @@ function debriefPaceSeries(stintsByNum, opts = {}){
     if (p.pit) return;
     b.total++;
     if (p.caution) b.flagged++;
-    else if (p.rel != null && p.rel <= 1 + DEBRIEF.CHART_OUTLIER_PCT) b.green.push(p.rel);
+    else if (p.rel != null && p.rel <= 1 + DEBRIEF.CHART_CAUTION_PCT) b.green.push(p.rel);
   });
   const hasFlags = spans.length > 0 || all.some(p => p.caution);
   const MIN_OVERLAP = 60000;
@@ -1961,7 +1990,12 @@ function debriefPaceSeries(stintsByNum, opts = {}){
     for (let j = Math.max(0, k - reach); j <= Math.min(nb - 1, k + reach); j++){
       if (!isCaution(bins[j])) rels.push(...bins[j].green);
     }
-    return rels.length >= 8 ? base * debriefMedian(rels) : null;
+    if (rels.length < 8) return null;
+    // Outliers are judged against the field at this moment, not each car's
+    // normal lap, so a whole-field slowdown (rain) stays on the line.
+    const local = debriefMedian(rels);
+    const kept = rels.filter(r => r <= local * (1 + DEBRIEF.CHART_OUTLIER_PCT));
+    return base * debriefMedian(kept.length >= 8 ? kept : rels);
   });
   const known = raw.map((t, k) => t == null ? null : k).filter(k => k != null);
   if (!known.length) return null;
@@ -2001,8 +2035,9 @@ function debriefPaceChartSvg(chart, lines, opts = {}){
   const height = opts.height || 200;
   const vals = lines.flatMap(l => l.points.filter(Boolean).map(p => p.t)).sort((a, b) => a - b);
   if (vals.length < 4 || !(chart.minutes > 0)) return "";
-  const q = f => vals[Math.min(vals.length - 1, Math.floor(vals.length * f))];
-  let lo = q(0.03), hi = q(0.97);
+  // Full range of what's drawn: every point is already a smoothed median,
+  // so trimming percentiles only clipped real slow spells (e.g. a wet track).
+  let lo = vals[0], hi = vals[vals.length - 1];
   const pad = Math.max(0.3, (hi - lo) * 0.12);
   lo -= pad; hi += pad;
   const VW = 1000, VH = 100;
@@ -2764,7 +2799,7 @@ async function loadRedmistArchive(race){
   // No summary yet, or one saved before fastest-stop / driver consistency
   // were added — build (and, for engineers, save) a fresh one.
   const dcEntries = summary ? Object.values(summary.driver_consistency || {}).flat() : [];
-  if (!summary || summary.driver_consistency == null || summary.pit_times == null || dcEntries.some(e => !e.ranges || e.seconds == null)) return buildRedmistArchive(race, { save: state.isEngineer });
+  if (!summary || summary.driver_consistency == null || summary.pit_times == null || dcEntries.some(e => !e.ranges || e.seconds == null || e.adj !== true)) return buildRedmistArchive(race, { save: state.isEngineer });
   return rmAssemble(rmClassification(resultRows), resultRows[0].session_name, summary);
 }
 
@@ -5500,7 +5535,7 @@ function renderPlan(){
         <span style="color:${bannerColor}">Archived — results below by car</span>
       </div>` : ""}
 
-      ${archived ? `<div class="archive-top">${renderArchiveResultsPanel(race)}${competitorPitTimesPanel(race)}</div>` : ""}
+      ${archived ? `<div class="archive-top">${renderArchiveResultsPanel(race)}</div>` : ""}
 
       ${!archived ? renderLiveRaceSummary(race) : ""}
       ${finalTop}
@@ -5544,11 +5579,12 @@ function infoChip(iconName,label,value){
 // Competitors Pit Times (archive, Red Mist results only): each GTO
 // finisher's stops, driver changes and total time in the pits, least
 // first. Colour is by rank (green -> red) so one long stop doesn't flatten
-// everyone else's colour; the bar is actual time.
-function competitorPitTimesPanel(race){
+// everyone else's colour; the bar is actual time. Shown inside each car's
+// tile (full width, under Drivers / Pit Stops) with that car highlighted.
+function competitorPitTimesPanel(race, focusNum){
   const rows = race?.archiveResults?.pitTimes;
   if (state.archiveLoading || !rows?.length) return "";
-  const ours = new Set(race.cars.map(c => c.number));
+  const ours = new Set(focusNum != null ? [String(focusNum)] : race.cars.map(c => String(c.number)));
   const maxS = Math.max(...rows.map(r => r.seconds), 1);
   const stops = [[63,178,127],[242,166,62],[226,68,92]]; // T.green -> T.amber -> T.red
   const rankColor = i => {
@@ -5561,7 +5597,7 @@ function competitorPitTimesPanel(race){
   // widths: no bar, short headers, team name wraps to at most two lines —
   // the whole table fits the screen with no sideways scroll.
   const body = rows.map((r, i) => {
-    const c = rankColor(i), isOurs = ours.has(r.num);
+    const c = rankColor(i), isOurs = ours.has(String(r.num));
     return `
       <div class="pit-times-row ${isOurs ? "ours" : ""}">
         <span class="pit-times-name"><span class="num" style="color:var(--textMuted);">#${esc(r.num)}</span> <span style="font-weight:600;">${esc(r.name)}</span></span>
@@ -5574,8 +5610,8 @@ function competitorPitTimesPanel(race){
       </div>`;
   }).join("");
   return `
-    <div class="results-panel fade-in">
-      <div style="margin-bottom:12px;"><span class="eyebrow" style="color:${T.gold};">Competitors Pit Times - GTO</span></div>
+    <div class="summary-box">
+      <div style="padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:6px;"><span class="fin-label" style="margin:0;">${icon("timer",12)} Competitor Pit Times · GTO</span></div>
       <div class="pit-times-row pit-times-head">
         <span class="fin-label" style="margin:0;">Competitor</span>
         <span class="fin-label" style="margin:0;justify-content:flex-end;">Stops</span>
@@ -6500,7 +6536,7 @@ function racePaceCarSegments(stints, chart){
   const green = l => l.t && l.ts && !l.pit && !l.caution && l.ts <= end;
   const ref = debriefMedian(stints.flatMap(s => s.laps).filter(green).map(l => l.t));
   if (!ref) return null;
-  const max = ref * (1 + DEBRIEF.CHART_OUTLIER_PCT);
+  const max = ref * (1 + DEBRIEF.CHART_CAUTION_PCT); // wide cap; outliers are trimmed per point below
   return stints.map(s => {
     const first = s.laps[0], last = s.laps[s.laps.length - 1];
     if (!first.ts || !last.ts) return null;
@@ -6512,7 +6548,12 @@ function racePaceCarSegments(stints, chart){
     const points = chart.field.map(p => {
       if (p.m < from || p.m > to || inCaution(p.m)) return null;
       const win = laps.filter(l => Math.abs(l.m - p.m) <= W).map(l => l.t);
-      return win.length >= 3 ? { m: p.m, t: debriefMedian(win) } : null;
+      if (win.length < 3) return null;
+      // Outliers vs. this car's laps around this moment, not its race-long
+      // normal, so a wet spell is drawn rather than dropped.
+      const local = debriefMedian(win);
+      const kept = win.filter(t => t <= local * (1 + DEBRIEF.CHART_OUTLIER_PCT));
+      return { m: p.m, t: debriefMedian(kept.length >= 3 ? kept : win) };
     });
     return { driver: s.driver, from: Math.max(0, from), to: Math.min(chart.minutes, to), firstLap: first.lap, lastLap: last.lap, points };
   }).filter(Boolean);
@@ -7141,7 +7182,7 @@ function carPlanSection(cp, plan, archived){
 
       ${isCollapsed ? "" : `
       <div class="car-plan-body fade-in">
-      ${archived ? `<div class="arch-dash">${archiveCarHeaderBlock(car)}${racePaceBlock(cp)}<div class="arch-split">${raceSummaryBlock(cp)}${pitCycleBlock(car)}</div></div>` : ""}
+      ${archived ? `<div class="arch-dash">${archiveCarHeaderBlock(car)}${racePaceBlock(cp)}<div class="arch-split">${raceSummaryBlock(cp)}${pitCycleBlock(car)}</div>${competitorPitTimesPanel(race, car.number)}</div>` : ""}
       ${hasLiveTiming ? liveTimingBlock(car) : ""}
 
       ${archived ? stintSectionOpen(car, stints, cp) : ""}
