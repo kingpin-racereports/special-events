@@ -848,6 +848,7 @@ let state = {
   openStintNotes: new Set(), // UI-only: which stint rows have their note field expanded
   expandedCarPlans: new Set(), // UI-only: which cars' plan sections are expanded (archive view — collapsed by default)
   expandedStintSections: new Set(), // UI-only: archived car tiles whose Stints section is open (collapsed by default)
+  expandedDebriefSections: new Set(), // UI-only: archived race ids whose Race Debrief section is open (engineers, collapsed by default)
   addingReserve: new Set(), // UI-only: which cars currently have the "Add Reserve Driver" input open
   reserveDraft: {}, // UI-only: in-progress reserve driver name per car id, keyed by car.id
 
@@ -2441,8 +2442,15 @@ function applySaturdayDebrief(debrief){
   });
 
   // Rival summary per class we're racing in.
-  Object.keys(summary.classes).forEach(cls => {
-    const ourNums = new Set(state.cars.map(c => String(c.number)));
+  const ourNums = new Set(state.cars.map(c => String(c.number)));
+  Object.keys(summary.classes).forEach(cls => { summary.classes[cls] = debriefClassSummary(debrief, cls, ourNums); });
+  return summary;
+}
+
+// Class picture the debrief judges our cars against (top 3 stops/stint
+// length, stop times, closers, pace chart). Shared by the Setup debrief
+// and the archived Race Debrief.
+function debriefClassSummary(debrief, cls, ourNums){
     const field = Object.values(debrief.cars).filter(c => c.cls === cls);
     const ranked = field.filter(c => c.status === "Normal" && c.classPos != null).sort((a, b) => a.classPos - b.classPos);
     const top = ranked.slice(0, 3), rest = ranked.slice(3);
@@ -2451,7 +2459,7 @@ function applySaturdayDebrief(debrief){
     const movers = field.filter(c => c.netPerStop != null && c.stops >= 2).sort((a, b) => b.netPerStop - a.netPerStop);
     const rivalClosers = top.filter(c => !ourNums.has(c.num) && c.closer && c.profiles[c.closer]?.raceDelta != null)
       .map(c => ({ num: c.num, name: c.name, driver: c.closer, raceDelta: c.profiles[c.closer].raceDelta }));
-    summary.classes[cls] = {
+    return {
       top: top.length ? { stops: avg(top, "stops"), stintMin: avg(top, "avgStintMin"), nums: top.map(c => c.num) } : null,
       rest: rest.length ? { stops: avg(rest, "stops"), stintMin: avg(rest, "avgStintMin") } : null,
       bestStop: stopTimes[0] || null,
@@ -2460,7 +2468,26 @@ function applySaturdayDebrief(debrief){
       rivalClosers,
       chart: debrief.paceCharts?.[cls] || null,
     };
+}
+
+// Archived Race Debrief: the same per-car read-out as the Setup debrief,
+// built for this race's own session and its own drivers — nothing is
+// applied to the plan (no stint lengths, no closer).
+function archiveDebriefSummary(race, debrief){
+  const summary = { sourceName: race.eventName, cars: [], classes: {} };
+  (race.cars || []).forEach(car => {
+    if (isHardshipCar(car.number)) return;
+    const sat = debrief.cars[String(car.number)];
+    if (!sat) return;
+    const drivers = (car.drivers || []).filter(d => d && d.trim()).map(d => {
+      const m = debriefMatchDriver(d, sat.profiles);
+      return { name: d, satName: m ? m.name : null, profile: m ? m.profile : null, raceDelta: m ? m.profile.raceDelta : null };
+    });
+    summary.cars.push({ number: car.number, accent: car.accent, notes: [], drivers, closer: null, closerPlaced: false, sat });
+    summary.classes[sat.cls] = true;
   });
+  const ourNums = new Set(summary.cars.map(c => String(c.number)));
+  Object.keys(summary.classes).forEach(cls => { summary.classes[cls] = debriefClassSummary(debrief, cls, ourNums); });
   return summary;
 }
 
@@ -2616,9 +2643,9 @@ function debriefFadeBar(p){
     </div>`;
 }
 
-function renderDebriefPanel(){
-  const db = state.debrief;
-  if (!db || state.currentRaceId) return "";
+function renderDebriefPanel(dbArg, opts = {}){
+  const db = dbArg || state.debrief;
+  if (!dbArg && (!db || state.currentRaceId)) return "";
   if (db.status === "loading"){
     return `<section style="margin-bottom:32px;"><h2>Saturday Debrief</h2>
       <div class="catalog-panel" style="margin-top:0;color:var(--textMuted);font-size:13px;">Reading ${esc(db.sourceName)}…</div></section>`;
@@ -2773,6 +2800,9 @@ function renderDebriefPanel(){
     ], { ariaLabel: `${cls} field race pace with Kingpin cars, by hour` });
     return chart ? `<div style="margin-bottom:18px;"><span class="eyebrow">Race Pace by Hour${Object.keys(db.classes).length > 1 ? ` · ${esc(cls)}` : ""}</span><div style="margin-top:8px;">${chart}</div></div>` : "";
   }).join("");
+
+  // Archived Race Debrief: contents only — the collapsible supplies the frame.
+  if (opts.bare) return `${classBlocks}${carBlocks || line("None of these cars ran in that race.")}`;
 
   return `
     <section style="margin-bottom:32px;">
@@ -3621,12 +3651,22 @@ function liveCarStatus(pos, leaderLaps, opts = {}){
     if (ref && Number.isFinite(t) && (ref - t) / 60000 >= INACTIVE_AFTER_MIN) return { label: "Inactive", tone: "dnf" };
     return null;
   }
-  if (pos.is_stale === true) return { label: "Inactive", tone: "dnf" };
+  // Red Mist flips is_stale while a car is on its pit-in lap — it leaves the
+  // track loops for pit lane and goes unseen until the pit-in loop sets
+  // in_pit. So stale only counts once the car is also overdue: no lap for
+  // two of its own lap times (5 min if it has none).
+  if (pos.is_stale === true && staleOverdue(pos)) return { label: "Inactive", tone: "dnf" };
   if (pos.last_lap_at && Number(state.homeLive.flag) !== 3){
     const mins = (liveNowMs() - new Date(pos.last_lap_at).getTime()) / 60000;
     if (mins >= INACTIVE_AFTER_MIN) return { label: `Inactive ${Math.floor(mins)}m`, tone: "dnf" };
   }
   return null;
+}
+function staleOverdue(pos){
+  if (!pos.last_lap_at) return true;
+  const lap = rmTimeToSeconds(pos.last_lap_time);
+  const graceMs = lap > 0 ? lap * 2000 : 5 * 60000;
+  return liveNowMs() - new Date(pos.last_lap_at).getTime() >= graceMs;
 }
 // Latest lap completion anywhere in the field — the post-checkered
 // reference for "stopped before the end".
@@ -5635,6 +5675,7 @@ function renderPlan(){
       </div>` : ""}
 
       ${archived ? `<div class="archive-top">${renderArchiveResultsPanel(race)}</div>` : ""}
+      ${archived ? debriefSectionHtml(race) : ""}
 
       ${!archived ? renderLiveRaceSummary(race) : ""}
       ${finalTop}
@@ -5905,6 +5946,8 @@ async function loadQualifyingResults(race){
   // race.redmistEventId can still be null in memory if the race was opened
   // before the server auto-linked it; fall back to the attached live event.
   const eventId = race.redmistEventId ?? (race.id === state.currentRaceId ? state.redmistEventId : null);
+  // Sunday's grid is set by Saturday's race (fastest lap within class), not qualifying.
+  if (isSundayRace(race)) return loadSundayGrid(race, eventId);
   if (eventId == null){ console.log("[quali-results] no event id linked to this race yet — skipping"); return; } // TEMP debug
   const { data, error } = await supabase
     .from("redmist_live_positions").select("*")
@@ -5920,6 +5963,37 @@ async function loadQualifyingResults(race){
   });
   race.qualiResults = { sessions: Object.values(bySession) };
   console.log("[quali-results] event", eventId, "sessions:", race.qualiResults.sessions.map(g => `${g.key} (${g.rows.length} cars)`), "| live key:", qualiSessionKey(state.liveSession)); // TEMP debug
+  applyQualifyingStartPositions(race);
+  scheduleRender();
+}
+
+// Sunday race plan? Keyed off the plan's own race day (plan start, else the
+// Race Date set on Setup).
+function isSundayRace(race){
+  return !!race && racePaceIsSunday(racePaceRaceDay(race, null));
+}
+
+// Sunday starting order = Saturday's race, fastest lap within each class.
+// Stored in the same shape as qualiResults so qualiClassStartPos() and
+// applyQualifyingStartPositions() work unchanged; the panels never render
+// on Sunday (see renderQualifyingPanels).
+async function sundayGridRows(race, eventId){
+  const satDay = racePacePrevDay(racePaceRaceDay(race, null));
+  if (eventId != null){
+    return racePaceSaturdayRows(race, [{ event_id: eventId, session_id: race.redmistSessionId, session_name: race.redmistSessionName }], satDay);
+  }
+  // Not linked to an event yet — use Saturday's plan at the same track.
+  const satRace = (state.races || []).find(r => r.id !== race.id && r.track === race.track && racePaceRaceDay(r, null) === satDay);
+  return satRace ? fetchRedmistResultRows(satRace, true) : null;
+}
+
+async function loadSundayGrid(race, eventId){
+  let rows;
+  try { rows = await sundayGridRows(race, eventId); }
+  catch (e){ console.error("[sunday-grid] Saturday results fetch failed:", e); return; }
+  if (!rows?.length){ console.log("[sunday-grid] no Saturday race results found for race", race.id); return; } // TEMP debug
+  race.qualiResults = { fromSaturday: true, sessions: [{ key: `${rows[0].session_id}|${rows[0].session_name}`, id: Number(rows[0].session_id), name: rows[0].session_name, rows, latest: 0 }] };
+  console.log("[sunday-grid] start order from", rows[0].session_name, `(${rows.length} cars)`); // TEMP debug
   applyQualifyingStartPositions(race);
   scheduleRender();
 }
@@ -6082,6 +6156,7 @@ function applyQualifyingStartPositions(race){
 // any) uses the realtime full-field data and is badged Live; the rest are
 // Finished. Replaced entirely by race standings during a Race session.
 function renderQualifyingPanels(race){
+  if (isSundayRace(race)) return ""; // Sunday: race table only
   const liveQuali = isLiveAttached(race) && state.liveSession?.type === "Qualifying";
   const liveKey = liveQuali ? qualiSessionKey(state.liveSession) : null;
   const ourNumbers = new Set(race.cars.map(c => c.number));
@@ -7436,7 +7511,7 @@ function carPlanSection(cp, plan, archived){
           </div>` : ""}`;
         }).join("")}
       </div>
-      ${startPos==null ? `<p style="font-size:11px;color:var(--textFaint);margin:6px 2px 0;">Starting position fills in automatically from qualifying results — the finish-position heatmap turns on once it's available.</p>` : ""}
+      ${startPos==null ? `<p style="font-size:11px;color:var(--textFaint);margin:6px 2px 0;">Starting position fills in automatically from ${isSundayRace(race) ? "Saturday's fastest laps" : "qualifying results"} — the finish-position heatmap turns on once it's available.</p>` : ""}
 
       ${!readOnly ? `
       <div class="reserve-driver-block">
@@ -7490,6 +7565,67 @@ function stintSectionOpen(car, stints, cp){
           <span class="meta">${meta}<span class="chev" style="display:flex;">${icon(open ? "chevronUp" : "chevronDown", 16)}</span></span>
         </div>
         <div class="stint-section-body">`;
+}
+
+// Archived races, engineers only: collapsible Race Debrief for the race's
+// own session — every Kingpin car plus the class pace chart. Sits between
+// the overview tiles and the car tiles. Built once per race on first open
+// and cached; fills in place when it lands (no re-render, no scroll jump).
+const raceDebriefCache = new Map(); // race.id -> { status: "loading" | "ready" | "none", summary }
+function debriefSectionHtml(race){
+  if (!state.isEngineer || !race) return "";
+  const open = state.expandedDebriefSections.has(race.id);
+  return `
+      <div class="stint-section debrief-section ${open ? "open" : ""}" data-debrief-race="${race.id}" style="margin-top:24px;">
+        <div class="stint-section-head" data-act="toggle-debrief-section" data-race="${race.id}" role="button" tabindex="0" aria-expanded="${open}">
+          <span class="fin-label" style="margin:0;">${icon("flag",12)} Race Debrief</span>
+          <span class="meta"><span class="chev" style="display:flex;">${icon(open ? "chevronUp" : "chevronDown", 16)}</span></span>
+        </div>
+        <div class="stint-section-body">${open ? debriefSectionBody(race) : ""}</div>
+      </div>`;
+}
+function debriefSectionBody(race){
+  const entry = raceDebriefCache.get(race.id);
+  if (!entry) loadRaceDebrief(race);
+  const msg = t => `<div class="catalog-panel" style="margin-top:0;font-size:12px;color:var(--textFaint);">${t}</div>`;
+  if (!entry || entry.status === "loading") return msg("Reading race data…");
+  if (entry.status !== "ready") return msg("No debrief available for this race.");
+  return `<div class="catalog-panel" style="margin-top:0;">${renderDebriefPanel(entry.summary, { bare: true })}</div>`;
+}
+async function loadRaceDebrief(race){
+  if (raceDebriefCache.get(race.id)?.status === "loading") return;
+  raceDebriefCache.set(race.id, { status: "loading" });
+  try {
+    const debrief = await buildSaturdayDebrief(race); // any race's own session, despite the name
+    raceDebriefCache.set(race.id, debrief ? { status: "ready", summary: archiveDebriefSummary(race, debrief) } : { status: "none" });
+  } catch (e){
+    console.error("[race-debrief] build failed:", e);
+    raceDebriefCache.set(race.id, { status: "none" });
+  }
+  fillDebriefSection(race.id);
+}
+function debriefSectionEl(raceId){
+  return [...document.querySelectorAll(".debrief-section")].find(el => el.getAttribute("data-debrief-race") === String(raceId)) || null;
+}
+function fillDebriefSection(raceId){
+  if (state.currentRaceId !== raceId || !state.expandedDebriefSections.has(raceId)) return;
+  const race = state.races.find(r => r.id === raceId);
+  const body = debriefSectionEl(raceId)?.querySelector(".stint-section-body");
+  if (race && body) body.innerHTML = debriefSectionBody(race);
+}
+function toggleDebriefSection(raceId){
+  const race = state.races.find(r => String(r.id) === String(raceId));
+  if (!race) return;
+  const open = !state.expandedDebriefSections.has(race.id);
+  if (open) state.expandedDebriefSections.add(race.id); else state.expandedDebriefSections.delete(race.id);
+  const sec = debriefSectionEl(race.id);
+  if (!sec){ render(); return; }
+  sec.classList.toggle("open", open);
+  const head = sec.querySelector(".stint-section-head");
+  if (head) head.setAttribute("aria-expanded", String(open));
+  const chev = sec.querySelector(".stint-section-head .chev");
+  if (chev) chev.innerHTML = icon(open ? "chevronUp" : "chevronDown", 16);
+  if (open) fillDebriefSection(race.id);
 }
 
 function toggleStintSection(carId){
@@ -7751,6 +7887,7 @@ async function handleAction(act, el){
           id: uid("car"),
           drivers: [...c.drivers],
           driverStintMode: c.driverStintMode ? [...c.driverStintMode] : c.drivers.map(()=>'60'),
+          startingPosition: null,
           finishPosition: null,
         }));
         state.track = TRACKS.includes(src.track) ? src.track : (src.track ? "Other" : "");
@@ -8025,6 +8162,10 @@ async function handleAction(act, el){
       toggleStintSection(el.getAttribute("data-car"));
       break;
     }
+    case "toggle-debrief-section": {
+      toggleDebriefSection(el.getAttribute("data-race"));
+      break;
+    }
     case "toggle-car-plan": {
       const carId = el.getAttribute("data-car");
       // One open tile at a time: opening a car closes any other.
@@ -8250,6 +8391,7 @@ async function openRace(race){
   state.finishDrafts = {};
   state.expandedCarPlans = new Set();
   state.expandedStintSections = new Set();
+  state.expandedDebriefSections = new Set();
   state.addingReserve = new Set();
   state.reserveDraft = {};
   state.page = "plan";
