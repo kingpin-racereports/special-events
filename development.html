@@ -1578,7 +1578,8 @@ const DEBRIEF = {
   TRAFFIC_PCT: 0.015,  // lap this far over the stint's typical field-relative lap = traffic lap
   FIELD_WINDOW_MIN: 5, // field pace at a moment = other class cars' laps this many minutes either side
   WARM_LAPS: 5,        // laps after a stop compared with the rest of that stint (tyres, new driver settling in)
-  RARE_CHANGE_PCT: 0.3, // a driver change at a stop number this few of the class also made reads as unusual
+  RARE_CHANGE_PCT: 0.3, // a driver change in a pit cycle this few of the class also made reads as unusual
+  INOUT_SIGNIFICANT_S: 10, // in-lap + out-lap loss vs. the cycle's fuel-only cars shown only at/over this
 };
 
 function debriefMedian(xs){
@@ -2707,10 +2708,11 @@ function renderDebriefPanel(){
       ourStops.forEach((st, k) => {
         const p = st.peers;
         if (!st.change || st.repair || !p || p.cars < 4 || p.changes / p.cars > DEBRIEF.RARE_CHANGE_PCT || p.svcMedian == null) return;
-        const bits = [`stop ${mmss(st.sec)} vs. ${mmss(p.svcMedian)} fuel-only (${sgn(st.sec - p.svcMedian)})`];
-        if (p.cycle && p.svcCycleMedian != null) bits.push(`in + out laps ${sgn(p.cycle - p.svcCycleMedian)}`);
-        if (p.quick && p.quick.sec < p.svcMedian - 2) bits.push(`quickest #${esc(p.quick.num)} ${mmss(p.quick.sec)}${p.quick.change ? " with a change" : ""}`);
-        out.push(`Stop ${k + 1}: driver change, ${p.changes} of ${p.cars} ${cls} cars in that cycle changed — ${bits.join(" · ")}`);
+        // Stop time vs. the cycle's fuel-only median.
+        out.push(`Stop ${k + 1}: Only ${p.changes} of ${p.cars} ${cls} cars changed drivers — (${sgn(st.sec - p.svcMedian)})`);
+        // In-lap + out-lap vs. the same cars — only when it's a real loss.
+        const lapLoss = p.cycle && p.svcCycleMedian != null ? p.cycle - p.svcCycleMedian : null;
+        if (lapLoss != null && lapLoss >= DEBRIEF.INOUT_SIGNIFICANT_S) out.push(`Proceeding with Caution - In/Out Laps (${sgn(lapLoss)})`);
       });
 
       // Cost of a driver change over a fuel-only stop, and what double
@@ -2735,7 +2737,7 @@ function renderDebriefPanel(){
       const extraChanges = changes - Math.max(0, drivers - 1);
       const perChange = Math.max(0, extraStop || 0) + settle;
       if (extraChanges > 0 && perChange >= 3)
-        out.push(`${changes} driver changes, ${drivers - 1} needed with double stints — ${extraChanges} fewer saves ~${red(fmtDur(extraChanges * perChange))} (${Math.round(Math.max(0, extraStop || 0))}s stop${settle >= 1 ? ` + ${Math.round(settle)}s settling in` : ""} each)`);
+        out.push(`Double stints could save ~${red(fmtDur(extraChanges * perChange))} (~${Math.round(Math.max(0, extraStop || 0))}s/stop${settle >= 1 ? ` + ~${Math.round(settle)}s settling in` : ""})`);
     }
 
     // More stops than the class top 3.
