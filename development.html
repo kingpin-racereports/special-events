@@ -1498,14 +1498,10 @@ function rmConditionFactor(classCars, lapsByPos){
 // Per-driver lap-time standard deviation for this team's cars, over clean
 // green-flag laps (no pit / out / caution laps, nothing over 110% of that
 // driver's median). Each lap is first adjusted for track conditions (lap ÷
-// the class's condition factor at that moment), so a driver who ran both a
-// dry and a wet spell isn't marked inconsistent for the weather. Then each
-// lap is measured against the driver's own rolling pace (median of the
-// laps either side, within the same run), so a steady trend — getting
-// quicker as the track dries, or a gradual fade — isn't counted; only
-// lap-to-lap scatter is.
-const CONSISTENCY_REACH = 3;     // rolling pace = median of this many laps either side
-const CONSISTENCY_RUN_GAP = 3;   // a gap of more laps than this (stop, caution) starts a new run
+// the class's condition factor at that moment), so a slowdown the whole
+// class saw — rain, heat, oil down — isn't counted against the driver.
+// Anything left after that is the driver's own, so a fade the field didn't
+// share does count as inconsistency.
 function rmDriverConsistency(ourNumbers, classification, lapsByPos, lapRows, pitStops, resultRows){
   const out = {};
   const factorByClass = {};
@@ -1524,27 +1520,14 @@ function rmDriverConsistency(ourNumbers, classification, lapsByPos, lapRows, pit
       // Contiguous lap ranges this driver was in the car, e.g. [[1,50],[90,120]].
       const last = g.ranges[g.ranges.length - 1];
       if (last && l.lap === last[1] + 1) last[1] = l.lap; else g.ranges.push([l.lap, l.lap]);
-      if (!l.inPit && l.status === "GREEN" && l.lapTime) g.times.push({ lap: l.lap, t: l.lapTime / (factor(l.timeOfDay) || 1) });
+      if (!l.inPit && l.status === "GREEN" && l.lapTime) g.times.push(l.lapTime / (factor(l.timeOfDay) || 1));
     });
     out[c.startNumber] = Object.values(byDriver).map(g => {
-      // Runs of clean laps, broken at stops / cautions.
-      const runs = [];
-      g.times.forEach(x => {
-        const run = runs[runs.length - 1], prev = run?.[run.length - 1];
-        if (prev && x.lap - prev.lap <= CONSISTENCY_RUN_GAP) run.push(x); else runs.push([x]);
-      });
-      const clean = [], resid = [];
-      runs.forEach(run => run.forEach((x, k) => {
-        const win = run.slice(Math.max(0, k - CONSISTENCY_REACH), k + CONSISTENCY_REACH + 1).map(y => y.t);
-        if (win.length < 3) return;
-        const local = debriefMedian(win);
-        if (x.t > local * 1.10) return; // traffic, off, incident
-        clean.push(x.t); resid.push(x.t - local);
-      }));
+      const med = debriefMedian(g.times);
+      const clean = med ? g.times.filter(t => t <= med * 1.10) : []; // traffic, off, incident, out-lap
       const avg = clean.length ? clean.reduce((a, b) => a + b, 0) / clean.length : null;
-      const rm = resid.length ? resid.reduce((a, b) => a + b, 0) / resid.length : 0;
-      const stdev = resid.length >= 3 ? Math.sqrt(resid.reduce((a, x) => a + (x - rm) ** 2, 0) / (resid.length - 1)) : null;
-      return { driver: g.driver, laps: g.laps, cleanLaps: clean.length, avg, stdev, ranges: g.ranges, seconds: g.seconds, adj: 3 }; // adj: summary version (3 = post-race stops dropped)
+      const stdev = clean.length >= 3 ? Math.sqrt(clean.reduce((a, x) => a + (x - avg) ** 2, 0) / (clean.length - 1)) : null;
+      return { driver: g.driver, laps: g.laps, cleanLaps: clean.length, avg, stdev, ranges: g.ranges, seconds: g.seconds, adj: 4 }; // adj: summary version (4 = no rolling-median detrend)
     });
   });
   return out;
@@ -2927,7 +2910,7 @@ async function loadRedmistArchive(race){
   // No summary yet, or one saved before fastest-stop / driver consistency
   // were added — build (and, for engineers, save) a fresh one.
   const dcEntries = summary ? Object.values(summary.driver_consistency || {}).flat() : [];
-  if (!summary || summary.driver_consistency == null || summary.pit_times == null || dcEntries.some(e => !e.ranges || e.seconds == null || e.adj !== 3)) return buildRedmistArchive(race, { save: state.isEngineer });
+  if (!summary || summary.driver_consistency == null || summary.pit_times == null || dcEntries.some(e => !e.ranges || e.seconds == null || e.adj !== 4)) return buildRedmistArchive(race, { save: state.isEngineer });
   return rmAssemble(rmClassification(resultRows), resultRows[0].session_name, summary);
 }
 
