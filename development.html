@@ -2721,7 +2721,7 @@ function renderDebriefPanel(){
       const svc = ck.stopRef?.service;
       const extraStop = changeSecs.length && svc != null ? debriefMedian(changeSecs) - svc : null;
       if (extraStop != null && extraStop >= 3)
-        out.push(`Driver-change stops: ${mmss(debriefMedian(changeSecs))} median vs. ${mmss(svc)} ${cls} fuel-only — ${red(`+${Math.round(extraStop)}s`)} each`);
+        out.push(`Driver-change stops: ${mmss(debriefMedian(changeSecs))} median vs. ${mmss(svc)} fuel-only — ${red(`+${Math.round(extraStop)}s`)} each`);
 
       // Settling in after a change: first laps vs. the rest of that stint,
       // against our own same-driver stops (else the class after its stops).
@@ -8725,8 +8725,87 @@ async function updateStintDriver(carId, stintIdx, driverName){
   const idx = validDrivers.indexOf(driverName);
   stint.driver = driverName;
   stint.driverIndex = idx >= 0 ? idx : 0;
-  await saveStintFields(cp.car.id, stintIdx, { driver: stint.driver, driver_index: stint.driverIndex });
+  // The same driver now on the stint before or after this one = a double
+  // stint: fold the two into one entry. Later stints keep their times and
+  // drivers; only their numbering moves up.
+  const merges = mergeDoubleStintsAround(cp.stints, stintIdx);
+  if (!merges.length){
+    await saveStintFields(cp.car.id, stintIdx, { driver: stint.driver, driver_index: stint.driverIndex });
+    render();
+    return;
+  }
+  merges.forEach(m => {
+    // Log entries follow their stint to its new number.
+    (cp.log || []).forEach(l => { if (l.stintIdx != null && l.stintIdx >= m.removedIdx) l.stintIdx = l.stintIdx === m.removedIdx ? m.at : l.stintIdx - 1; });
+  });
+  [...state.openStintNotes].forEach(k => { if (k.startsWith(cp.car.id + "__")) state.openStintNotes.delete(k); });
+  await persistStintMerges(cp, merges);
+  merges.forEach(m => logStintNote(cp, m.at, `Double stint — ${m.driver} runs Stints ${m.at + 1}–${m.at + 2} as one; later stints unchanged.`, "info"));
   render();
+}
+
+// Back-to-back stints for the same driver around index i are one double
+// stint. The later stint folds into the earlier: the earlier keeps its
+// start and takes the later one's end, planned end and any quiet break.
+// Only stints still to run (or the one on track) merge — a finished stint
+// is history — and never across a quiet-time break. Removed (absorbed)
+// stints in between are skipped over. Returns [{ at, removedIdx, driver }]
+// in the order applied; indices refer to the array at that moment.
+function mergeDoubleStintsAround(stints, i){
+  const merges = [];
+  const live = k => k >= 0 && k < stints.length && !stints[k].removed;
+  const prevOf = k => { let j = k - 1; while (j >= 0 && stints[j].removed) j--; return j; };
+  const nextOf = k => { let j = k + 1; while (j < stints.length && stints[j].removed) j++; return j; };
+  const canMerge = (a, b) => a && b && !a.finished && !b.finished && !a.quietMinutes
+    && a.driver && b.driver && sameDriverName(a.driver, b.driver);
+  const fold = (ai, bi) => {
+    const a = stints[ai], b = stints[bi];
+    a.end = new Date(b.end);
+    a.plannedEnd = new Date(b.plannedEnd || b.end);
+    a.lengthMin = Math.round((a.end - a.start) / 60000);
+    a.quietMinutes = b.quietMinutes || 0;
+    if (b.position != null && b.position !== "") a.position = b.position;
+    const notes = [a.notes, b.notes].filter(x => x && x.trim());
+    a.notes = notes.join("\n");
+    stints.splice(bi, 1);
+    merges.push({ at: ai, removedIdx: bi, driver: a.driver });
+  };
+  let at = i;
+  const p = prevOf(at);
+  if (live(p) && canMerge(stints[p], stints[at])){ fold(p, at); at = p; }
+  const n = nextOf(at);
+  if (live(n) && canMerge(stints[at], stints[n])) fold(at, n);
+  return merges;
+}
+
+// Saves a car's stints after a merge renumbered them: every row from the
+// first merge point on is rewritten at its new index, rows past the new end
+// are deleted, and stint_log entries move with their stints.
+async function persistStintMerges(cp, merges){
+  const carId = cp.car.id;
+  const from = Math.min(...merges.map(m => m.at));
+  const rows = cp.stints.map((s, i) => ({
+    car_id: carId, stint_index: i, driver: s.driver, driver_index: s.driverIndex,
+    start_at: s.start.toISOString(), end_at: s.end.toISOString(),
+    planned_end_at: (s.plannedEnd || s.end).toISOString(), length_min: s.lengthMin,
+    position: s.position ?? null, notes: s.notes || "", flags: s.flags || [],
+    removed: s.removed || false, quiet_minutes: s.quietMinutes || 0, finished: s.finished || false,
+  })).slice(from);
+  const { error } = await supabase.from("stints").upsert(rows, { onConflict: "car_id,stint_index" });
+  if (error) console.error("persistStintMerges upsert failed:", error);
+  const { error: delErr } = await supabase.from("stints").delete().eq("car_id", carId).gte("stint_index", cp.stints.length);
+  if (delErr) console.error("persistStintMerges trailing delete failed:", delErr);
+  // Log rows: each merge shifts entries after its removed stint down one.
+  const { data: logs, error: logErr } = await supabase.from("stint_log").select("id, stint_index").eq("car_id", carId).gte("stint_index", from);
+  if (logErr){ console.error("persistStintMerges log read failed:", logErr); return; }
+  for (const l of logs || []){
+    let idx = l.stint_index;
+    merges.forEach(m => { if (idx >= m.removedIdx) idx = idx === m.removedIdx ? m.at : idx - 1; });
+    if (idx !== l.stint_index){
+      const { error: e } = await supabase.from("stint_log").update({ stint_index: idx }).eq("id", l.id);
+      if (e) console.error("persistStintMerges log shift failed:", e);
+    }
+  }
 }
 
 // One stint row, only the given columns — used for edits allowed while a
