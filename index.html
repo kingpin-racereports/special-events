@@ -1578,7 +1578,8 @@ const DEBRIEF = {
   TRAFFIC_PCT: 0.015,  // lap this far over the stint's typical field-relative lap = traffic lap
   FIELD_WINDOW_MIN: 5, // field pace at a moment = other class cars' laps this many minutes either side
   WARM_LAPS: 5,        // laps after a stop compared with the rest of that stint (tyres, new driver settling in)
-  RARE_CHANGE_PCT: 0.3, // a driver change at a stop number this few of the class also made reads as unusual
+  RARE_CHANGE_PCT: 0.3, // a driver change in a pit cycle this few of the class also made reads as unusual
+  INOUT_SIGNIFICANT_S: 10, // in-lap + out-lap loss vs. the cycle's fuel-only cars shown only at/over this
 };
 
 function debriefMedian(xs){
@@ -1873,9 +1874,9 @@ function debriefStintReport(stints, field, num, stops, stopRef, stopTime){
     const total = Math.max(0, pace || 0) + Math.max(0, traffic || 0) + Math.max(0, pit || 0);
     return {
       num: i + 1, driver: s.driver, firstLap: first.lap, lastLap: last.lap,
-      stopSec: st ? st.sec : null, stopRepair: !!st?.repair, stopRef: ref,
+      stopSec: st ? st.sec : null, stopRepair: !!st?.repair, stopRef: ref, hasStop: !!stop,
       start: first.ts ? first.ts - (first.t || 0) * 1000 : null, end: last.ts || null,
-      pace, traffic, trafficLaps: tr ? tr.laps : null, trafficLapList: tr ? tr.lapList : [], pit, total,
+      pace, paceLaps: tr ? tr.n : 0, traffic, trafficLaps: tr ? tr.laps : null, trafficLapList: tr ? tr.lapList : [], pit, total,
       delta: laps.length ? debriefMean(laps.map(l => l.t - l.f.mean)) : null, // race pace this stint, s/lap vs. field
     };
   });
@@ -2271,7 +2272,10 @@ async function buildSaturdayDebrief(src){
     const most = Math.max(0, ...Object.values(byCar).map(l => l.length));
     const byIndex = Array.from({ length: most }, (_, k) => {
       const at = nums.filter(n => byCar[n][k]);
-      return { cars: at.length, changes: at.filter(n => byCar[n][k].driver_change).length };
+      // Stop times of the cars that did NOT change drivers at this stop
+      // number (garage trips left out) — what a fuel-only stop cost then.
+      const svc = at.filter(n => !byCar[n][k].driver_change).map(n => stopTime(byCar[n][k])).filter(t => !t.repair).map(t => t.sec);
+      return { cars: at.length, changes: at.filter(n => byCar[n][k].driver_change).length, svcSecs: svc };
     });
     classKeys[cls] = {
       cars: nums.length,
@@ -2281,6 +2285,48 @@ async function buildSaturdayDebrief(src){
       warmByCar: Object.fromEntries(nums.map(n => [n, debriefWarmups(stintsByNum[n] || [])])),
     };
   });
+
+  // Pit cycle comparison: the class cars that stopped in the same window as
+  // a given stop (in-laps completed within CYCLE_WINDOW_MIN of each other —
+  // a caution cycle or a shared fuel window), so a stop is judged against
+  // the stops made in the same conditions, not against "everyone's 1st
+  // stop" (which mixes lap-4 splashes with lap-23 caution stops). Garage
+  // trips and anything over 1.5x the window's median are left out. Each
+  // stop also gets its in-lap + out-lap time, which carries the whole cost
+  // of the cycle (pit lane, stationary time, a cold out-lap).
+  const lapInfo = {};
+  lapRows.forEach(l => { lapInfo[`${l.car_number}|${l.lap_number}`] = { t: Number(l.lap_time_seconds) || null, ts: new Date(l.captured_at).getTime() }; });
+  const stopEvents = {};
+  [...new Set(classification.map(c => c.resultClass))].forEach(cls => {
+    const nums = new Set(classification.filter(c => c.resultClass === cls && c.status !== "DNS" && !/x$/i.test(String(c.startNumber))).map(c => c.startNumber));
+    stopEvents[cls] = pitStops.filter(st => nums.has(st.car_number) && keptStop(st)).map(st => {
+      const inL = lapInfo[`${st.car_number}|${st.lap_number}`], outL = lapInfo[`${st.car_number}|${st.lap_number + 1}`];
+      const t = stopTime(st);
+      return { num: st.car_number, lap: st.lap_number, change: !!st.driver_change, sec: t.sec, repair: t.repair,
+        at: inL?.ts ?? null, cycle: inL?.t && outL?.t ? inL.t + outL.t : null };
+    }).filter(e => e.at != null);
+  });
+  const CYCLE_WINDOW_MIN = 6;
+  const stopPeers = (cls, num, lap) => {
+    const ev = stopEvents[cls] || [];
+    const me = ev.find(e => e.num === num && e.lap === lap);
+    if (!me) return null;
+    const near = ev.filter(e => e.num !== num && Math.abs(e.at - me.at) <= CYCLE_WINDOW_MIN * 60000);
+    const svcAll = near.filter(e => !e.change && !e.repair);
+    const cap = svcAll.length ? debriefMedian(svcAll.map(e => e.sec)) * 1.5 : Infinity;
+    const svc = svcAll.filter(e => e.sec <= cap);
+    const quick = near.filter(e => !e.repair).sort((a, b) => a.sec - b.sec)[0] || null;
+    const svcCycles = svc.map(e => e.cycle).filter(Boolean);
+    return {
+      cars: near.length + 1,
+      changes: near.filter(e => e.change).length + (me.change ? 1 : 0),
+      svcN: svc.length,
+      svcMedian: svc.length >= 3 ? debriefMedian(svc.map(e => e.sec)) : null,
+      quick: quick ? { num: quick.num, sec: quick.sec, change: quick.change } : null,
+      cycle: me.cycle,
+      svcCycleMedian: svcCycles.length >= 3 ? debriefMedian(svcCycles) : null,
+    };
+  };
 
   // Gap to each class car that finished ahead, taken where both crossed our
   // final lap count (cars a lap or more up are still measured on that lap).
@@ -2333,7 +2379,7 @@ async function buildSaturdayDebrief(src){
       // Key takeaways inputs: this car's stops in order (driver change or
       // not, time stationary) and the class picture they're judged against.
       keyStops: stops.slice().sort((a, b) => a.lap_number - b.lap_number)
-        .map(st => { const t = stopTime(st); return { change: !!st.driver_change, sec: t.sec, repair: t.repair }; }),
+        .map(st => { const t = stopTime(st); return { change: !!st.driver_change, sec: t.sec, repair: t.repair, peers: stopPeers(c.resultClass, c.startNumber, st.lap_number) }; }),
       classKeys: classKeys[c.resultClass] || null,
     };
   });
@@ -2617,25 +2663,34 @@ function renderDebriefPanel(){
     const sat = c.sat;
     const rep = (sat.stintReport || []).filter(Boolean);
     if (!rep.length) return "";
-    const sum = k => rep.reduce((a, r) => a + Math.max(0, r[k] || 0), 0);
-    const parts = [["Pace", sum("pace")], ["Traffic", sum("traffic")], ["Pit stops", sum("pit")]].filter(k => k[1] >= 5);
+    const pos = k => rep.filter(r => (r[k] || 0) > 0);
+    const sum = k => pos(k).reduce((a, r) => a + r[k], 0);
+    const paceLaps = pos("pace").reduce((a, r) => a + (r.paceLaps || 0), 0);
+    const trafficLaps = rep.reduce((a, r) => a + (r.trafficLaps || 0), 0);
+    const slowStops = pos("pit").length, allStops = rep.filter(r => r.hasStop && r.pit != null).length;
+    // [label, seconds, the figure behind it]
+    const parts = [
+      ["Pace", sum("pace"), paceLaps ? `+${(sum("pace") / paceLaps).toFixed(1)}s/lap × ${paceLaps} laps` : ""],
+      ["Traffic", sum("traffic"), trafficLaps ? `${trafficLaps} laps held up` : ""],
+      ["Pit stops", sum("pit"), allStops ? `${slowStops} of ${allStops} stops over class median` : ""],
+    ].filter(k => k[1] >= 5);
     const total = parts.reduce((a, k) => a + k[1], 0);
     if (total < 5) return "";
-    const reach = (sat.gapsAhead || []).filter(g => g.gap <= total);
+    const reach = (sat.gapsAhead || []).filter(g => g.gap <= total).sort((a, b) => a.pos - b.pos);
     const next = (sat.gapsAhead || [])[0];
     const reachLine = reach.length
-      ? `Within that time: ${reach.map(g => `<span style="white-space:nowrap;">P${g.pos} #${esc(g.num)} <span style="color:var(--textFaint);">(${fmtDur(g.gap)})</span></span>`).join(", ")} — worth up to ${reach.length} class position${reach.length === 1 ? "" : "s"}`
-      : next ? `Next car ahead (P${next.pos} #${esc(next.num)}) finished ${fmtDur(next.gap)} up the road` : "";
+      ? `<span style="font-weight:600;color:var(--text);">P${reach[0].pos} within reach</span> — ${reach.slice().sort((a, b) => a.gap - b.gap).map(g => `P${g.pos} #${esc(g.num)} ${fmtDur(g.gap)} ahead`).join(" · ")}`
+      : next ? `Next car ahead (P${next.pos} #${esc(next.num)}) finished ${fmtDur(next.gap)} ahead` : "";
     return `
       <div style="margin:6px 0 12px;padding:10px 12px;border-radius:8px;background:var(--panelRaised);">
         <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;">
           <span class="eyebrow">Estimated Time Loss</span>
           <span class="font-mono" style="font-size:18px;font-weight:700;color:${T.red};">${fmtDur(total)}</span>
         </div>
-        <div style="font-size:12px;color:var(--textMuted);display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px;">
-          ${parts.map(([l, v]) => `<span style="white-space:nowrap;"><span style="color:var(--textFaint);">${l}</span> <span style="font-weight:600;">${fmtDur(v)}</span></span>`).join("")}
+        <div style="font-size:12px;color:var(--textMuted);margin-top:4px;">
+          ${parts.map(([l, v, why]) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:2px 0;"><span><span style="color:var(--textFaint);">${l}</span>${why ? ` <span style="color:var(--textFaint);">· ${why}</span>` : ""}</span><span class="font-mono" style="font-weight:600;">${fmtDur(v)}</span></div>`).join("")}
         </div>
-        ${reachLine ? `<div style="font-size:12px;color:var(--textMuted);margin-top:6px;">${reachLine}</div>` : ""}
+        ${reachLine ? `<div style="font-size:12px;color:var(--textMuted);margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">${reachLine}</div>` : ""}
       </div>`;
   };
 
@@ -2644,35 +2699,45 @@ function renderDebriefPanel(){
     const red = t => `<span style="font-weight:600;color:${T.red};">${t}</span>`;
     const ourStops = sat.keyStops || [];
     const cls = esc(sat.cls);
+    const mmss = x => { const a = Math.round(x); return `${Math.floor(a / 60)}:${String(a % 60).padStart(2, "0")}`; };
 
     if (ck){
-      // Driver changes at stops where most of the class didn't change — one line.
-      const rare = [];
+      // Driver change at a stop most of the class used as fuel-only: our
+      // stop time vs. the median of the cars that didn't change there.
+      const sgn = d => d > 0 ? red(`+${Math.round(d)}s`) : `${d < 0 ? "−" : ""}${Math.abs(Math.round(d))}s`;
       ourStops.forEach((st, k) => {
-        const at = ck.byIndex[k];
-        if (st.change && at && at.cars >= 3 && at.changes / at.cars <= DEBRIEF.RARE_CHANGE_PCT) rare.push({ k: k + 1, ...at });
+        const p = st.peers;
+        if (!st.change || st.repair || !p || p.cars < 4 || p.changes / p.cars > DEBRIEF.RARE_CHANGE_PCT || p.svcMedian == null) return;
+        // Stop time vs. the cycle's fuel-only median.
+        out.push(`Stop ${k + 1}: Only ${p.changes} of ${p.cars} ${cls} cars changed drivers — (${sgn(st.sec - p.svcMedian)})`);
+        // In-lap + out-lap vs. the same cars — only when it's a real loss.
+        const lapLoss = p.cycle && p.svcCycleMedian != null ? p.cycle - p.svcCycleMedian : null;
+        if (lapLoss != null && lapLoss >= DEBRIEF.INOUT_SIGNIFICANT_S) out.push(`Proceeding with Caution - In/Out Laps (${sgn(lapLoss)})`);
       });
-      if (rare.length)
-        out.push(`${red(`Driver change${rare.length === 1 ? "" : "s"}`)} at stop${rare.length === 1 ? "" : "s"} ${rare.map(r => r.k).join(", ")} — ${rare.map(r => `${r.changes} of ${r.cars}`).join(", ")} ${cls} cars changed there`);
-      const ourChanges = ourStops.filter(st => st.change).length;
-      if (ourChanges && ck.changedCars / ck.cars <= 0.5)
-        out.push(`${ourChanges} driver change${ourChanges === 1 ? "" : "s"} — only ${ck.changedCars} of ${ck.cars} ${cls} cars changed drivers at all`);
 
-      // Extra time stationary per driver change vs. a fuel-only stop.
+      // Cost of a driver change over a fuel-only stop, and what double
+      // stints (one change per driver) would have saved.
       const changeSecs = ourStops.filter(st => st.change && !st.repair).map(st => st.sec);
       const svc = ck.stopRef?.service;
-      if (changeSecs.length && svc != null){
-        const extra = debriefMedian(changeSecs) - svc;
-        if (extra >= 3) out.push(`Driver changes cost ${red(`~${Math.round(extra)}s`)} each over a fuel-only stop (${fmtDur(extra * changeSecs.length)} total)`);
-      }
+      const extraStop = changeSecs.length && svc != null ? debriefMedian(changeSecs) - svc : null;
+      if (extraStop != null && extraStop >= 3)
+        out.push(`Driver-change stops: ${mmss(debriefMedian(changeSecs))} median vs. ${mmss(svc)} fuel-only — ${red(`+${Math.round(extraStop)}s`)} each`);
 
-      // Settling in after a driver change vs. the class after its stops.
-      const ours = (ck.warmByCar[c.number] || []).filter(w => w.change).map(w => w.cost);
+      // Settling in after a change: first laps vs. the rest of that stint,
+      // against our own same-driver stops (else the class after its stops).
+      const warm = ck.warmByCar[c.number] || [];
+      const oursCh = warm.filter(w => w.change).map(w => w.cost);
+      const oursSame = warm.filter(w => !w.change).map(w => w.cost);
       const field = Object.entries(ck.warmByCar).filter(([n]) => !ourNums.has(n)).flatMap(([, ws]) => ws.map(w => w.cost));
-      if (ours.length && field.length){
-        const o = debriefMean(ours), f = debriefMean(field);
-        if (o - f >= 0.3) out.push(`First ${DEBRIEF.WARM_LAPS} laps after a driver change: ${red(`+${o.toFixed(1)}s/lap`)} (class ${f >= 0 ? "+" : "−"}${Math.abs(f).toFixed(1)}s/lap)`);
-      }
+      const base = oursSame.length ? debriefMean(oursSame) : field.length ? debriefMean(field) : null;
+      const settle = oursCh.length && base != null ? Math.max(0, debriefMean(oursCh) - base) * DEBRIEF.WARM_LAPS : 0;
+
+      const changes = ourStops.filter(st => st.change).length;
+      const drivers = new Set((sat.stints || []).map(s2 => s2.driver).filter(Boolean)).size;
+      const extraChanges = changes - Math.max(0, drivers - 1);
+      const perChange = Math.max(0, extraStop || 0) + settle;
+      if (extraChanges > 0 && perChange >= 3)
+        out.push(`Double stints could save ~${red(fmtDur(extraChanges * perChange))} (~${Math.round(Math.max(0, extraStop || 0))}s/stop${settle >= 1 ? ` + ~${Math.round(settle)}s settling in` : ""})`);
     }
 
     // More stops than the class top 3.
@@ -5651,9 +5716,8 @@ function competitorPitTimesPanel(race, focusNum){
   }).join("");
   return `
     <div class="summary-box">
-      <div style="padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:6px;"><span class="fin-label" style="margin:0;">${icon("timer",12)} Competitor Pit Times · Cars Ahead</span></div>
       <div class="pit-times-row pit-times-head">
-        <span class="fin-label" style="margin:0;">Competitor</span>
+        <span class="fin-label" style="margin:0;">${icon("timer",12)} Competitor</span>
         <span class="fin-label" style="margin:0;justify-content:flex-end;">Stops</span>
         <span class="fin-label" style="margin:0;justify-content:flex-end;"><span class="lbl-full">Driver Chg</span><span class="lbl-short">Chg</span></span>
         <span class="fin-label" style="margin:0;justify-content:flex-end;"><span class="lbl-full">Time in Pits</span><span class="lbl-short">Time</span></span>
@@ -7138,6 +7202,11 @@ function carPlanSection(cp, plan, archived){
   // of isEngineer and regardless of feed gaps), OR whenever the signed-in
   // person isn't an engineer (the driver/public read-only view).
   const readOnly = archived || isRaceLiveAndLocked(race) || !state.isEngineer;
+  // Driver names and stint notes stay editable for engineers while the race
+  // is live (the crew can change driver order mid-race); everything else
+  // follows readOnly.
+  const canEditDriver = !archived && state.isEngineer;
+  const canEditNote = !archived && state.isEngineer;
   const shortNames = buildShortNames(car.drivers.filter(d=>d.trim()));
   const timelineAbbrev = buildTimelineAbbrev(car.drivers.filter(d=>d.trim()));
   const effectivePos = archived ? getEffectiveFinishPosition(car, race) : null;
@@ -7302,7 +7371,7 @@ function carPlanSection(cp, plan, archived){
             ? `<span class="fin-flag">🏁</span>`
             : `<span class="dot" style="background:${dotColor};flex-shrink:0;"></span>`;
 
-          const driverCell = readOnly
+          const driverCell = !canEditDriver
             ? `<span class="driver-cell">${dotEl}<span style="font-size:13px;">${esc(shortNames[s.driver]||s.driver||"TBD")}</span></span>`
             : `<span class="driver-cell">
                 ${dotEl}
@@ -7321,16 +7390,16 @@ function carPlanSection(cp, plan, archived){
             ? `<button class="stint-start-btn font-mono" data-act="open-stint-adjust" data-car="${car.id}" data-stint="${i}" title="Adjust start time">${formatTimeCompact(s.start)}</button>`
             : `<span class="font-mono" style="white-space:nowrap;font-size:11px;padding-left:14px;">${formatTimeCompact(s.start)}</span>`;
 
-          const endCell = (readOnly || s.finished)
-            ? `<span class="font-mono" style="white-space:nowrap;font-size:11px;text-align:center;display:block;">${formatTimeCompact(s.end)}</span>`
-            : `<button class="finish-stint-cell" data-act="prompt-finish-stint" data-car="${car.id}" data-stint="${i}" title="Finish Stint"><span class="em">🏁</span>Finish</button>`;
+          // Stints finish automatically from live timing (driver changes / the
+          // checkered) — no manual Finish control.
+          const endCell = `<span class="font-mono" style="white-space:nowrap;font-size:11px;text-align:center;display:block;">${formatTimeCompact(s.end)}</span>`;
 
           const posCell = readOnly
             ? `<span class="font-mono stint-pos stint-pos-badge" style="background:${posStyle.bg};color:${posStyle.color};display:flex;align-items:center;justify-content:center;">${s.position ? esc(s.position) : "–"}</span>`
             : `<input type="text" class="field stint-pos stint-pos-edit font-mono" placeholder="P–" value="${esc(s.position ?? '')}" data-act="edit-stint-pos" data-car="${car.id}" data-stint="${i}" style="background:${posStyle.bg};color:${posStyle.color};" />`;
 
-          const noteToggle = (!readOnly || hasNoteContent)
-            ? `<button class="stint-note-toggle" data-act="toggle-stint-note" data-car="${car.id}" data-stint="${i}" title="${isOpen?'Hide note':(readOnly?'View note':'Add a note')}">${flagBadges ? `<span class="flag-badge">${flagBadges}</span>` : icon(isOpen?"minus":(readOnly?"clock":"plus"),13)}</button>`
+          const noteToggle = (canEditNote || hasNoteContent)
+            ? `<button class="stint-note-toggle" data-act="toggle-stint-note" data-car="${car.id}" data-stint="${i}" title="${isOpen?'Hide note':(canEditNote?'Add a note':'View note')}">${flagBadges ? `<span class="flag-badge">${flagBadges}</span>` : icon(isOpen?"minus":(canEditNote?"plus":"clock"),13)}</button>`
             : `<span></span>`;
 
           return `
@@ -7344,11 +7413,11 @@ function carPlanSection(cp, plan, archived){
           </div>
           ${isOpen ? `
           <div class="note-row">
-            ${readOnly ? `
+            ${!canEditNote ? `
               ${flags.length ? `<div class="flag-row">${flags.map(fk=>{ const f=FLAG_TYPES.find(x=>x.key===fk); if(!f) return ""; return `<span class="flag-btn active"><span class="em">${f.emoji}</span>${f.label}</span>`; }).join("")}</div>` : ""}
               ${s.notes && s.notes.trim() ? `<p style="margin:0;font-size:12.5px;color:var(--textMuted);">${esc(s.notes)}</p>` : (!flags.length ? `<p style="margin:0;font-size:12.5px;color:var(--textFaint);font-style:italic;">No notes for this stint.</p>` : "")}
             ` : `
-              ${startAdjustable ? `
+              ${!readOnly && startAdjustable ? `
               <div class="start-adjust">
                 <span class="start-adjust-label">${icon("clock",11)} Start Time</span>
                 <div class="start-adjust-ctl">
@@ -7358,16 +7427,6 @@ function carPlanSection(cp, plan, archived){
                 </div>
                 <span class="start-adjust-hint">Moves the handover with Stint ${i} — that stint absorbs the change. Later stints are unaffected.</span>
               </div>` : ""}
-              <div class="flag-row">
-                ${FLAG_TYPES.map(f=>`
-                  <button class="flag-btn ${flags.includes(f.key)?'active':''}" data-act="toggle-stint-flag" data-car="${car.id}" data-stint="${i}" data-flag="${f.key}" style="${flags.includes(f.key)?`background:${f.color}26;border-color:${f.color};`:""}">
-                    <span class="em">${f.emoji}</span><span class="lbl">${f.label}</span>
-                  </button>`).join("")}
-              </div>
-              ${flags.includes("meatball") ? `
-              <button class="retire-btn" data-act="prompt-retire-car" data-car="${car.id}" data-stint="${i}">
-                <span class="em">⛔</span> Retire
-              </button>` : ""}
               <textarea rows="2" placeholder="Note for this stint — incident, fuel-only stop, etc." data-act="edit-stint-note" data-car="${car.id}" data-stint="${i}">${esc(s.notes||"")}</textarea>
             `}
           </div>` : ""}
@@ -8666,8 +8725,16 @@ async function updateStintDriver(carId, stintIdx, driverName){
   const idx = validDrivers.indexOf(driverName);
   stint.driver = driverName;
   stint.driverIndex = idx >= 0 ? idx : 0;
-  await syncPlanToRaceRecord();
+  await saveStintFields(cp.car.id, stintIdx, { driver: stint.driver, driver_index: stint.driverIndex });
   render();
+}
+
+// One stint row, only the given columns — used for edits allowed while a
+// race is live, so the rest of the row (times, finished, removed) stays
+// whatever the poller last wrote.
+async function saveStintFields(carId, stintIdx, fields){
+  const { error } = await supabase.from("stints").update(fields).eq("car_id", carId).eq("stint_index", stintIdx);
+  if (error) console.error("saveStintFields failed:", error);
 }
 
 async function updateStintNote(carId, stintIdx, value){
@@ -8676,7 +8743,7 @@ async function updateStintNote(carId, stintIdx, value){
   const stint = cp.stints[stintIdx];
   if (!stint) return;
   stint.notes = value;
-  await syncPlanToRaceRecord();
+  await saveStintFields(cp.car.id, stintIdx, { notes: value || "" });
   render();
 }
 
