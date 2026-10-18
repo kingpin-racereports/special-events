@@ -2478,7 +2478,8 @@ function archiveDebriefSummary(race, debrief){
   (race.cars || []).forEach(car => {
     if (isHardshipCar(car.number)) return;
     const sat = debrief.cars[String(car.number)];
-    if (!sat) return;
+    // Finishers only — a DNF/DNS car's story is already known.
+    if (!sat || sat.status !== "Normal") return;
     const drivers = (car.drivers || []).filter(d => d && d.trim()).map(d => {
       const m = debriefMatchDriver(d, sat.profiles);
       return { name: d, satName: m ? m.name : null, profile: m ? m.profile : null, raceDelta: m ? m.profile.raceDelta : null };
@@ -2802,7 +2803,7 @@ function renderDebriefPanel(dbArg, opts = {}){
   }).join("");
 
   // Archived Race Debrief: contents only — the collapsible supplies the frame.
-  if (opts.bare) return `${classBlocks}${carBlocks || line("None of these cars ran in that race.")}`;
+  if (opts.bare) return carBlocks ? `${classBlocks}${carBlocks}` : line("No Kingpin car took the checkered flag in this race.");
 
   return `
     <section style="margin-bottom:32px;">
