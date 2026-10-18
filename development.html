@@ -2285,6 +2285,48 @@ async function buildSaturdayDebrief(src){
     };
   });
 
+  // Pit cycle comparison: the class cars that stopped in the same window as
+  // a given stop (in-laps completed within CYCLE_WINDOW_MIN of each other —
+  // a caution cycle or a shared fuel window), so a stop is judged against
+  // the stops made in the same conditions, not against "everyone's 1st
+  // stop" (which mixes lap-4 splashes with lap-23 caution stops). Garage
+  // trips and anything over 1.5x the window's median are left out. Each
+  // stop also gets its in-lap + out-lap time, which carries the whole cost
+  // of the cycle (pit lane, stationary time, a cold out-lap).
+  const lapInfo = {};
+  lapRows.forEach(l => { lapInfo[`${l.car_number}|${l.lap_number}`] = { t: Number(l.lap_time_seconds) || null, ts: new Date(l.captured_at).getTime() }; });
+  const stopEvents = {};
+  [...new Set(classification.map(c => c.resultClass))].forEach(cls => {
+    const nums = new Set(classification.filter(c => c.resultClass === cls && c.status !== "DNS" && !/x$/i.test(String(c.startNumber))).map(c => c.startNumber));
+    stopEvents[cls] = pitStops.filter(st => nums.has(st.car_number) && keptStop(st)).map(st => {
+      const inL = lapInfo[`${st.car_number}|${st.lap_number}`], outL = lapInfo[`${st.car_number}|${st.lap_number + 1}`];
+      const t = stopTime(st);
+      return { num: st.car_number, lap: st.lap_number, change: !!st.driver_change, sec: t.sec, repair: t.repair,
+        at: inL?.ts ?? null, cycle: inL?.t && outL?.t ? inL.t + outL.t : null };
+    }).filter(e => e.at != null);
+  });
+  const CYCLE_WINDOW_MIN = 6;
+  const stopPeers = (cls, num, lap) => {
+    const ev = stopEvents[cls] || [];
+    const me = ev.find(e => e.num === num && e.lap === lap);
+    if (!me) return null;
+    const near = ev.filter(e => e.num !== num && Math.abs(e.at - me.at) <= CYCLE_WINDOW_MIN * 60000);
+    const svcAll = near.filter(e => !e.change && !e.repair);
+    const cap = svcAll.length ? debriefMedian(svcAll.map(e => e.sec)) * 1.5 : Infinity;
+    const svc = svcAll.filter(e => e.sec <= cap);
+    const quick = near.filter(e => !e.repair).sort((a, b) => a.sec - b.sec)[0] || null;
+    const svcCycles = svc.map(e => e.cycle).filter(Boolean);
+    return {
+      cars: near.length + 1,
+      changes: near.filter(e => e.change).length + (me.change ? 1 : 0),
+      svcN: svc.length,
+      svcMedian: svc.length >= 3 ? debriefMedian(svc.map(e => e.sec)) : null,
+      quick: quick ? { num: quick.num, sec: quick.sec, change: quick.change } : null,
+      cycle: me.cycle,
+      svcCycleMedian: svcCycles.length >= 3 ? debriefMedian(svcCycles) : null,
+    };
+  };
+
   // Gap to each class car that finished ahead, taken where both crossed our
   // final lap count (cars a lap or more up are still measured on that lap).
   const crossAt = {};
@@ -2336,7 +2378,7 @@ async function buildSaturdayDebrief(src){
       // Key takeaways inputs: this car's stops in order (driver change or
       // not, time stationary) and the class picture they're judged against.
       keyStops: stops.slice().sort((a, b) => a.lap_number - b.lap_number)
-        .map(st => { const t = stopTime(st); return { change: !!st.driver_change, sec: t.sec, repair: t.repair }; }),
+        .map(st => { const t = stopTime(st); return { change: !!st.driver_change, sec: t.sec, repair: t.repair, peers: stopPeers(c.resultClass, c.startNumber, st.lap_number) }; }),
       classKeys: classKeys[c.resultClass] || null,
     };
   });
@@ -2661,12 +2703,14 @@ function renderDebriefPanel(){
     if (ck){
       // Driver change at a stop most of the class used as fuel-only: our
       // stop time vs. the median of the cars that didn't change there.
+      const sgn = d => d > 0 ? red(`+${Math.round(d)}s`) : `${d < 0 ? "−" : ""}${Math.abs(Math.round(d))}s`;
       ourStops.forEach((st, k) => {
-        const at = ck.byIndex[k];
-        if (!st.change || st.repair || !at || at.cars < 3 || at.changes / at.cars > DEBRIEF.RARE_CHANGE_PCT) return;
-        const ref = at.svcSecs?.length >= 3 ? debriefMedian(at.svcSecs) : null;
-        const d = ref != null ? st.sec - ref : null;
-        out.push(`Stop ${k + 1}: driver change, ${at.changes} of ${at.cars} ${cls} cars changed — ours ${mmss(st.sec)}${ref != null ? ` vs. ${mmss(ref)} fuel-only (${d > 0 ? red(`+${Math.round(d)}s`) : `${d < 0 ? "−" : ""}${Math.abs(Math.round(d))}s`})` : ""}`);
+        const p = st.peers;
+        if (!st.change || st.repair || !p || p.cars < 4 || p.changes / p.cars > DEBRIEF.RARE_CHANGE_PCT || p.svcMedian == null) return;
+        const bits = [`stop ${mmss(st.sec)} vs. ${mmss(p.svcMedian)} fuel-only (${sgn(st.sec - p.svcMedian)})`];
+        if (p.cycle && p.svcCycleMedian != null) bits.push(`in + out laps ${sgn(p.cycle - p.svcCycleMedian)}`);
+        if (p.quick && p.quick.sec < p.svcMedian - 2) bits.push(`quickest #${esc(p.quick.num)} ${mmss(p.quick.sec)}${p.quick.change ? " with a change" : ""}`);
+        out.push(`Stop ${k + 1}: driver change, ${p.changes} of ${p.cars} ${cls} cars in that cycle changed — ${bits.join(" · ")}`);
       });
 
       // Cost of a driver change over a fuel-only stop, and what double
