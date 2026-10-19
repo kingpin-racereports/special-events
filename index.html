@@ -6127,10 +6127,23 @@ function qualiClassStartPos(race, carNumber){
   return idx >= 0 && ranked[idx].best != null ? idx + 1 : null;
 }
 
+// Red Mist's own class grid position for this race session
+// (starting_class_position, from the timing system's start order), once
+// the race has results. -999 / missing = not available.
+function redmistGridPos(race, carNumber){
+  const rr = race?.raceResults?.rows?.find(r => r.car_number === carNumber);
+  const v = Number(rr?.starting_class_position);
+  return Number.isInteger(v) && v > 0 ? v : null;
+}
+
 // Starting position used everywhere (tile badge, heatmap, archive delta):
-// qualifying-derived when available, otherwise whatever is saved on the car.
+// the actual grid from Red Mist once the race has results; before that,
+// derived from qualifying (Saturday) or Saturday's race (Sunday); otherwise
+// whatever is saved on the car.
 function startPosFor(car){
   const race = state.races.find(r => r.id === state.currentRaceId);
+  const grid = redmistGridPos(race, car.number);
+  if (grid != null) return grid;
   const derived = race && race.status !== "archived" ? qualiClassStartPos(race, car.number) : null;
   return derived ?? parsePosition(car.startingPosition);
 }
