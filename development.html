@@ -1252,13 +1252,13 @@ function rmLapsByPos(classification, lapRows){
     const laps = (byNum[c.startNumber] || []).sort((a, b) => a.lap_number - b.lap_number);
     const times = laps.map(l => Number(l.lap_time_seconds)).filter(x => x > 0).sort((a, b) => a - b);
     const median = times.length ? times[Math.floor(times.length / 2)] : null;
-    // is_pit_lap marks a stop's out-lap (pit exit); the lap before it is the
-    // in-lap (pit entry). Both are non-racing laps.
+    // In-lap through out-lap of every pit cycle (see rmPitCycles) are
+    // non-racing laps.
+    const { cycleLaps } = rmPitCycles(laps);
     lapsByPos.set(c.position, laps.map((l, i) => {
       const t = Number(l.lap_time_seconds) > 0 ? Number(l.lap_time_seconds) : null;
       const slow = median != null && t != null && t > median * 1.5;
-      const next = laps[i + 1];
-      const inPit = l.is_pit_lap === true || (next?.is_pit_lap === true && next.lap_number === l.lap_number + 1) || slow;
+      const inPit = cycleLaps.has(l.lap_number) || slow;
       return { lap: l.lap_number, timeOfDay: new Date(l.captured_at).getTime(), lapTime: t, inPit, status: l.caution_lap === true ? "YELLOW" : "GREEN" };
     }));
   });
@@ -1310,9 +1310,9 @@ const RM_MIN_PIT_MS = 15000; // shorter "stops" are drive-throughs / timing nois
 // counts, driver changes, stint splits or pit cycles.
 const rmIsPenaltyStop = s => s?.penalty_served === true;
 // Stops made after a car took the checkered (driving back to the paddock)
-// aren't race stops. Works on raw stop rows (lap_number = recorded out-lap,
-// so the in-lap is lap_number - 1): a stop whose in-lap was completed at or
-// after the checkered is dropped. Checkered time is the session's
+// aren't race stops. A stop's lap_number is its in-lap, the lap the car
+// entered the pits on, so the lap before it must have finished before the
+// checkered; a stop that started after the checkered is dropped. Checkered time is the session's
 // checkered_at from the results snapshot, else the overall leader crossing
 // its final classified lap. With no lap time to check, a stop recorded past
 // the car's final classified lap is dropped.
@@ -1338,14 +1338,33 @@ function rmDropPostRaceStops(stops, lapRows, resultRows){
   });
 }
 const rmServiceStops = stops => (stops || []).filter(s => !rmIsPenaltyStop(s));
-// A pit cycle spans two laps: the in-lap (pit entry — the lap the stop
-// happened on) and the out-lap (pit exit). Red Mist's stop rows and the
-// laps' is_pit_lap both record the out-lap, so the stop's in-lap is the lap
-// before. Stops are moved onto their in-lap here: the in-lap ends the
-// stint, the out-lap starts the next, and both are non-racing laps.
-const rmPitInLap = recordedLap => recordedLap - 1;
+// A pit cycle spans the in-lap (the lap the car entered the pits on — the
+// stop happens on it) and the out-lap (the lap it leaves pit lane on). A
+// stop row's lap_number is already the in-lap: the poller records the lap
+// in progress at pit entry. The in-lap ends the stint, the out-lap starts
+// the next, and both are non-racing laps.
+// Lap flags: is_pit_lap marks the in-lap. Where the timing line runs
+// through pit lane past the box, the car crosses it still in pit lane and
+// the out-lap is flagged too (#81 Sun: 119 in-lap with the stop, 120 the
+// crawl down pit lane). So in a run of consecutive pit-flagged laps the
+// first is the in-lap and the last the out-lap; a single flagged lap is
+// the in-lap and the lap after it the out-lap.
+const rmPitInLap = lap => lap;
 function rmAlignStopLaps(stops){
-  return (stops || []).map(s => s.lap_number != null ? { ...s, lap_number: rmPitInLap(s.lap_number), recorded_lap: s.lap_number } : s);
+  return (stops || []).map(s => s.lap_number != null ? { ...s, recorded_lap: s.lap_number } : s);
+}
+// One car's lap rows -> { inLaps, cycleLaps }: the in-lap of each pit-
+// flagged run, and every lap from an in-lap through its out-lap.
+function rmPitCycles(carLaps){
+  const flagged = new Set((carLaps || []).filter(l => l.is_pit_lap === true).map(l => l.lap_number));
+  const inLaps = new Set(), cycleLaps = new Set();
+  [...flagged].sort((a, b) => a - b).forEach(L => {
+    if (flagged.has(L - 1)) { cycleLaps.add(L); return; }
+    inLaps.add(L);
+    cycleLaps.add(L);
+    if (!flagged.has(L + 1)) cycleLaps.add(L + 1);
+  });
+  return { inLaps, cycleLaps };
 }
 // Lap rows with a penalty stop's in-lap no longer marked as a pit lap, so
 // it doesn't split a stint or count as a pit cycle. Laps built from the
@@ -1578,10 +1597,9 @@ function debriefMean(xs){ return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.
 function debriefCarStints(car, lapsByPos, lapRows, pitStops, finalDriver){
   const laps = lapsByPos.get(car.position) || [];
   const drivers = rmDriverForLaps(car.startNumber, laps, lapRows, pitStops, finalDriver[car.startNumber]);
-  // In-laps: each stop sits on its in-lap (rmAlignStopLaps); a pit-flagged
-  // lap (the out-lap) with no stop row adds the lap before it.
-  const pitLaps = new Set();
-  lapRows.forEach(l => { if (l.car_number === car.startNumber && l.is_pit_lap === true) pitLaps.add(rmPitInLap(l.lap_number)); });
+  // In-laps: each stop's lap_number, plus the first lap of any pit-flagged
+  // run with no stop row (rmPitCycles).
+  const pitLaps = new Set(rmPitCycles(lapRows.filter(l => l.car_number === car.startNumber)).inLaps);
   pitStops.forEach(s => { if (s.car_number === car.startNumber) pitLaps.add(s.lap_number); });
   // Stint boundaries: the car's real stops only, each ending on its in-lap.
   const stops = rmCarStops(car.startNumber, pitStops);
@@ -6940,7 +6958,7 @@ async function saveLapFix(){
     // Write Red Mist's full name when this car already has one for the
     // driver (plan names are often surname-only).
     const laps = await fetchAllRows(() => scope(supabase.from("redmist_live_laps").select("lap_number, driver_name")).eq("car_number", num).order("lap_number"));
-    const pitLapOf = rmPitInLap; // stop rows record the out-lap — see rmAlignStopLaps
+    const pitLapOf = rmPitInLap; // stop rows record the in-lap — see rmAlignStopLaps
     const seen = [...new Set(laps.map(l => l.driver_name).filter(Boolean))];
     const name = findDriverMatch(f.driver, seen) || f.driver;
 
