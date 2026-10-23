@@ -1894,7 +1894,9 @@ function debriefBattle(carNum, cls, stints, classification, lapRows, pitStops){
     if (l.is_pit_lap === true) (pits[l.car_number] ||= new Set()).add(l.lap_number);
   });
   pitStops.forEach(s => (pits[s.car_number] ||= new Set()).add(s.lap_number));
-  const classCars = classification.filter(c => c.resultClass === cls && cross[c.startNumber]);
+  // Hardship entries (#53x etc.) aren't part of the class order.
+  const classCars = classification.filter(c => c.resultClass === cls && cross[c.startNumber]
+    && (c.startNumber === carNum || !/x$/i.test(String(c.startNumber))));
   const sorted = {};
   classCars.forEach(c => { sorted[c.startNumber] = Object.values(cross[c.startNumber]).sort((a, b) => a - b); });
   const posAt = t => classCars.map(c => {
@@ -1914,9 +1916,13 @@ function debriefBattle(carNum, cls, stints, classification, lapRows, pitStops){
     const w = windows[i];
     if (!w || me[w.Ls] == null || me[w.Le] == null) return null;
     const next = windows[i + 1];
+    const startPos = posAt(me[w.Ls]), endPos = posAt(me[w.Le]);
+    const exitPos = w.pitLap != null && next && me[next.Ls] != null ? posAt(me[next.Ls]) : null;
     return {
-      trackDelta: posAt(me[w.Ls]) - posAt(me[w.Le]), // + = places gained
-      pitDelta: w.pitLap != null && next && me[next.Ls] != null ? posAt(me[w.Le]) - posAt(me[next.Ls]) : null,
+      firstLap: s.laps[0].lap, lastLap: s.laps[s.laps.length - 1].lap,
+      startPos, endPos, exitPos,
+      trackDelta: startPos - endPos, // + = places gained
+      pitDelta: exitPos != null ? endPos - exitPos : null,
     };
   });
 }
@@ -2686,40 +2692,122 @@ function renderDebriefPanel(dbArg, opts = {}){
   // named, so the point is what to change, not who.
   const ourNums = new Set(db.cars.map(c => String(c.number)));
   const fmtDur = s => { const a = Math.round(Math.abs(s)); return a >= 60 ? `${Math.floor(a / 60)}:${String(a % 60).padStart(2, "0")}` : `${a}s`; };
-  // Estimated time lost to the class over the race (pace, traffic, pit
-  // stops — losses only), and which class cars ahead finished within it.
-  const timeLossBlock = c => {
-    const sat = c.sat;
-    const rep = (sat.stintReport || []).filter(Boolean);
-    if (!rep.length) return "";
-    const pos = k => rep.filter(r => (r[k] || 0) > 0);
-    const sum = k => pos(k).reduce((a, r) => a + r[k], 0);
-    const paceLaps = pos("pace").reduce((a, r) => a + (r.paceLaps || 0), 0);
-    const trafficLaps = rep.reduce((a, r) => a + (r.trafficLaps || 0), 0);
-    const slowStops = pos("pit").length, allStops = rep.filter(r => r.hasStop && r.pit != null).length;
-    // [label, seconds, the figure behind it]
-    const parts = [
-      ["Pace", sum("pace"), paceLaps ? `+${(sum("pace") / paceLaps).toFixed(1)}s/lap × ${paceLaps} laps` : ""],
-      ["Traffic", sum("traffic"), trafficLaps ? `${trafficLaps} laps held up` : ""],
-      ["Pit stops", sum("pit"), allStops ? `${slowStops} of ${allStops} stops over class median` : ""],
-    ].filter(k => k[1] >= 5);
+  // Estimated Time Loss and Time Gained, side by side. Kept separate on
+  // purpose: a quick stop doesn't hide slow pace, so each card only adds up
+  // its own direction. Loss card also shows which class cars ahead finished
+  // within the total.
+  const ledgerCard = (label, color, parts, footer) => {
     const total = parts.reduce((a, k) => a + k[1], 0);
-    if (total < 5) return "";
-    const reach = (sat.gapsAhead || []).filter(g => g.gap <= total).sort((a, b) => a.pos - b.pos);
-    const next = (sat.gapsAhead || [])[0];
-    const reachLine = reach.length
-      ? `<span style="font-weight:600;color:var(--text);">P${reach[0].pos} within reach</span> — ${reach.slice().sort((a, b) => a.gap - b.gap).map(g => `P${g.pos} #${esc(g.num)} ${fmtDur(g.gap)} ahead`).join(" · ")}`
-      : next ? `Next car ahead (P${next.pos} #${esc(next.num)}) finished ${fmtDur(next.gap)} ahead` : "";
     return `
-      <div style="margin:6px 0 12px;padding:10px 12px;border-radius:8px;background:var(--panelRaised);">
+      <div style="padding:10px 12px;border-radius:8px;background:var(--panelRaised);">
         <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-          <span class="eyebrow">Estimated Time Loss</span>
-          <span class="font-mono" style="font-size:18px;font-weight:700;color:${T.red};">${fmtDur(total)}</span>
+          <span class="eyebrow">${label}</span>
+          <span class="font-mono" style="font-size:18px;font-weight:700;color:${color};">${fmtDur(total)}</span>
         </div>
         <div style="font-size:12px;color:var(--textMuted);margin-top:4px;">
           ${parts.map(([l, v, why]) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:2px 0;"><span><span style="color:var(--textFaint);">${l}</span>${why ? ` <span style="color:var(--textFaint);">· ${why}</span>` : ""}</span><span class="font-mono" style="font-weight:600;">${fmtDur(v)}</span></div>`).join("")}
         </div>
-        ${reachLine ? `<div style="font-size:12px;color:var(--textMuted);margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">${reachLine}</div>` : ""}
+        ${footer ? `<div style="font-size:12px;color:var(--textMuted);margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">${footer}</div>` : ""}
+      </div>`;
+  };
+  const timeLedger = c => {
+    const sat = c.sat;
+    const rep = (sat.stintReport || []).filter(Boolean);
+    if (!rep.length) return "";
+    const pick = (k, sign) => rep.filter(r => r[k] != null && r[k] * sign > 0);
+    const sum = (k, sign) => pick(k, sign).reduce((a, r) => a + r[k] * sign, 0);
+    const lapsOf = (k, sign) => pick(k, sign).reduce((a, r) => a + (r.paceLaps || 0), 0);
+    const allStops = rep.filter(r => r.hasStop && r.pit != null).length;
+
+    // Losses: [label, seconds, the figure behind it]
+    const lossPace = sum("pace", 1), lossPaceLaps = lapsOf("pace", 1);
+    const trafficLaps = rep.reduce((a, r) => a + (r.trafficLaps || 0), 0);
+    const lossParts = [
+      ["Pace", lossPace, lossPaceLaps ? `+${(lossPace / lossPaceLaps).toFixed(1)}s/lap × ${lossPaceLaps} laps` : ""],
+      ["Traffic", sum("traffic", 1), trafficLaps ? `${trafficLaps} laps held up` : ""],
+      ["Pit stops", sum("pit", 1), allStops ? `${pick("pit", 1).length} of ${allStops} stops over class median` : ""],
+    ].filter(k => k[1] >= 5);
+
+    // Gains: stints quicker than the field, stops under the class median.
+    const gainPace = sum("pace", -1), gainPaceLaps = lapsOf("pace", -1);
+    const gainParts = [
+      ["Pace", gainPace, gainPaceLaps ? `−${(gainPace / gainPaceLaps).toFixed(1)}s/lap × ${gainPaceLaps} laps` : ""],
+      ["Pit stops", sum("pit", -1), allStops ? `${pick("pit", -1).length} of ${allStops} stops under class median` : ""],
+    ].filter(k => k[1] >= 5);
+    // Places gained through pit cycles (stops that lost places show in Position Flow).
+    const pitGained = (sat.battle || []).reduce((a, b) => a + (b && b.pitDelta > 0 ? b.pitDelta : 0), 0);
+
+    const lossTotal = lossParts.reduce((a, k) => a + k[1], 0);
+    const gainTotal = gainParts.reduce((a, k) => a + k[1], 0);
+    const showLoss = lossTotal >= 5, showGain = gainTotal >= 5 || pitGained > 0;
+    if (!showLoss && !showGain) return "";
+
+    const reach = (sat.gapsAhead || []).filter(g => g.gap <= lossTotal).sort((a, b) => a.pos - b.pos);
+    const next = (sat.gapsAhead || [])[0];
+    const reachLine = reach.length
+      ? `<span style="font-weight:600;color:var(--text);">P${reach[0].pos} within reach</span> — ${reach.slice().sort((a, b) => a.gap - b.gap).map(g => `P${g.pos} #${esc(g.num)} ${fmtDur(g.gap)} ahead`).join(" · ")}`
+      : next ? `Next car ahead (P${next.pos} #${esc(next.num)}) finished ${fmtDur(next.gap)} ahead` : "";
+    const pitLine = pitGained > 0
+      ? `<span style="font-weight:600;color:var(--text);">+${pitGained} position${pitGained === 1 ? "" : "s"}</span> gained through pit cycles` : "";
+
+    const cards = [
+      showLoss ? ledgerCard("Estimated Time Loss", T.red, lossParts, reachLine) : "",
+      showGain ? ledgerCard("Time Gained", T.green, gainParts, pitLine) : "",
+    ].join("");
+    const net = gainTotal - lossTotal;
+    const netLine = showLoss && gainTotal >= 5
+      ? `<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--textMuted);margin-top:8px;padding:0 2px;"><span style="color:var(--textFaint);">Net vs. class</span><span class="font-mono" style="font-weight:600;color:${net >= 0 ? T.green : T.red};">${net >= 0 ? "+" : "−"}${fmtDur(net)}</span></div>`
+      : "";
+    return `<div style="margin:6px 0 12px;"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;">${cards}</div>${netLine}</div>`;
+  };
+
+  // Position Flow: class position through each run between stops — what
+  // changed on track, what changed in the stop that ended it. Car-level,
+  // keyed by lap range, no driver named.
+  const positionFlow = c => {
+    const sat = c.sat, battle = sat.battle || [], rep = sat.stintReport || [];
+    const rows = battle.map((b, i) => b ? { b, i } : null).filter(Boolean);
+    if (rows.length < 2) return "";
+    const chip = (d, extra = "") => {
+      if (d == null) return `<span style="color:var(--textFaint);">—</span>`;
+      const bg = d > 0 ? "rgba(63,178,127,.18)" : d < 0 ? "rgba(226,68,92,.18)" : "var(--panelRaised)";
+      const fg = d > 0 ? T.green : d < 0 ? T.red : "var(--textFaint)";
+      return `<span class="font-mono" style="font-size:11px;font-weight:600;padding:2px 7px;border-radius:999px;background:${bg};color:${fg};white-space:nowrap;">${d > 0 ? "+" : d < 0 ? "−" : ""}${Math.abs(d)}${extra}</span>`;
+    };
+    const bar = d => {
+      const col = d > 0 ? T.green : d < 0 ? T.red : "var(--border)";
+      const op = d ? Math.min(1, 0.45 + 0.15 * Math.abs(d)) : 1;
+      return `<div style="flex:1;height:6px;border-radius:999px;background:${col};opacity:${op};"></div>`;
+    };
+    const lastIdx = battle.length - 1;
+    const cols = "grid-template-columns:64px 40px minmax(60px,1fr) 52px 40px;";
+    const body = rows.map(({ b, i }) => {
+      const isLast = i === lastIdx;
+      const r = rep[i];
+      const exit = isLast ? sat.classPos : b.exitPos;
+      const exitStyle = isLast && sat.classPos != null && sat.classPos <= 3 ? `color:${T.gold};font-weight:700;` : "";
+      const stopCell = isLast ? `<span style="text-align:center;">🏁</span>` : chip(b.pitDelta, r && r.stopRepair ? " 🔧" : "");
+      return `<div style="display:grid;${cols}gap:8px;align-items:center;font-size:12px;padding:5px 0;border-top:1px solid var(--border);">
+        <span class="font-mono" style="color:var(--textMuted);">${b.firstLap === b.lastLap ? b.firstLap : `${b.firstLap}–${b.lastLap}`}</span>
+        <span class="font-mono">P${b.startPos}</span>
+        <div style="display:flex;align-items:center;gap:6px;">${bar(b.trackDelta)}${chip(b.trackDelta)}</div>
+        <span>${stopCell}</span>
+        <span class="font-mono" style="${exitStyle}">${exit != null ? `P${exit}` : "—"}</span>
+      </div>`;
+    }).join("");
+    const trackSum = rows.reduce((a, { b }) => a + (b.trackDelta || 0), 0);
+    const pitSum = rows.reduce((a, { b }) => a + (b.pitDelta || 0), 0);
+    const tot = (label, d) => `<span><span style="color:var(--textFaint);">${label}</span> <span class="font-mono" style="font-weight:600;color:${d > 0 ? T.green : d < 0 ? T.red : "var(--textMuted)"};">${d > 0 ? "+" : d < 0 ? "−" : ""}${Math.abs(d)}</span></span>`;
+    return `
+      <div style="margin:6px 0 12px;">
+        <span class="eyebrow">Position Flow</span>
+        <div style="display:grid;${cols}gap:8px;font-size:11px;color:var(--textFaint);margin-top:8px;padding-bottom:4px;">
+          <span>Laps</span><span>Start</span><span>On track</span><span>Stop</span><span>Exit</span>
+        </div>
+        ${body}
+        <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--textMuted);padding-top:6px;border-top:1px solid var(--border);">
+          ${tot("On track", trackSum)}${tot("Through stops", pitSum)}
+        </div>
       </div>`;
   };
 
@@ -2780,8 +2868,9 @@ function renderDebriefPanel(dbArg, opts = {}){
   const carBlocks = db.cars.map(c => `
     <div style="border-left:3px solid ${c.accent};padding-left:12px;margin-bottom:16px;">
       <div class="font-display" style="font-weight:600;font-size:14px;margin-bottom:4px;">#${esc(c.number)}</div>
-      ${timeLossBlock(c)}
+      ${timeLedger(c)}
       ${keyTakeaways(c)}
+      ${positionFlow(c)}
       ${closerLine(c)}
       ${c.drivers.map(d => driverCard(c, d)).join("")}
     </div>`).join("");
